@@ -1,33 +1,47 @@
-// Cloudflare Pages Function: pairs peers waiting in the same time-control queue.
-// Stateless across regions — uses a single Durable Object as the source of truth.
+// Matchmaker Worker — pairs peers waiting in the same time-control queue.
+// Single Durable Object holds queue state across regions.
 //
-// Wrangler binding required (see wrangler.toml):
-//   [[durable_objects.bindings]]
-//   name = "MATCHMAKER"
-//   class_name = "Matchmaker"
-//
-// Local dev fallback: when no DO binding is present (e.g. `vite dev`), this
-// function is not even reached — Vite serves the SPA. To exercise matchmaking
-// locally use `wrangler pages dev`.
+// Deploy from this directory: `npx wrangler deploy`
+// Frontend points at the deployed URL via VITE_MATCHMAKE_URL.
 
 interface Env {
   MATCHMAKER: DurableObjectNamespace;
 }
 
-export const onRequestPost: PagesFunction<Env> = async (ctx) => {
-  if (!ctx.env.MATCHMAKER) {
-    return new Response(
-      JSON.stringify({ error: 'MATCHMAKER DO binding missing — see wrangler.toml' }),
-      { status: 500, headers: { 'content-type': 'application/json' } },
-    );
-  }
-  const id = ctx.env.MATCHMAKER.idFromName('global');
-  const stub = ctx.env.MATCHMAKER.get(id);
-  return stub.fetch(ctx.request);
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Max-Age': '86400',
 };
 
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    if (request.method !== 'POST') {
+      return withCors(new Response('method not allowed', { status: 405 }));
+    }
+
+    if (!env.MATCHMAKER) {
+      return withCors(json({ error: 'MATCHMAKER DO binding missing' }, 500));
+    }
+    const id = env.MATCHMAKER.idFromName('global');
+    const stub = env.MATCHMAKER.get(id);
+    const upstream = await stub.fetch(request);
+    return withCors(upstream);
+  },
+};
+
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, headers });
+}
+
 // ---------------------------------------------------------------------------
-// Durable Object (exported from functions/_middleware.ts to be discoverable)
+// Durable Object
 // ---------------------------------------------------------------------------
 
 type WaitingEntry = {
@@ -48,17 +62,13 @@ type MatchedEntry = {
   partnerRating: number;
   iAmWhite: boolean;
   gameId: string;
-  // expires after a while so memory doesn't grow unbounded
   expiresAt: number;
 };
 
 export class Matchmaker {
   state: DurableObjectState;
-  // ticket -> waiting entry
   waiting = new Map<string, WaitingEntry>();
-  // queue per time control: list of tickets, oldest first
   queues = new Map<string, string[]>();
-  // ticket -> matched info (ready to be polled)
   matched = new Map<string, MatchedEntry>();
 
   constructor(state: DurableObjectState) {
@@ -90,7 +100,6 @@ export class Matchmaker {
     const ticket = randomId();
     const queue = this.queues.get(timeControlId) ?? [];
 
-    // Try to pair with the oldest waiting peer (skip stale ones)
     let pairTicket: string | undefined;
     while (queue.length > 0) {
       const candidate = queue.shift()!;
@@ -107,10 +116,8 @@ export class Matchmaker {
       this.queues.set(timeControlId, queue);
 
       const gameId = randomId() + randomId();
-      // Coin flip for color
       const newcomerIsWhite = Math.random() < 0.5;
 
-      // Tell the *waiting* peer about the newcomer
       this.matched.set(pairTicket, {
         ticket: pairTicket,
         partnerPeerId: peerId,
@@ -122,7 +129,6 @@ export class Matchmaker {
         expiresAt: Date.now() + 60_000,
       });
 
-      // Respond synchronously to the *newcomer*
       return json({
         status: 'matched',
         ticket,
@@ -135,7 +141,6 @@ export class Matchmaker {
       });
     }
 
-    // Otherwise queue
     const entry: WaitingEntry = {
       ticket,
       peerId,
@@ -184,7 +189,6 @@ export class Matchmaker {
     return json({ status: 'cancelled' });
   }
 
-  // Drop entries older than 2 minutes
   private gc() {
     const now = Date.now();
     for (const [ticket, entry] of this.waiting) {
