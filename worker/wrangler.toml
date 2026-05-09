@@ -1,0 +1,11 @@
+name = "chess-matchmaker"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "Matchmaker"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Matchmaker"]
