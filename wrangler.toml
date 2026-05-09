@@ -2,11 +2,10 @@ name = "decentralized-chess"
 compatibility_date = "2024-09-01"
 pages_build_output_dir = "dist"
 
+# Matchmaker class is defined in functions/api/matchmake.ts (this Pages project).
+# Pages config does not accept [[migrations]] — register the class once in the
+# Cloudflare dashboard (Pages project → Settings → Functions → Durable Object
+# bindings) before the first deploy.
 [[durable_objects.bindings]]
 name = "MATCHMAKER"
 class_name = "Matchmaker"
-script_name = "decentralized-chess"
-
-[[migrations]]
-tag = "v1"
-new_classes = ["Matchmaker"]
