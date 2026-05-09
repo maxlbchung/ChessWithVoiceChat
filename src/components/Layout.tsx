@@ -15,7 +15,7 @@ export function Layout() {
       <header className="topbar">
         <Link to="/" className="brand">
           <span className="brand-mark">♞</span>
-          <span className="brand-text">decentral.chess</span>
+          <span className="brand-text">VCC</span>
         </Link>
         <nav className="topnav">
           <Link to="/" className={location.pathname === '/' ? 'active' : ''}>

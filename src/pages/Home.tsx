@@ -10,7 +10,7 @@ import { setLobbyHandoff } from '../store/lobbyHandoff';
 export function Home() {
   const { identity, rating, loaded, signUp } = useIdentityStore();
   const [handleInput, setHandleInput] = useState('');
-  const [selected, setSelected] = useState<TimeControl | null>(TIME_CONTROLS[2] ?? null);
+  const [selected, setSelected] = useState<TimeControl | null>(TIME_CONTROLS[0] ?? null);
   const [searching, setSearching] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string>('');
   const navigate = useNavigate();
@@ -24,7 +24,7 @@ export function Home() {
     let session: PeerSession | null = null;
 
     const myPeerId = makePeerId();
-    setStatusMsg(`Looking for ${selected.label} ${selected.category}…`);
+    setStatusMsg(`Looking for ${selected.label}…`);
 
     // Spin up a peer eagerly so we're discoverable when matched
     session = new PeerSession(myPeerId, {
@@ -128,7 +128,7 @@ export function Home() {
             disabled={!selected}
             onClick={() => setSearching(true)}
           >
-            Play {selected?.label} {selected?.category}
+            Play {selected?.label}
           </button>
         ) : (
           <button className="secondary-btn big" onClick={() => setSearching(false)}>

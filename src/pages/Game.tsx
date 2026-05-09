@@ -252,17 +252,24 @@ export function Game() {
     }
     if (!move) return false;
 
-    // Add increment to mover's clock; subtract elapsed from "before" clock first.
-    // We've been ticking the mover's clock continuously, so just add increment.
-    if (beforeTurn === 'w') {
+    // For per-move mode: every move resets both clocks to perMoveMs so the next
+    // mover gets a fresh budget. Otherwise apply Fischer increment to the mover.
+    if (tc.perMoveMs != null) {
+      setWhiteMs(tc.perMoveMs);
+      setBlackMs(tc.perMoveMs);
+    } else if (beforeTurn === 'w') {
       setWhiteMs((ms) => ms + tc.incrementMs);
     } else {
       setBlackMs((ms) => ms + tc.incrementMs);
     }
 
     const ply = chess.history().length;
-    const wMs = beforeTurn === 'w' ? whiteMs + tc.incrementMs : whiteMs;
-    const bMs = beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs;
+    const wMs = tc.perMoveMs != null
+      ? tc.perMoveMs
+      : (beforeTurn === 'w' ? whiteMs + tc.incrementMs : whiteMs);
+    const bMs = tc.perMoveMs != null
+      ? tc.perMoveMs
+      : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
     const uci = move.from + move.to + (move.promotion ?? '');
     const signed = await signMove(identity, gameId!, uci, chess.fen(), ply, wMs, bMs);
     setMoves((m) => [...m, signed]);
@@ -301,9 +308,15 @@ export function Game() {
     if (!r) return;
     setFen(chess.fen());
     setMoves((m) => [...m, move]);
-    // Trust the opponent's reported clocks, since they're signed
-    setWhiteMs(move.whiteClockMs);
-    setBlackMs(move.blackClockMs);
+    if (tc.perMoveMs != null) {
+      // Per-move mode: next mover always starts with a fresh budget.
+      setWhiteMs(tc.perMoveMs);
+      setBlackMs(tc.perMoveMs);
+    } else {
+      // Trust the opponent's reported clocks, since they're signed
+      setWhiteMs(move.whiteClockMs);
+      setBlackMs(move.blackClockMs);
+    }
     // re-add increment for mover (already in their reported clock above)
     void beforeTurn;
     setDrawOfferedByOpp(false);
@@ -481,7 +494,7 @@ export function Game() {
 
       <aside className="side-panel">
         <div className="game-meta">
-          <div className="game-meta-title">{tc.label} {tc.category}</div>
+          <div className="game-meta-title">{tc.label}</div>
           <div className="muted small">peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}</div>
         </div>
 

@@ -1,22 +1,17 @@
 export type TimeControl = {
   id: string;
   label: string;
-  category: 'Bullet' | 'Blitz' | 'Rapid' | 'Classical';
   initialMs: number;
   incrementMs: number;
+  // When set, the clock resets to this value at the start of every turn
+  // (i.e. the player has perMoveMs to make each individual move).
+  perMoveMs?: number;
 };
 
 export const TIME_CONTROLS: TimeControl[] = [
-  { id: 'bullet-1+0', label: '1+0', category: 'Bullet', initialMs: 60_000, incrementMs: 0 },
-  { id: 'bullet-2+1', label: '2+1', category: 'Bullet', initialMs: 120_000, incrementMs: 1_000 },
-  { id: 'blitz-3+0', label: '3+0', category: 'Blitz', initialMs: 180_000, incrementMs: 0 },
-  { id: 'blitz-3+2', label: '3+2', category: 'Blitz', initialMs: 180_000, incrementMs: 2_000 },
-  { id: 'blitz-5+0', label: '5+0', category: 'Blitz', initialMs: 300_000, incrementMs: 0 },
-  { id: 'blitz-5+3', label: '5+3', category: 'Blitz', initialMs: 300_000, incrementMs: 3_000 },
-  { id: 'rapid-10+0', label: '10+0', category: 'Rapid', initialMs: 600_000, incrementMs: 0 },
-  { id: 'rapid-15+10', label: '15+10', category: 'Rapid', initialMs: 900_000, incrementMs: 10_000 },
-  { id: 'classical-30+0', label: '30+0', category: 'Classical', initialMs: 1_800_000, incrementMs: 0 },
-  { id: 'classical-30+20', label: '30+20', category: 'Classical', initialMs: 1_800_000, incrementMs: 20_000 },
+  { id: 'blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0 },
+  { id: 'rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0 },
+  { id: 'per-move-60', label: '1 min / move', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000 },
 ];
 
 export function getTimeControl(id: string): TimeControl | undefined {
