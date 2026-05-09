@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useIdentityStore } from '../store/identityStore';
+import { APP_VERSION } from '../lib/version';
 
 export function Layout() {
   const { identity, rating, loaded, load } = useIdentityStore();
@@ -45,6 +46,7 @@ export function Layout() {
       <footer className="footer">
         <span>P2P • signed moves • no central server for play</span>
       </footer>
+      <div className="version-tag" aria-hidden>v{APP_VERSION}</div>
     </div>
   );
 }
