@@ -8,4 +8,4 @@ compatibility_date = "2024-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "chess-matchmaker"
-database_id = "REPLACE_WITH_DATABASE_ID_FROM_wrangler_d1_create"
+database_id = "b512f39d-bb99-46ce-b077-9235abaf820e"
