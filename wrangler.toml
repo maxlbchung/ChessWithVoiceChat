@@ -1,0 +1,12 @@
+name = "decentralized-chess"
+compatibility_date = "2024-09-01"
+pages_build_output_dir = "dist"
+
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "Matchmaker"
+script_name = "decentralized-chess"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Matchmaker"]

@@ -1,0 +1,82 @@
+import { signMessage, hex } from './identity';
+import type { Identity } from './identity';
+
+export type MatchResult =
+  | { status: 'matched'; partnerPeerId: string; partnerPubKey: string; partnerHandle: string; partnerRating: number; iAmWhite: boolean; gameId: string }
+  | { status: 'waiting' }
+  | { status: 'cancelled' };
+
+const MATCHMAKE_URL = import.meta.env.VITE_MATCHMAKE_URL || '/api/matchmake';
+const POLL_MS = 1500;
+
+const enc = new TextEncoder();
+
+export class Matchmaker {
+  private cancelled = false;
+  private ticket: string | null = null;
+
+  async start(opts: {
+    identity: Identity;
+    peerId: string;
+    rating: number;
+    timeControlId: string;
+  }): Promise<MatchResult> {
+    this.cancelled = false;
+
+    // Sign a small payload so the matchmaker can prove the peerId belongs to this pubkey
+    const payload = `MATCH|${opts.timeControlId}|${opts.peerId}|${opts.identity.publicKeyHex}`;
+    const sig = await signMessage(opts.identity, enc.encode(payload));
+
+    const join = await fetch(MATCHMAKE_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'join',
+        timeControlId: opts.timeControlId,
+        peerId: opts.peerId,
+        publicKeyHex: opts.identity.publicKeyHex,
+        handle: opts.identity.handle,
+        rating: opts.rating,
+        signature: hex.bytesToHex(sig),
+      }),
+    });
+    if (!join.ok) throw new Error('matchmake join failed: ' + join.status);
+    const joinResult = await join.json();
+    this.ticket = joinResult.ticket;
+    if (joinResult.status === 'matched') {
+      return joinResult;
+    }
+
+    // poll
+    while (!this.cancelled) {
+      await sleep(POLL_MS);
+      if (this.cancelled) break;
+      const poll = await fetch(MATCHMAKE_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'poll', ticket: this.ticket }),
+      });
+      if (!poll.ok) continue;
+      const result = await poll.json();
+      if (result.status === 'matched') return result;
+    }
+    return { status: 'cancelled' };
+  }
+
+  async cancel(): Promise<void> {
+    this.cancelled = true;
+    if (this.ticket) {
+      try {
+        await fetch(MATCHMAKE_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'cancel', ticket: this.ticket }),
+        });
+      } catch {}
+    }
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
