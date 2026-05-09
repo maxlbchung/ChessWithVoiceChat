@@ -257,16 +257,59 @@ a { color: inherit; text-decoration: none; }
   background: linear-gradient(180deg, rgba(220, 38, 38, 0.16), rgba(220, 38, 38, 0.04));
   box-shadow: 0 4px 16px rgba(220, 38, 38, 0.15);
 }
+.time-mode-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.time-mode-btn:disabled:hover {
+  border-color: var(--border);
+  transform: none;
+  background: var(--glass);
+}
 
 .play-row {
   display: flex;
   gap: 16px;
   align-items: center;
   margin-top: 12px;
+  flex-wrap: wrap;
 }
 .status-msg {
   color: var(--muted);
   font-size: 14px;
+}
+.status-msg.error {
+  color: var(--bad);
+}
+
+.lobby-panel {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-soft);
+}
+.lobby-label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.share-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.share-row .text-input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
 }
 
 /* Game layout */

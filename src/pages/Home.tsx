@@ -7,26 +7,31 @@ import { Matchmaker } from '../lib/matchmaking';
 import { PeerSession, makePeerId } from '../lib/peer';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 
+type Mode = 'idle' | 'searching' | 'hosting';
+
 export function Home() {
   const { identity, rating, loaded, signUp } = useIdentityStore();
   const [handleInput, setHandleInput] = useState('');
   const [selected, setSelected] = useState<TimeControl | null>(TIME_CONTROLS[0] ?? null);
-  const [searching, setSearching] = useState(false);
+  const [mode, setMode] = useState<Mode>('idle');
   const [statusMsg, setStatusMsg] = useState<string>('');
+  const [shareUrl, setShareUrl] = useState<string>('');
+  const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
 
+  // Quickplay: matchmaker queue
   useEffect(() => {
-    if (!searching) return;
+    if (mode !== 'searching') return;
     if (!identity || !selected) return;
 
     let cancelled = false;
+    let handedOff = false;
     const matcher = new Matchmaker();
     let session: PeerSession | null = null;
 
     const myPeerId = makePeerId();
     setStatusMsg(`Looking for ${selected.label}…`);
 
-    // Spin up a peer eagerly so we're discoverable when matched
     session = new PeerSession(myPeerId, {
       onOpen: async () => {
         if (cancelled) return;
@@ -38,12 +43,11 @@ export function Home() {
         });
         if (cancelled) return;
         if (result.status !== 'matched') {
-          setSearching(false);
+          setMode('idle');
           setStatusMsg('Search cancelled.');
-          session?.destroy();
           return;
         }
-        // Hand the live session over to the Game page so we don't reconnect
+        handedOff = true;
         setLobbyHandoff({
           gameId: result.gameId,
           session: session!,
@@ -61,16 +65,103 @@ export function Home() {
         console.error('peer error', err);
         if (cancelled) return;
         setStatusMsg(`Connection error: ${err.message}`);
-        setSearching(false);
+        setMode('idle');
       },
     });
 
     return () => {
       cancelled = true;
       matcher.cancel();
-      // Don't destroy the session here — the Game page may have taken it.
+      if (!handedOff) {
+        try { session?.destroy(); } catch {}
+      }
     };
-  }, [searching, identity, selected, rating, navigate]);
+  }, [mode, identity, selected, rating, navigate]);
+
+  // Play a friend: host an open peer + shareable join link
+  useEffect(() => {
+    if (mode !== 'hosting') return;
+    if (!identity || !selected) return;
+
+    let cancelled = false;
+    let handedOff = false;
+    let joinerPeerId: string | null = null;
+    const myPeerId = makePeerId();
+
+    setShareUrl('');
+    setStatusMsg('Creating lobby…');
+
+    const session: PeerSession = new PeerSession(myPeerId, {
+      onOpen: (id) => {
+        if (cancelled) return;
+        setShareUrl(`${location.origin}${location.pathname}#/join/${id}`);
+        setStatusMsg('Share the link with your opponent.');
+      },
+      onConnect: (conn) => {
+        if (cancelled) return;
+        joinerPeerId = conn.peer;
+        setStatusMsg('Opponent connected, syncing…');
+      },
+      onMessage: (msg) => {
+        if (cancelled) return;
+        if (msg.type !== 'hello') return;
+        if (!joinerPeerId) return;
+        const gameId = randomGameId();
+        const hostIsWhite = Math.random() < 0.5;
+        session.send({
+          type: 'lobby-confirm',
+          gameId,
+          iAmWhite: !hostIsWhite,
+          timeControlId: selected.id,
+          hostPubKey: identity.publicKeyHex,
+          hostHandle: identity.handle,
+          hostRating: rating,
+        });
+        handedOff = true;
+        setLobbyHandoff({
+          gameId,
+          session,
+          myPeerId,
+          partnerPeerId: joinerPeerId,
+          partnerPubKey: msg.publicKeyHex,
+          partnerHandle: msg.handle,
+          partnerRating: msg.rating,
+          iAmWhite: hostIsWhite,
+          timeControlId: selected.id,
+        });
+        navigate(`/play/${gameId}`);
+      },
+      onError: (err) => {
+        if (cancelled) return;
+        setStatusMsg(`Connection error: ${err.message}`);
+        setMode('idle');
+      },
+    });
+
+    return () => {
+      cancelled = true;
+      if (!handedOff) {
+        try { session.destroy(); } catch {}
+      }
+    };
+  }, [mode, identity, selected, rating, navigate]);
+
+  const cancel = () => {
+    setMode('idle');
+    setStatusMsg('');
+    setShareUrl('');
+    setCopied(false);
+  };
+
+  const copyShareUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard may be blocked; the input is still selectable manually
+    }
+  };
 
   if (!loaded) {
     return <div className="page-narrow muted">Loading…</div>;
@@ -106,6 +197,8 @@ export function Home() {
     );
   }
 
+  const busy = mode !== 'idle';
+
   return (
     <div className="page">
       <div className="hero">
@@ -119,24 +212,66 @@ export function Home() {
       <TimeModeSelector
         selectedId={selected?.id ?? null}
         onSelect={(tc) => setSelected(tc)}
+        disabled={busy}
       />
 
-      <div className="play-row">
-        {!searching ? (
+      {!busy && (
+        <div className="play-row">
           <button
             className="primary-btn big"
             disabled={!selected}
-            onClick={() => setSearching(true)}
+            onClick={() => setMode('searching')}
           >
-            Play {selected?.label}
+            Quickplay {selected?.label}
           </button>
-        ) : (
-          <button className="secondary-btn big" onClick={() => setSearching(false)}>
-            Cancel search
+          <button
+            className="secondary-btn big"
+            disabled={!selected}
+            onClick={() => setMode('hosting')}
+          >
+            Play a friend
           </button>
-        )}
-        {statusMsg && <div className="status-msg">{statusMsg}</div>}
-      </div>
+        </div>
+      )}
+
+      {mode === 'searching' && (
+        <div className="play-row">
+          <button className="secondary-btn big" onClick={cancel}>Cancel search</button>
+          {statusMsg && <div className="status-msg">{statusMsg}</div>}
+        </div>
+      )}
+
+      {mode === 'hosting' && (
+        <div className="lobby-panel">
+          {shareUrl ? (
+            <>
+              <div className="lobby-label">Send this link to your friend:</div>
+              <div className="share-row">
+                <input
+                  className="text-input"
+                  readOnly
+                  value={shareUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button className="secondary-btn" onClick={copyShareUrl}>
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="muted">Spinning up lobby…</div>
+          )}
+          <div className="play-row">
+            <button className="secondary-btn big" onClick={cancel}>Cancel lobby</button>
+            {statusMsg && <div className="status-msg">{statusMsg}</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function randomGameId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

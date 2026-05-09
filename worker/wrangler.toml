@@ -2,10 +2,10 @@ name = "chess-matchmaker"
 main = "src/index.ts"
 compatibility_date = "2024-09-01"
 
-[[durable_objects.bindings]]
-name = "MATCHMAKER"
-class_name = "Matchmaker"
-
-[[migrations]]
-tag = "v1"
-new_classes = ["Matchmaker"]
+# Run `npx wrangler d1 create chess-matchmaker` once, then paste the printed
+# database_id below. Apply schema with:
+#   npx wrangler d1 execute chess-matchmaker --remote --file=schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "chess-matchmaker"
+database_id = "REPLACE_WITH_DATABASE_ID_FROM_wrangler_d1_create"

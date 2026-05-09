@@ -64,6 +64,15 @@ export type LocalGameSummary = {
 
 export type WireMessage =
   | { type: 'hello'; publicKeyHex: string; handle: string; rating: number }
+  | {
+      type: 'lobby-confirm';
+      gameId: string;
+      iAmWhite: boolean;
+      timeControlId: string;
+      hostPubKey: string;
+      hostHandle: string;
+      hostRating: number;
+    }
   | { type: 'ready' }
   | { type: 'move'; move: SignedMove }
   | { type: 'resign' }

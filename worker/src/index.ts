@@ -1,11 +1,15 @@
 // Matchmaker Worker — pairs peers waiting in the same time-control queue.
-// Single Durable Object holds queue state across regions.
+// State lives in D1 so it works on the Workers free plan (no Durable Objects).
 //
-// Deploy from this directory: `npx wrangler deploy`
+// Setup:
+//   npx wrangler d1 create chess-matchmaker        # paste database_id into wrangler.toml
+//   npx wrangler d1 execute chess-matchmaker --remote --file=worker/schema.sql
+//   npm run deploy:worker
+//
 // Frontend points at the deployed URL via VITE_MATCHMAKE_URL.
 
 interface Env {
-  MATCHMAKER: DurableObjectNamespace;
+  DB: D1Database;
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -23,14 +27,26 @@ export default {
     if (request.method !== 'POST') {
       return withCors(new Response('method not allowed', { status: 405 }));
     }
-
-    if (!env.MATCHMAKER) {
-      return withCors(json({ error: 'MATCHMAKER DO binding missing' }, 500));
+    if (!env.DB) {
+      return withCors(json({ error: 'DB binding missing — check wrangler.toml d1_databases binding' }, 500));
     }
-    const id = env.MATCHMAKER.idFromName('global');
-    const stub = env.MATCHMAKER.get(id);
-    const upstream = await stub.fetch(request);
-    return withCors(upstream);
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return withCors(json({ error: 'invalid json' }, 400));
+    }
+
+    try {
+      const action = body.action;
+      if (action === 'join') return withCors(await handleJoin(env.DB, body));
+      if (action === 'poll') return withCors(await handlePoll(env.DB, body));
+      if (action === 'cancel') return withCors(await handleCancel(env.DB, body));
+      return withCors(json({ error: 'unknown action' }, 400));
+    } catch (err: any) {
+      return withCors(json({ error: 'server error', detail: String(err?.message ?? err) }, 500));
+    }
   },
 };
 
@@ -40,171 +56,134 @@ function withCors(res: Response): Response {
   return new Response(res.body, { status: res.status, headers });
 }
 
-// ---------------------------------------------------------------------------
-// Durable Object
-// ---------------------------------------------------------------------------
-
-type WaitingEntry = {
+type WaitingRow = {
   ticket: string;
-  peerId: string;
-  publicKeyHex: string;
+  time_control_id: string;
+  peer_id: string;
+  public_key_hex: string;
   handle: string;
   rating: number;
-  timeControlId: string;
-  joinedAt: number;
+  joined_at: number;
 };
 
-type MatchedEntry = {
+type MatchedRow = {
   ticket: string;
-  partnerPeerId: string;
-  partnerPubKey: string;
-  partnerHandle: string;
-  partnerRating: number;
-  iAmWhite: boolean;
-  gameId: string;
-  expiresAt: number;
+  partner_peer_id: string;
+  partner_pub_key: string;
+  partner_handle: string;
+  partner_rating: number;
+  i_am_white: number;
+  game_id: string;
+  expires_at: number;
 };
 
-export class Matchmaker {
-  state: DurableObjectState;
-  waiting = new Map<string, WaitingEntry>();
-  queues = new Map<string, string[]>();
-  matched = new Map<string, MatchedEntry>();
-
-  constructor(state: DurableObjectState) {
-    this.state = state;
+async function handleJoin(db: D1Database, body: any): Promise<Response> {
+  const { timeControlId, peerId, publicKeyHex, handle, rating } = body;
+  if (!timeControlId || !peerId || !publicKeyHex || typeof rating !== 'number') {
+    return json({ error: 'missing fields' }, 400);
   }
+  await gc(db);
 
-  async fetch(request: Request): Promise<Response> {
-    let body: any;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: 'invalid json' }, 400);
-    }
+  const ticket = randomId();
 
-    const action = body.action;
-    if (action === 'join') return this.handleJoin(body);
-    if (action === 'poll') return this.handlePoll(body);
-    if (action === 'cancel') return this.handleCancel(body);
-    return json({ error: 'unknown action' }, 400);
-  }
+  // Atomically pop the oldest waiter in this queue. SQLite serializes the
+  // statement, so concurrent joins won't pick the same partner.
+  const partner = await db.prepare(
+    `DELETE FROM waiting
+       WHERE ticket = (
+         SELECT ticket FROM waiting
+           WHERE time_control_id = ?
+           ORDER BY joined_at ASC
+           LIMIT 1
+       )
+       RETURNING *`,
+  ).bind(timeControlId).first<WaitingRow>();
 
-  private handleJoin(body: any): Response {
-    const { timeControlId, peerId, publicKeyHex, handle, rating } = body;
-    if (!timeControlId || !peerId || !publicKeyHex || typeof rating !== 'number') {
-      return json({ error: 'missing fields' }, 400);
-    }
-    this.gc();
+  if (partner) {
+    const gameId = randomId() + randomId();
+    const newcomerIsWhite = Math.random() < 0.5;
+    const expiresAt = Date.now() + 60_000;
 
-    const ticket = randomId();
-    const queue = this.queues.get(timeControlId) ?? [];
-
-    let pairTicket: string | undefined;
-    while (queue.length > 0) {
-      const candidate = queue.shift()!;
-      const candidateEntry = this.waiting.get(candidate);
-      if (candidateEntry) {
-        pairTicket = candidate;
-        break;
-      }
-    }
-
-    if (pairTicket) {
-      const partner = this.waiting.get(pairTicket)!;
-      this.waiting.delete(pairTicket);
-      this.queues.set(timeControlId, queue);
-
-      const gameId = randomId() + randomId();
-      const newcomerIsWhite = Math.random() < 0.5;
-
-      this.matched.set(pairTicket, {
-        ticket: pairTicket,
-        partnerPeerId: peerId,
-        partnerPubKey: publicKeyHex,
-        partnerHandle: handle,
-        partnerRating: rating,
-        iAmWhite: !newcomerIsWhite,
-        gameId,
-        expiresAt: Date.now() + 60_000,
-      });
-
-      return json({
-        status: 'matched',
-        ticket,
-        partnerPeerId: partner.peerId,
-        partnerPubKey: partner.publicKeyHex,
-        partnerHandle: partner.handle,
-        partnerRating: partner.rating,
-        iAmWhite: newcomerIsWhite,
-        gameId,
-      });
-    }
-
-    const entry: WaitingEntry = {
-      ticket,
+    // Stash the match keyed by the partner's ticket so they pick it up on poll.
+    await db.prepare(
+      `INSERT INTO matched (ticket, partner_peer_id, partner_pub_key, partner_handle, partner_rating, i_am_white, game_id, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      partner.ticket,
       peerId,
       publicKeyHex,
-      handle: handle ?? 'anon',
+      handle ?? 'anon',
       rating,
-      timeControlId,
-      joinedAt: Date.now(),
-    };
-    this.waiting.set(ticket, entry);
-    queue.push(ticket);
-    this.queues.set(timeControlId, queue);
+      newcomerIsWhite ? 0 : 1,
+      gameId,
+      expiresAt,
+    ).run();
 
-    return json({ status: 'waiting', ticket });
+    return json({
+      status: 'matched',
+      ticket,
+      partnerPeerId: partner.peer_id,
+      partnerPubKey: partner.public_key_hex,
+      partnerHandle: partner.handle,
+      partnerRating: partner.rating,
+      iAmWhite: newcomerIsWhite,
+      gameId,
+    });
   }
 
-  private handlePoll(body: any): Response {
-    const { ticket } = body;
-    if (!ticket) return json({ error: 'missing ticket' }, 400);
-    this.gc();
+  await db.prepare(
+    `INSERT INTO waiting (ticket, time_control_id, peer_id, public_key_hex, handle, rating, joined_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(ticket, timeControlId, peerId, publicKeyHex, handle ?? 'anon', rating, Date.now()).run();
 
-    const matched = this.matched.get(ticket);
-    if (matched) {
-      this.matched.delete(ticket);
-      return json({ status: 'matched', ...matched });
-    }
-    if (this.waiting.has(ticket)) {
-      return json({ status: 'waiting' });
-    }
-    return json({ status: 'cancelled' });
+  return json({ status: 'waiting', ticket });
+}
+
+async function handlePoll(db: D1Database, body: any): Promise<Response> {
+  const { ticket } = body;
+  if (!ticket) return json({ error: 'missing ticket' }, 400);
+  await gc(db);
+
+  const matched = await db.prepare(
+    `DELETE FROM matched WHERE ticket = ? RETURNING *`,
+  ).bind(ticket).first<MatchedRow>();
+
+  if (matched) {
+    return json({
+      status: 'matched',
+      partnerPeerId: matched.partner_peer_id,
+      partnerPubKey: matched.partner_pub_key,
+      partnerHandle: matched.partner_handle,
+      partnerRating: matched.partner_rating,
+      iAmWhite: matched.i_am_white === 1,
+      gameId: matched.game_id,
+    });
   }
 
-  private handleCancel(body: any): Response {
-    const { ticket } = body;
-    if (!ticket) return json({ error: 'missing ticket' }, 400);
-    const entry = this.waiting.get(ticket);
-    if (entry) {
-      this.waiting.delete(ticket);
-      const queue = this.queues.get(entry.timeControlId);
-      if (queue) {
-        const idx = queue.indexOf(ticket);
-        if (idx >= 0) queue.splice(idx, 1);
-      }
-    }
-    this.matched.delete(ticket);
-    return json({ status: 'cancelled' });
-  }
+  const waiting = await db.prepare(
+    `SELECT 1 FROM waiting WHERE ticket = ?`,
+  ).bind(ticket).first();
 
-  private gc() {
-    const now = Date.now();
-    for (const [ticket, entry] of this.waiting) {
-      if (now - entry.joinedAt > 120_000) {
-        this.waiting.delete(ticket);
-        const q = this.queues.get(entry.timeControlId);
-        if (q) {
-          const idx = q.indexOf(ticket);
-          if (idx >= 0) q.splice(idx, 1);
-        }
-      }
-    }
-    for (const [ticket, m] of this.matched) {
-      if (now > m.expiresAt) this.matched.delete(ticket);
-    }
-  }
+  if (waiting) return json({ status: 'waiting' });
+  return json({ status: 'cancelled' });
+}
+
+async function handleCancel(db: D1Database, body: any): Promise<Response> {
+  const { ticket } = body;
+  if (!ticket) return json({ error: 'missing ticket' }, 400);
+  await db.batch([
+    db.prepare(`DELETE FROM waiting WHERE ticket = ?`).bind(ticket),
+    db.prepare(`DELETE FROM matched WHERE ticket = ?`).bind(ticket),
+  ]);
+  return json({ status: 'cancelled' });
+}
+
+async function gc(db: D1Database) {
+  const now = Date.now();
+  await db.batch([
+    db.prepare(`DELETE FROM waiting WHERE joined_at < ?`).bind(now - 120_000),
+    db.prepare(`DELETE FROM matched WHERE expires_at < ?`).bind(now),
+  ]);
 }
 
 function json(body: unknown, status = 200): Response {
