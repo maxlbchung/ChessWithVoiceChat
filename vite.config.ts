@@ -156,4 +156,5 @@ function devMatchmakerPlugin(): Plugin {
 export default defineConfig({
   plugins: [react(), devMatchmakerPlugin()],
   server: { port: 5173 },
+  base: process.env.GITHUB_PAGES === 'true' ? '/ChessWithVoiceChat/' : '/',
 });
