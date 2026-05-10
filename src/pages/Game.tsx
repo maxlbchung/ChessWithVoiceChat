@@ -642,7 +642,7 @@ export function Game() {
     if (selectedSquare) {
       styles[selectedSquare] = {
         background:
-          'radial-gradient(circle, transparent 55%, rgba(220, 38, 38, 0.7) 56%, rgba(220, 38, 38, 0.7) 65%, transparent 66%)',
+          'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
       };
       for (const t of legalTargets) {
         const isCapture = !!chess.get(t as any);
