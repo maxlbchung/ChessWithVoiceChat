@@ -6,7 +6,11 @@ export type MatchResult =
   | { status: 'waiting' }
   | { status: 'cancelled' };
 
-const MATCHMAKE_URL = import.meta.env.VITE_MATCHMAKE_URL || '/api/matchmake';
+// In dev, route to the in-process plugin in vite.config.ts. In prod, default
+// to the public Worker. Override via VITE_MATCHMAKE_URL when self-hosting.
+const MATCHMAKE_URL =
+  import.meta.env.VITE_MATCHMAKE_URL ||
+  (import.meta.env.DEV ? '/api/matchmake' : 'https://chess-matchmaker.maxlbchung.workers.dev');
 const POLL_MS = 1500;
 
 const enc = new TextEncoder();
