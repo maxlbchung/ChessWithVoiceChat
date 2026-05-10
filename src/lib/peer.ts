@@ -50,7 +50,44 @@ export class PeerSession {
 
   private attachConn(conn: DataConnection) {
     this.conn = conn;
-    conn.on('open', () => this.events.onConnect?.(conn));
+    let closed = false;
+    const fireClose = () => {
+      if (closed) return;
+      closed = true;
+      this.events.onClose?.();
+    };
+
+    conn.on('open', () => {
+      this.events.onConnect?.(conn);
+      // PeerJS only treats iceConnectionState=failed/closed as a close. When a
+      // remote tab closes abruptly the state goes to 'disconnected' and stays
+      // there until the browser times out (30s+). Add our own watchdog so we
+      // surface a close after 5s of 'disconnected', matching the forfeit
+      // grace period in Game.
+      const pc = conn.peerConnection;
+      if (!pc) return;
+      let watchdog: ReturnType<typeof setTimeout> | null = null;
+      const armWatchdog = () => {
+        if (watchdog != null) return;
+        watchdog = setTimeout(() => {
+          watchdog = null;
+          const s = pc.iceConnectionState;
+          if (s === 'disconnected' || s === 'failed') fireClose();
+        }, 5000);
+      };
+      const cancelWatchdog = () => {
+        if (watchdog != null) {
+          clearTimeout(watchdog);
+          watchdog = null;
+        }
+      };
+      pc.addEventListener('iceconnectionstatechange', () => {
+        const s = pc.iceConnectionState;
+        if (s === 'failed' || s === 'closed') fireClose();
+        else if (s === 'disconnected') armWatchdog();
+        else cancelWatchdog();
+      });
+    });
     conn.on('data', (data) => {
       try {
         const msg = data as WireMessage;
@@ -59,7 +96,7 @@ export class PeerSession {
         console.error('bad wire msg', e);
       }
     });
-    conn.on('close', () => this.events.onClose?.());
+    conn.on('close', fireClose);
     conn.on('error', (err) => this.events.onError?.(err as Error));
   }
 

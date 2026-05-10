@@ -296,9 +296,19 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Page unmount cleanup
+  // Page unmount cleanup. Also listen for 'pagehide': React's unmount doesn't
+  // fire reliably when the tab is closed (vs SPA navigation), so without this
+  // the opponent only sees iceConnectionState=disconnected and waits ~30s for
+  // the browser to time out the connection before any close event reaches.
   useEffect(() => {
+    const onPageHide = () => {
+      try {
+        sessionRef.current.destroy();
+      } catch {}
+    };
+    window.addEventListener('pagehide', onPageHide);
     return () => {
+      window.removeEventListener('pagehide', onPageHide);
       if (disconnectTimerRef.current != null) {
         clearInterval(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
