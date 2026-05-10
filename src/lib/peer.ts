@@ -34,7 +34,11 @@ export class PeerSession {
     this.peer.on('connection', (conn) => this.attachConn(conn));
     this.peer.on('call', (call) => this.events.onIncomingCall?.(call));
     this.peer.on('error', (err) => this.events.onError?.(err));
-    this.peer.on('disconnected', () => this.events.onClose?.());
+    // Peer-broker 'disconnected' is informational — the data channel can stay
+    // alive while the broker link blips, and PeerJS may auto-reconnect. Do
+    // NOT treat it as a session close (matchmaking can't pair us again, but
+    // the existing game keeps working).
+    this.peer.on('disconnected', () => console.warn('peer disconnected from broker'));
     this.peer.on('close', () => this.events.onClose?.());
   }
 
