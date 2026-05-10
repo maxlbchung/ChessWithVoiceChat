@@ -80,4 +80,6 @@ export type WireMessage =
   | { type: 'draw-accept' }
   | { type: 'draw-decline' }
   | { type: 'timeout-claim'; loserColor: Color }
-  | { type: 'chat'; text: string };
+  | { type: 'chat'; text: string }
+  | { type: 'avatar'; dataUrl: string }
+  | { type: 'voice-state'; voiceActive: boolean; micOn: boolean };

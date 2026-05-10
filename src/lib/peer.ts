@@ -28,12 +28,14 @@ export class PeerSession {
       config: { iceServers: ICE_SERVERS },
       debug: 1,
     });
-    this.peer.on('open', (id) => events.onOpen?.(id));
+    // Always read through this.events so setEvents() (used when handing the
+    // session from Home → Game) actually swaps the active handlers.
+    this.peer.on('open', (id) => this.events.onOpen?.(id));
     this.peer.on('connection', (conn) => this.attachConn(conn));
-    this.peer.on('call', (call) => events.onIncomingCall?.(call));
-    this.peer.on('error', (err) => events.onError?.(err));
-    this.peer.on('disconnected', () => events.onClose?.());
-    this.peer.on('close', () => events.onClose?.());
+    this.peer.on('call', (call) => this.events.onIncomingCall?.(call));
+    this.peer.on('error', (err) => this.events.onError?.(err));
+    this.peer.on('disconnected', () => this.events.onClose?.());
+    this.peer.on('close', () => this.events.onClose?.());
   }
 
   connectTo(remoteId: string): DataConnection {

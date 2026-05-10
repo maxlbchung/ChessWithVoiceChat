@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useIdentityStore } from '../store/identityStore';
 import { loadSummaries } from '../lib/storage';
 import type { LocalGameSummary } from '../lib/types';
 import { exportIdentity, importIdentity } from '../lib/identity';
 import { getTimeControl } from '../lib/timeControls';
+import { fileToAvatarDataUrl } from '../lib/avatar';
 
 export function Profile() {
-  const { identity, rating, setIdentity, setHandle } = useIdentityStore();
+  const { identity, rating, avatar, setIdentity, setHandle, setAvatar } = useIdentityStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [summaries, setSummaries] = useState<LocalGameSummary[]>([]);
   const [exportText, setExportText] = useState<string | null>(null);
   const [importText, setImportText] = useState('');
@@ -37,6 +39,54 @@ export function Profile() {
       <h1 className="page-title">Profile</h1>
 
       <section className="profile-card">
+        <div className="profile-row">
+          <div className="profile-field">
+            <div className="muted small">Profile picture</div>
+            <div className="avatar-edit">
+              <div className="player-avatar large">
+                {avatar ? (
+                  <img src={avatar} alt={identity.handle} />
+                ) : (
+                  <span className="player-avatar-initial">
+                    {(identity.handle[0] ?? '?').toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <div className="avatar-actions">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const dataUrl = await fileToAvatarDataUrl(file);
+                      await setAvatar(dataUrl);
+                    } catch {
+                      alert('Failed to load image.');
+                    } finally {
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }
+                  }}
+                />
+                <button
+                  className="secondary-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {avatar ? 'Change' : 'Upload'}
+                </button>
+                {avatar && (
+                  <button className="link-btn" onClick={() => setAvatar(null)}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="profile-row">
           <div className="profile-field">
             <div className="muted small">Handle</div>

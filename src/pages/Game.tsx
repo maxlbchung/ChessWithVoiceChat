@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
-import { Clock } from '../components/Clock';
+import { PlayerCard, type MicState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
@@ -21,6 +21,7 @@ import type {
 import { eloDelta, newRating } from '../lib/elo';
 import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
+import { useSpeaking } from '../lib/voiceMeter';
 
 type EndState = {
   outcome: GameOutcome;
@@ -30,7 +31,7 @@ type EndState = {
 export function Game() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
-  const { identity, rating, setRating } = useIdentityStore();
+  const { identity, rating, avatar, setRating } = useIdentityStore();
 
   // Pull live session handed off by Home (or bounce home if missing)
   const handoffRef = useRef(gameId ? takeLobbyHandoff(gameId) : null);
@@ -66,8 +67,24 @@ export function Game() {
   const [voiceActive, setVoiceActive] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+
+  // Opponent profile + voice telemetry (received over the data channel)
+  const [oppAvatar, setOppAvatar] = useState<string | null>(null);
+  const [oppVoice, setOppVoice] = useState<{ voiceActive: boolean; micOn: boolean }>({
+    voiceActive: false,
+    micOn: false,
+  });
+
+  // Live "talking" detection from each side's audio stream
+  const iAmTalking = useSpeaking(localStream);
+  const oppIsTalking = useSpeaking(remoteStream);
+
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
   const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
   const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
@@ -135,15 +152,25 @@ export function Game() {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
         return;
       }
+      if (msg.type === 'avatar') {
+        setOppAvatar(msg.dataUrl);
+        return;
+      }
+      if (msg.type === 'voice-state') {
+        setOppVoice({ voiceActive: msg.voiceActive, micOn: msg.micOn });
+        return;
+      }
     };
 
     const handleIncomingCall = async (call: any) => {
       // Auto-accept voice with our local mic if we have one ready
       try {
-        if (!localStreamRef.current) {
-          localStreamRef.current = await getMicStream();
+        let stream = localStreamRef.current;
+        if (!stream) {
+          stream = await getMicStream();
+          setLocalStream(stream);
         }
-        session.answerCall(call, localStreamRef.current);
+        session.answerCall(call, stream);
         setVoiceActive(true);
         // poll the session.remoteStream → state
         const id = setInterval(() => {
@@ -168,6 +195,10 @@ export function Game() {
         handle: identity.handle,
         rating,
       });
+      if (avatar) {
+        session.send({ type: 'avatar', dataUrl: avatar });
+      }
+      session.send({ type: 'voice-state', voiceActive, micOn });
       session.send({ type: 'ready' });
       setPartnerReady(true);
     };
@@ -416,7 +447,7 @@ export function Game() {
   const startVoice = async () => {
     try {
       const stream = await getMicStream();
-      localStreamRef.current = stream;
+      setLocalStream(stream);
       setMicOn(true);
       setSpeakerOn(true);
       const session = sessionRef.current;
@@ -446,6 +477,26 @@ export function Game() {
   const toggleSpeaker = () => {
     setSpeakerOn((v) => !v);
   };
+
+  // Tell the opponent whenever our voice state changes (skip until conn is up;
+  // the initial state ships as part of sendIntro on connect).
+  useEffect(() => {
+    const session = sessionRef.current;
+    if (!session.conn?.open) return;
+    try {
+      session.send({ type: 'voice-state', voiceActive, micOn });
+    } catch {}
+  }, [voiceActive, micOn]);
+
+  // Resolve mic states for both sides
+  const myMicState: MicState = !voiceActive ? 'off' : !micOn ? 'muted' : iAmTalking ? 'talking' : 'idle';
+  const oppMicState: MicState = !oppVoice.voiceActive
+    ? 'off'
+    : !oppVoice.micOn
+      ? 'muted'
+      : oppIsTalking
+        ? 'talking'
+        : 'idle';
 
   // ----------------------------------------------------------------------
   // Render
@@ -479,11 +530,13 @@ export function Game() {
   return (
     <div className="game-layout">
       <div className="board-column">
-        <Clock
+        <PlayerCard
+          avatarDataUrl={oppAvatar}
+          handle={opp.handle}
+          rating={opp.rating}
+          micState={oppMicState}
           ms={oppColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(oppColor)}
-          label={opp.handle}
-          rating={opp.rating}
         />
         <div className="board-wrap">
           <Chessboard
@@ -496,11 +549,13 @@ export function Game() {
             customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
           />
         </div>
-        <Clock
+        <PlayerCard
+          avatarDataUrl={avatar}
+          handle={`${me.handle} (you)`}
+          rating={me.rating}
+          micState={myMicState}
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
-          label={`${me.handle} (you)`}
-          rating={me.rating}
         />
       </div>
 
