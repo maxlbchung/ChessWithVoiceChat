@@ -37,10 +37,9 @@ export function useVolume(stream: MediaStream | null): number {
         sumSq += v * v;
       }
       const rms = Math.sqrt(sumSq / buf.length);
-      // Aggressive stretch so the bar saturates well below true peak. Moderately
-      // loud speech (~RMS 0.10) already pegs near 1.0; shouting clips. RMS ~0.05
-      // -> ~0.51, RMS ~0.13 -> 1.0.
-      const norm = Math.min(1, Math.pow(rms * 8, 0.7));
+      // Stretch so the bar saturates at RMS 0.20 (loud speech). RMS ~0.05 ->
+      // ~0.37, RMS ~0.10 -> ~0.62, RMS ~0.20 -> 1.0.
+      const norm = Math.min(1, Math.pow(rms * 5, 0.7));
 
       const dt = lastSample === 0 ? 0 : t - lastSample;
       lastSample = t;
