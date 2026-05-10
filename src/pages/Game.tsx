@@ -63,6 +63,7 @@ export function Game() {
   const [partnerReady, setPartnerReady] = useState(false);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
+  const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -390,6 +391,7 @@ export function Game() {
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
+    setSelectedSquare(null);
 
     checkBoardEnd();
     return true;
@@ -434,6 +436,7 @@ export function Game() {
     void beforeTurn;
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
+    setSelectedSquare(null);
 
     checkBoardEnd();
   };
@@ -579,8 +582,71 @@ export function Game() {
     // react-chessboard expects sync return; fire-and-forget the async work.
     const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
     void applyLocalMove(sourceSquare, targetSquare, promotion);
+    setSelectedSquare(null);
     return true;
   };
+
+  const myPieceColor = handoff.iAmWhite ? 'w' : 'b';
+
+  const legalTargets = useMemo<string[]>(() => {
+    if (!selectedSquare) return [];
+    try {
+      const moves = chess.moves({ square: selectedSquare as any, verbose: true }) as Array<{ to: string }>;
+      return moves.map((m) => m.to);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_e) {
+      return [];
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSquare, fen]);
+
+  const onSquareClick = (square: string) => {
+    if (end) return;
+    if (!isMyTurn()) {
+      setSelectedSquare(null);
+      return;
+    }
+    const piece = chess.get(square as any);
+    // Already-selected square clicked → deselect
+    if (selectedSquare === square) {
+      setSelectedSquare(null);
+      return;
+    }
+    // A piece is selected and the click is a legal target → move
+    if (selectedSquare && legalTargets.includes(square)) {
+      void applyLocalMove(selectedSquare, square);
+      setSelectedSquare(null);
+      return;
+    }
+    // Click on own piece → switch selection to it
+    if (piece && piece.color === myPieceColor) {
+      setSelectedSquare(square);
+      return;
+    }
+    // Click anywhere else → clear selection
+    setSelectedSquare(null);
+  };
+
+  const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
+    const styles: Record<string, React.CSSProperties> = {};
+    if (selectedSquare) {
+      styles[selectedSquare] = { background: 'rgba(220, 38, 38, 0.55)' };
+      for (const t of legalTargets) {
+        const isCapture = !!chess.get(t as any);
+        styles[t] = isCapture
+          ? {
+              background:
+                'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+            }
+          : {
+              background:
+                'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
+            };
+      }
+    }
+    return styles;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSquare, legalTargets, fen]);
 
   const movesPgn = useMemo(() => {
     return chess.history().reduce<string[]>((acc, mv, i) => {
@@ -621,11 +687,13 @@ export function Game() {
           <Chessboard
             position={fen}
             onPieceDrop={onPieceDrop}
+            onSquareClick={onSquareClick}
             boardOrientation={handoff.iAmWhite ? 'white' : 'black'}
             arePiecesDraggable={!end && isMyTurn()}
             customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
             customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
             customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
+            customSquareStyles={squareStyles}
           />
         </div>
         <PlayerCard

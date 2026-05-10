@@ -2,4 +2,4 @@
 //   major — only when explicitly requested
 //   minor — new feature
 //   patch — bug fix, small change, visual tweak
-export const APP_VERSION = '0.5.2';
+export const APP_VERSION = '0.6.0';
