@@ -37,8 +37,10 @@ export function useVolume(stream: MediaStream | null): number {
         sumSq += v * v;
       }
       const rms = Math.sqrt(sumSq / buf.length);
-      // Stretch RMS to 0..1 with a soft curve. RMS ~0.05 -> ~0.4, ~0.15 -> ~0.85.
-      const norm = Math.min(1, Math.pow(rms * 4, 0.7));
+      // Aggressive stretch so the bar saturates well below true peak. Moderately
+      // loud speech (~RMS 0.10) already pegs near 1.0; shouting clips. RMS ~0.05
+      // -> ~0.51, RMS ~0.13 -> 1.0.
+      const norm = Math.min(1, Math.pow(rms * 8, 0.7));
 
       const dt = lastSample === 0 ? 0 : t - lastSample;
       lastSample = t;
