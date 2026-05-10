@@ -9,24 +9,39 @@ type Props = {
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   return (
-    <div className="time-mode-grid">
-      {TIME_CONTROLS.map((tc) => {
-        const count = activityCounts?.[tc.id];
-        const player = count === 1 ? 'Player' : 'Players';
-        const label = count === undefined ? ' ' : `${count} ${player}`;
-        return (
-          <div key={tc.id} className="time-mode-cell">
-            <button
-              className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
-              onClick={() => onSelect(tc)}
-              disabled={disabled}
-            >
-              {tc.label}
-            </button>
-            <div className="time-mode-count muted">{label}</div>
-          </div>
-        );
-      })}
+    <div className="time-mode-columns">
+      <div className="time-mode-section">
+        <div className="time-mode-section-title">Normal</div>
+        <div className="time-mode-grid">
+          {TIME_CONTROLS.map((tc) => {
+            const count = activityCounts?.[tc.id];
+            const player = count === 1 ? 'Player' : 'Players';
+            const label = count === undefined ? ' ' : `${count} ${player}`;
+            return (
+              <div key={tc.id} className="time-mode-cell">
+                <button
+                  className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
+                  onClick={() => onSelect(tc)}
+                  disabled={disabled}
+                >
+                  {tc.label}
+                </button>
+                <div className="time-mode-count muted">{label}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="time-mode-section">
+        <div className="time-mode-section-title">2.0</div>
+        <div className="time-mode-grid" />
+      </div>
+
+      <div className="time-mode-section">
+        <div className="time-mode-section-title">Chaos</div>
+        <div className="time-mode-grid" />
+      </div>
     </div>
   );
 }

@@ -241,10 +241,24 @@ a { color: inherit; text-decoration: none; }
 .link-btn:hover { text-decoration: underline; }
 
 /* Time mode grid */
+.time-mode-columns {
+  display: flex;
+  gap: 64px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.time-mode-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
 .time-mode-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+  grid-template-columns: 210px;
+  gap: 10px;
   margin-top: 8px;
 }
 .time-mode-btn {
