@@ -61,6 +61,8 @@ export function Game() {
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [partnerReady, setPartnerReady] = useState(false);
+  const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
+  const [connDetail, setConnDetail] = useState<string>('');
   const [_, forceTick] = useState(0); // tick for clock animation
 
   // Voice state
@@ -189,6 +191,8 @@ export function Game() {
     };
 
     const sendIntro = () => {
+      console.log('[game] sendIntro: data channel open, sending hello/ready');
+      setConnState('connected');
       session.send({
         type: 'hello',
         publicKeyHex: identity.publicKeyHex,
@@ -208,7 +212,13 @@ export function Game() {
       onConnect: () => sendIntro(),
       onMessage: handleMessage,
       onIncomingCall: handleIncomingCall,
+      onError: (err) => {
+        console.error('[game] peer error', err);
+        setConnState('failed');
+        setConnDetail(err.message || String(err));
+      },
       onClose: () => {
+        console.warn('[game] peer/conn closed');
         if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
       },
     });
@@ -218,9 +228,15 @@ export function Game() {
     // (handled in PeerSession's constructor). Friend-flow already has a conn
     // open from Home/Join — sendIntro directly in that case.
     if (session.conn?.open) {
+      console.log('[game] handoff already has open conn → sendIntro');
       sendIntro();
     } else if (handoff.iAmWhite && !session.conn) {
+      console.log('[game] white: initiating connectTo', handoff.partnerPeerId);
+      setConnDetail('initiating');
       session.connectTo(handoff.partnerPeerId);
+    } else {
+      console.log('[game] black: waiting for incoming conn from', handoff.partnerPeerId);
+      setConnDetail('waiting');
     }
 
     return () => {
@@ -562,7 +578,13 @@ export function Game() {
       <aside className="side-panel">
         <div className="game-meta">
           <div className="game-meta-title">{tc.label}</div>
-          <div className="muted small">peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}</div>
+          <div className="muted small">
+            peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}
+            {' · '}
+            {connState === 'connected' && <span className="pos">connected</span>}
+            {connState === 'connecting' && <span>connecting{connDetail ? ` (${connDetail})` : '…'}</span>}
+            {connState === 'failed' && <span className="neg">failed: {connDetail}</span>}
+          </div>
         </div>
 
         <VoiceControls
