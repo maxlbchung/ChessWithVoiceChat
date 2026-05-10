@@ -135,10 +135,11 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
     });
   }
 
+  const now = Date.now();
   await db.prepare(
-    `INSERT INTO waiting (ticket, time_control_id, peer_id, public_key_hex, handle, rating, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(ticket, timeControlId, peerId, publicKeyHex, handle ?? 'anon', rating, Date.now()).run();
+    `INSERT INTO waiting (ticket, time_control_id, peer_id, public_key_hex, handle, rating, joined_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(ticket, timeControlId, peerId, publicKeyHex, handle ?? 'anon', rating, now, now).run();
 
   return json({ status: 'waiting', ticket });
 }
@@ -146,6 +147,13 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
 async function handlePoll(db: D1Database, body: any): Promise<Response> {
   const { ticket } = body;
   if (!ticket) return json({ error: 'missing ticket' }, 400);
+
+  // Bump heartbeat BEFORE gc so a slightly-late poll doesn't get its own
+  // waiter pruned in the same request.
+  await db.prepare(
+    `UPDATE waiting SET last_seen_at = ? WHERE ticket = ?`,
+  ).bind(Date.now(), ticket).run();
+
   await gc(db);
 
   const matched = await db.prepare(
@@ -164,11 +172,11 @@ async function handlePoll(db: D1Database, body: any): Promise<Response> {
     });
   }
 
-  const waiting = await db.prepare(
+  const stillWaiting = await db.prepare(
     `SELECT 1 FROM waiting WHERE ticket = ?`,
   ).bind(ticket).first();
 
-  if (waiting) return json({ status: 'waiting' });
+  if (stillWaiting) return json({ status: 'waiting' });
   return json({ status: 'cancelled' });
 }
 
@@ -205,7 +213,10 @@ async function handleCancel(db: D1Database, body: any): Promise<Response> {
 async function gc(db: D1Database) {
   const now = Date.now();
   await db.batch([
-    db.prepare(`DELETE FROM waiting WHERE joined_at < ?`).bind(now - 120_000),
+    // Heartbeat-based liveness: clients poll every 1.5s, so a 5s window allows
+    // for one missed beat. Anyone older than that has closed their tab and is
+    // a ghost — must not be paired with a real newcomer.
+    db.prepare(`DELETE FROM waiting WHERE last_seen_at < ?`).bind(now - 5_000),
     db.prepare(`DELETE FROM matched WHERE expires_at < ?`).bind(now),
     // Keep queue_log only as long as the longest activity window we report (30 min).
     db.prepare(`DELETE FROM queue_log WHERE joined_at < ?`).bind(now - 30 * 60_000),

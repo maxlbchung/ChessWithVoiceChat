@@ -13,6 +13,7 @@ function devMatchmakerPlugin(): Plugin {
     rating: number;
     timeControlId: string;
     joinedAt: number;
+    lastSeenAt: number;
   };
   type Matched = {
     ticket: string;
@@ -66,9 +67,9 @@ function devMatchmakerPlugin(): Plugin {
           joinLog.push({ timeControlId, joinedAt: Date.now() });
           trimLog();
           const queue = queues.get(timeControlId) ?? [];
-          // gc stale waiters
+          // gc ghost waiters by heartbeat — anyone who hasn't polled in 5s is gone.
           for (const [t, w] of waiting) {
-            if (Date.now() - w.joinedAt > 120_000) {
+            if (Date.now() - w.lastSeenAt > 5_000) {
               waiting.delete(t);
               const q = queues.get(w.timeControlId);
               if (q) {
@@ -120,6 +121,7 @@ function devMatchmakerPlugin(): Plugin {
             rating,
             timeControlId,
             joinedAt: Date.now(),
+            lastSeenAt: Date.now(),
           });
           queue.push(ticket);
           queues.set(timeControlId, queue);
@@ -128,6 +130,20 @@ function devMatchmakerPlugin(): Plugin {
         }
         if (body.action === 'poll') {
           const t = body.ticket;
+          // Heartbeat first so a slightly-late poll keeps the waiter alive.
+          const w = waiting.get(t);
+          if (w) w.lastSeenAt = Date.now();
+          // Then prune ghosts (skip the just-bumped one).
+          for (const [tk, wt] of waiting) {
+            if (Date.now() - wt.lastSeenAt > 5_000) {
+              waiting.delete(tk);
+              const q = queues.get(wt.timeControlId);
+              if (q) {
+                const i = q.indexOf(tk);
+                if (i >= 0) q.splice(i, 1);
+              }
+            }
+          }
           const m = matched.get(t);
           if (m) {
             matched.delete(t);
