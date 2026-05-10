@@ -521,16 +521,9 @@ a { color: inherit; text-decoration: none; }
   position: absolute;
   inset: 0;
   border-radius: 4px;
-  background: linear-gradient(
-    90deg,
-    #16a34a 0%,
-    #16a34a 55%,
-    #facc15 78%,
-    #dc2626 100%
-  );
-  /* Anchor the spectrum to the full track and clip the unfilled portion on the right */
+  background: var(--vol-color, #16a34a);
   clip-path: inset(0 calc((1 - var(--vol, 0)) * 100%) 0 0);
-  transition: clip-path 60ms linear;
+  transition: clip-path 60ms linear, background 80ms linear;
 }
 
 .avatar-edit {

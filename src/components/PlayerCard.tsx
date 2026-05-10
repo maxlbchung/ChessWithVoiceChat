@@ -61,11 +61,21 @@ function VoiceIndicator({ state, volume }: { state: VoiceState; volume: number }
       <div className="volume-track">
         <div
           className="volume-fill"
-          style={{ ['--vol' as any]: vol }}
+          style={{
+            ['--vol' as any]: vol,
+            ['--vol-color' as any]: volumeColor(vol),
+          }}
         />
       </div>
     </div>
   );
+}
+
+// Hold green up to ~0.55, then ramp green → yellow → red by 1.0.
+function volumeColor(vol: number): string {
+  const t = Math.max(0, Math.min(1, (vol - 0.55) / (1.0 - 0.55)));
+  const hue = 120 - 120 * t;
+  return `hsl(${hue.toFixed(0)}, 72%, 42%)`;
 }
 
 function voiceLabel(state: VoiceState): string {
