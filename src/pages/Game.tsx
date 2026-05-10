@@ -66,7 +66,10 @@ export function Game() {
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
+  const disconnectCountRef = useRef<number>(0);
+  const [disconnectCount, setDisconnectCount] = useState(0);
   const FORFEIT_DELAY_MS = 5000;
+  const MAX_GRACE_DISCONNECTS = 2; // 3rd disconnect → immediate forfeit
   const [_, forceTick] = useState(0); // tick for clock animation
 
   // Voice state
@@ -254,10 +257,18 @@ export function Game() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        console.warn('[game] peer/conn closed — starting forfeit countdown');
         if (end) return;
+        const next = disconnectCountRef.current + 1;
+        disconnectCountRef.current = next;
+        setDisconnectCount(next);
+        console.warn(`[game] peer/conn closed (disconnect #${next})`);
         setConnState('connecting');
         setConnDetail('opponent disconnected');
+        if (next > MAX_GRACE_DISCONNECTS) {
+          // No grace period — forfeit immediately on the 3rd+ disconnect.
+          finalize({ outcome: myColor, reason: 'disconnect' });
+          return;
+        }
         startDisconnectCountdown();
       },
     });
@@ -589,6 +600,11 @@ export function Game() {
       {disconnectMs != null && (
         <div className="disconnect-banner">
           Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
+          {' '}
+          <span className="small">
+            (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
+            {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
+          </span>
         </div>
       )}
       <div className="board-column">
