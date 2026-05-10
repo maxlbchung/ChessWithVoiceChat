@@ -640,7 +640,10 @@ export function Game() {
   const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
     const styles: Record<string, React.CSSProperties> = {};
     if (selectedSquare) {
-      styles[selectedSquare] = { background: 'rgba(220, 38, 38, 0.55)' };
+      styles[selectedSquare] = {
+        background:
+          'radial-gradient(circle, transparent 55%, rgba(220, 38, 38, 0.7) 56%, rgba(220, 38, 38, 0.7) 65%, transparent 66%)',
+      };
       for (const t of legalTargets) {
         const isCapture = !!chess.get(t as any);
         styles[t] = isCapture
