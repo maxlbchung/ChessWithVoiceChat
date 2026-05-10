@@ -63,6 +63,10 @@ export function Game() {
   const [partnerReady, setPartnerReady] = useState(false);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
+  const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
+  const disconnectDeadlineRef = useRef<number | null>(null);
+  const disconnectTimerRef = useRef<number | null>(null);
+  const FORFEIT_DELAY_MS = 5000;
   const [_, forceTick] = useState(0); // tick for clock animation
 
   // Voice state
@@ -109,10 +113,39 @@ export function Game() {
   const startedAtRef = useRef<number>(Date.now());
   const lastTickRef = useRef<number>(performance.now());
 
+  const cancelDisconnectCountdown = () => {
+    if (disconnectTimerRef.current != null) {
+      clearInterval(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+    disconnectDeadlineRef.current = null;
+    setDisconnectMs(null);
+  };
+
+  const startDisconnectCountdown = () => {
+    if (end) return;
+    if (disconnectDeadlineRef.current != null) return; // already counting
+    const deadline = Date.now() + FORFEIT_DELAY_MS;
+    disconnectDeadlineRef.current = deadline;
+    setDisconnectMs(FORFEIT_DELAY_MS);
+    const tick = () => {
+      const remaining = (disconnectDeadlineRef.current ?? 0) - Date.now();
+      if (remaining <= 0) {
+        cancelDisconnectCountdown();
+        if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
+        return;
+      }
+      setDisconnectMs(remaining);
+    };
+    disconnectTimerRef.current = window.setInterval(tick, 100);
+  };
+
   useEffect(() => {
     const session = sessionRef.current;
 
     const handleMessage = async (msg: WireMessage) => {
+      // Any message from the partner means the conn is alive — cancel pending forfeit.
+      cancelDisconnectCountdown();
       if (msg.type === 'hello') {
         // exchange hellos
         return;
@@ -209,7 +242,10 @@ export function Game() {
 
     session.setEvents({
       ...session.events,
-      onConnect: () => sendIntro(),
+      onConnect: () => {
+        cancelDisconnectCountdown();
+        sendIntro();
+      },
       onMessage: handleMessage,
       onIncomingCall: handleIncomingCall,
       onError: (err) => {
@@ -218,8 +254,11 @@ export function Game() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        console.warn('[game] peer/conn closed');
-        if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
+        console.warn('[game] peer/conn closed — starting forfeit countdown');
+        if (end) return;
+        setConnState('connecting');
+        setConnDetail('opponent disconnected');
+        startDisconnectCountdown();
       },
     });
 
@@ -248,6 +287,10 @@ export function Game() {
   // Page unmount cleanup
   useEffect(() => {
     return () => {
+      if (disconnectTimerRef.current != null) {
+        clearInterval(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
       try {
         sessionRef.current.destroy();
       } catch {}
@@ -543,6 +586,11 @@ export function Game() {
 
   return (
     <div className="game-layout">
+      {disconnectMs != null && (
+        <div className="disconnect-banner">
+          Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
+        </div>
+      )}
       <div className="board-column">
         <PlayerCard
           avatarDataUrl={oppAvatar}

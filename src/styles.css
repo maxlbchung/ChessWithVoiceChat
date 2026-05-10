@@ -279,6 +279,18 @@ a { color: inherit; text-decoration: none; }
   transform: none;
   background: var(--glass);
 }
+.time-mode-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.time-mode-cell .time-mode-btn {
+  width: 100%;
+}
+.time-mode-count {
+  text-align: center;
+  font-size: 13px;
+}
 
 .play-row {
   display: flex;
@@ -331,9 +343,22 @@ a { color: inherit; text-decoration: none; }
   grid-template-columns: minmax(420px, 640px) 360px;
   gap: 24px;
   align-items: start;
+  position: relative;
 }
 @media (max-width: 980px) {
   .game-layout { grid-template-columns: 1fr; }
+}
+
+.disconnect-banner {
+  grid-column: 1 / -1;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(220, 38, 38, 0.18), rgba(220, 38, 38, 0.08));
+  border: 1px solid var(--border-strong);
+  color: var(--accent-strong);
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .board-column {
