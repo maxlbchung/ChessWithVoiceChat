@@ -84,3 +84,18 @@ export class Matchmaker {
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
+
+export async function fetchQueueStats(
+  windows: Record<string, number>,
+  signal?: AbortSignal,
+): Promise<Record<string, number>> {
+  const res = await fetch(MATCHMAKE_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'stats', windows }),
+    signal,
+  });
+  if (!res.ok) throw new Error('stats fetch failed: ' + res.status);
+  const data = await res.json();
+  return (data?.counts ?? {}) as Record<string, number>;
+}

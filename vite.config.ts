@@ -26,7 +26,14 @@ function devMatchmakerPlugin(): Plugin {
   const waiting = new Map<string, Waiting>();
   const queues = new Map<string, string[]>();
   const matched = new Map<string, Matched>();
+  // Append-only log of every queue join, keyed by time control. Trimmed to 30m.
+  const joinLog: { timeControlId: string; joinedAt: number }[] = [];
   const rid = () => randomBytes(8).toString('hex');
+  const LOG_TTL_MS = 30 * 60_000;
+  const trimLog = () => {
+    const cutoff = Date.now() - LOG_TTL_MS;
+    while (joinLog.length && joinLog[0].joinedAt < cutoff) joinLog.shift();
+  };
 
   return {
     name: 'dev-matchmaker',
@@ -56,6 +63,8 @@ function devMatchmakerPlugin(): Plugin {
         if (body.action === 'join') {
           const { timeControlId, peerId, publicKeyHex, handle, rating } = body;
           const ticket = rid();
+          joinLog.push({ timeControlId, joinedAt: Date.now() });
+          trimLog();
           const queue = queues.get(timeControlId) ?? [];
           // gc stale waiters
           for (const [t, w] of waiting) {
@@ -130,6 +139,27 @@ function devMatchmakerPlugin(): Plugin {
             return;
           }
           reply({ status: 'cancelled' });
+          return;
+        }
+        if (body.action === 'stats') {
+          trimLog();
+          const windows = body.windows;
+          if (!windows || typeof windows !== 'object') {
+            reply({ error: 'missing windows' }, 400);
+            return;
+          }
+          const counts: Record<string, number> = {};
+          const now = Date.now();
+          for (const [id, raw] of Object.entries(windows)) {
+            const windowMs = Number(raw);
+            if (!Number.isFinite(windowMs) || windowMs <= 0) continue;
+            const since = now - Math.min(windowMs, 24 * 60 * 60_000);
+            counts[id] = joinLog.reduce(
+              (n, e) => (e.timeControlId === id && e.joinedAt >= since ? n + 1 : n),
+              0,
+            );
+          }
+          reply({ counts });
           return;
         }
         if (body.action === 'cancel') {

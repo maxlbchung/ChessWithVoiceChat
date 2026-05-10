@@ -4,21 +4,33 @@ type Props = {
   selectedId: string | null;
   onSelect: (tc: TimeControl) => void;
   disabled?: boolean;
+  activityCounts?: Record<string, number>;
 };
 
-export function TimeModeSelector({ selectedId, onSelect, disabled }: Props) {
+export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   return (
     <div className="time-mode-grid">
-      {TIME_CONTROLS.map((tc) => (
-        <button
-          key={tc.id}
-          className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
-          onClick={() => onSelect(tc)}
-          disabled={disabled}
-        >
-          {tc.label}
-        </button>
-      ))}
+      {TIME_CONTROLS.map((tc) => {
+        const count = activityCounts?.[tc.id];
+        const minutes = Math.round(tc.activityWindowMs / 60_000);
+        const player = count === 1 ? 'player' : 'players';
+        const label =
+          count === undefined
+            ? ` `
+            : `${count} ${player} · last ${minutes} min`;
+        return (
+          <div key={tc.id} className="time-mode-cell">
+            <button
+              className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
+              onClick={() => onSelect(tc)}
+              disabled={disabled}
+            >
+              {tc.label}
+            </button>
+            <div className="time-mode-count muted">{label}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -43,6 +43,7 @@ export default {
       if (action === 'join') return withCors(await handleJoin(env.DB, body));
       if (action === 'poll') return withCors(await handlePoll(env.DB, body));
       if (action === 'cancel') return withCors(await handleCancel(env.DB, body));
+      if (action === 'stats') return withCors(await handleStats(env.DB, body));
       return withCors(json({ error: 'unknown action' }, 400));
     } catch (err: any) {
       return withCors(json({ error: 'server error', detail: String(err?.message ?? err) }, 500));
@@ -85,6 +86,9 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
   await gc(db);
 
   const ticket = randomId();
+  await db.prepare(
+    `INSERT INTO queue_log (time_control_id, joined_at) VALUES (?, ?)`,
+  ).bind(timeControlId, Date.now()).run();
 
   // Atomically pop the oldest waiter in this queue. SQLite serializes the
   // statement, so concurrent joins won't pick the same partner.
@@ -168,6 +172,26 @@ async function handlePoll(db: D1Database, body: any): Promise<Response> {
   return json({ status: 'cancelled' });
 }
 
+async function handleStats(db: D1Database, body: any): Promise<Response> {
+  await gc(db);
+  const windows = body?.windows;
+  if (!windows || typeof windows !== 'object') {
+    return json({ error: 'missing windows' }, 400);
+  }
+  const counts: Record<string, number> = {};
+  const now = Date.now();
+  for (const [id, raw] of Object.entries(windows)) {
+    const windowMs = Number(raw);
+    if (!Number.isFinite(windowMs) || windowMs <= 0) continue;
+    const since = now - Math.min(windowMs, 24 * 60 * 60_000);
+    const row = await db.prepare(
+      `SELECT COUNT(*) AS n FROM queue_log WHERE time_control_id = ? AND joined_at >= ?`,
+    ).bind(id, since).first<{ n: number }>();
+    counts[id] = Number(row?.n ?? 0);
+  }
+  return json({ counts });
+}
+
 async function handleCancel(db: D1Database, body: any): Promise<Response> {
   const { ticket } = body;
   if (!ticket) return json({ error: 'missing ticket' }, 400);
@@ -183,6 +207,8 @@ async function gc(db: D1Database) {
   await db.batch([
     db.prepare(`DELETE FROM waiting WHERE joined_at < ?`).bind(now - 120_000),
     db.prepare(`DELETE FROM matched WHERE expires_at < ?`).bind(now),
+    // Keep queue_log only as long as the longest activity window we report (30 min).
+    db.prepare(`DELETE FROM queue_log WHERE joined_at < ?`).bind(now - 30 * 60_000),
   ]);
 }
 

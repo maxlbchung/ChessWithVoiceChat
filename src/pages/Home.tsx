@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TimeModeSelector } from '../components/TimeModeSelector';
 import { TIME_CONTROLS, type TimeControl } from '../lib/timeControls';
+const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
+  TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
+);
 import { useIdentityStore } from '../store/identityStore';
-import { Matchmaker } from '../lib/matchmaking';
+import { Matchmaker, fetchQueueStats } from '../lib/matchmaking';
 import { PeerSession, makePeerId } from '../lib/peer';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 
@@ -17,7 +20,33 @@ export function Home() {
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [shareUrl, setShareUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
+  const [searchingCounts, setSearchingCounts] = useState<Record<string, number>>({});
   const navigate = useNavigate();
+
+  // Poll queue stats so the home page shows how many people are searching per mode.
+  useEffect(() => {
+    if (!identity) return;
+    const ctrl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const tick = async () => {
+      try {
+        const counts = await fetchQueueStats(ACTIVITY_WINDOWS, ctrl.signal);
+        if (!stopped) setSearchingCounts(counts);
+      } catch {
+        // network blip — keep last known counts
+      }
+      if (!stopped) timer = setTimeout(tick, 5000);
+    };
+    tick();
+
+    return () => {
+      stopped = true;
+      ctrl.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [identity]);
 
   // Quickplay: matchmaker queue
   useEffect(() => {
@@ -213,6 +242,7 @@ export function Home() {
         selectedId={selected?.id ?? null}
         onSelect={(tc) => setSelected(tc)}
         disabled={busy}
+        activityCounts={searchingCounts}
       />
 
       {!busy && (

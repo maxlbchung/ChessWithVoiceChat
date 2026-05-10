@@ -24,3 +24,14 @@ CREATE TABLE IF NOT EXISTS matched (
   game_id           TEXT NOT NULL,
   expires_at        INTEGER NOT NULL
 );
+
+-- Append-only log of every queue join. Powers the home-page activity counts
+-- ("N joined in the last 10 min"). Rows are GC'd past the longest window.
+CREATE TABLE IF NOT EXISTS queue_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  time_control_id TEXT NOT NULL,
+  joined_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_queue_log_tc_joined
+  ON queue_log(time_control_id, joined_at);

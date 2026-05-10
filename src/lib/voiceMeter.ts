@@ -22,6 +22,12 @@ export function useVolume(stream: MediaStream | null): number {
 
     const buf = new Uint8Array(analyser.fftSize);
     let lastUpdate = 0;
+    let lastSample = 0;
+    let displayed = 0;
+    // Asymmetric envelope: snap up instantly, fall ~0.5 units/sec (so a full
+    // bar takes ~2s to drain). Mirrors classic VU-meter behaviour.
+    const DECAY_PER_MS = 0.5 / 1000;
+
     const sample = (t: number) => {
       if (cancelled) return;
       analyser.getByteTimeDomainData(buf);
@@ -33,9 +39,18 @@ export function useVolume(stream: MediaStream | null): number {
       const rms = Math.sqrt(sumSq / buf.length);
       // Stretch RMS to 0..1 with a soft curve. RMS ~0.05 -> ~0.4, ~0.15 -> ~0.85.
       const norm = Math.min(1, Math.pow(rms * 4, 0.7));
+
+      const dt = lastSample === 0 ? 0 : t - lastSample;
+      lastSample = t;
+      if (norm >= displayed) {
+        displayed = norm;
+      } else {
+        displayed = Math.max(norm, displayed - DECAY_PER_MS * dt);
+      }
+
       if (t - lastUpdate > 33) {
         lastUpdate = t;
-        setVol(norm);
+        setVol(displayed);
       }
       rafRef.current = requestAnimationFrame(sample);
     };
