@@ -161,8 +161,20 @@ export function Game() {
       }
     };
 
+    const sendIntro = () => {
+      session.send({
+        type: 'hello',
+        publicKeyHex: identity.publicKeyHex,
+        handle: identity.handle,
+        rating,
+      });
+      session.send({ type: 'ready' });
+      setPartnerReady(true);
+    };
+
     session.setEvents({
       ...session.events,
+      onConnect: () => sendIntro(),
       onMessage: handleMessage,
       onIncomingCall: handleIncomingCall,
       onClose: () => {
@@ -170,15 +182,15 @@ export function Game() {
       },
     });
 
-    // Send hello + ready
-    session.send({
-      type: 'hello',
-      publicKeyHex: identity.publicKeyHex,
-      handle: identity.handle,
-      rating,
-    });
-    session.send({ type: 'ready' });
-    setPartnerReady(true); // assume ready for now; gets confirmed by partner's 'ready'
+    // Matchmaking pairs two open peers but doesn't link them. White initiates
+    // the data connection; black waits for the incoming 'connection' event
+    // (handled in PeerSession's constructor). Friend-flow already has a conn
+    // open from Home/Join — sendIntro directly in that case.
+    if (session.conn?.open) {
+      sendIntro();
+    } else if (handoff.iAmWhite && !session.conn) {
+      session.connectTo(handoff.partnerPeerId);
+    }
 
     return () => {
       // teardown handled when leaving the page
