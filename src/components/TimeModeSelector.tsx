@@ -12,12 +12,8 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     <div className="time-mode-grid">
       {TIME_CONTROLS.map((tc) => {
         const count = activityCounts?.[tc.id];
-        const minutes = Math.round(tc.activityWindowMs / 60_000);
-        const player = count === 1 ? 'player' : 'players';
-        const label =
-          count === undefined
-            ? ` `
-            : `${count} ${player} · last ${minutes} min`;
+        const player = count === 1 ? 'Player' : 'Players';
+        const label = count === undefined ? ' ' : `${count} ${player}`;
         return (
           <div key={tc.id} className="time-mode-cell">
             <button
