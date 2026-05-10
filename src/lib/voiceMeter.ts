@@ -1,20 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
-// Returns true while the given MediaStream is producing audio above the
-// threshold. Uses a Web Audio AnalyserNode + RMS sampling on rAF.
-export function useSpeaking(
-  stream: MediaStream | null,
-  opts?: { threshold?: number; holdMs?: number },
-): boolean {
-  const threshold = opts?.threshold ?? 0.04;
-  const holdMs = opts?.holdMs ?? 250;
-  const [speaking, setSpeaking] = useState(false);
+// Returns a 0..1 volume estimate for the given MediaStream, sampled on rAF and
+// throttled to ~30Hz so React re-renders stay reasonable. RMS is normalised by
+// a perceived-loudness curve so typical speech sits around 0.4–0.7.
+export function useVolume(stream: MediaStream | null): number {
+  const [vol, setVol] = useState(0);
   const rafRef = useRef<number>(0);
-  const lastSpokeRef = useRef<number>(0);
 
   useEffect(() => {
     if (!stream || stream.getAudioTracks().length === 0) {
-      setSpeaking(false);
+      setVol(0);
       return;
     }
     let cancelled = false;
@@ -26,7 +21,8 @@ export function useSpeaking(
     src.connect(analyser);
 
     const buf = new Uint8Array(analyser.fftSize);
-    const sample = () => {
+    let lastUpdate = 0;
+    const sample = (t: number) => {
       if (cancelled) return;
       analyser.getByteTimeDomainData(buf);
       let sumSq = 0;
@@ -35,16 +31,15 @@ export function useSpeaking(
         sumSq += v * v;
       }
       const rms = Math.sqrt(sumSq / buf.length);
-      const now = performance.now();
-      if (rms > threshold) {
-        lastSpokeRef.current = now;
-        setSpeaking(true);
-      } else if (now - lastSpokeRef.current > holdMs) {
-        setSpeaking(false);
+      // Stretch RMS to 0..1 with a soft curve. RMS ~0.05 -> ~0.4, ~0.15 -> ~0.85.
+      const norm = Math.min(1, Math.pow(rms * 4, 0.7));
+      if (t - lastUpdate > 33) {
+        lastUpdate = t;
+        setVol(norm);
       }
       rafRef.current = requestAnimationFrame(sample);
     };
-    sample();
+    rafRef.current = requestAnimationFrame(sample);
 
     return () => {
       cancelled = true;
@@ -53,7 +48,7 @@ export function useSpeaking(
       try { analyser.disconnect(); } catch {}
       try { ctx.close(); } catch {}
     };
-  }, [stream, threshold, holdMs]);
+  }, [stream]);
 
-  return speaking;
+  return vol;
 }

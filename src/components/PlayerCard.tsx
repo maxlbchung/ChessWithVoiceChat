@@ -1,17 +1,26 @@
 import { formatClock } from '../lib/timeControls';
 
-export type MicState = 'off' | 'muted' | 'idle' | 'talking';
+export type VoiceState = 'off' | 'muted' | 'active';
 
 type Props = {
   avatarDataUrl: string | null;
   handle: string;
   rating: number;
-  micState: MicState;
+  voiceState: VoiceState;
+  volume: number;
   ms: number;
   active: boolean;
 };
 
-export function PlayerCard({ avatarDataUrl, handle, rating, micState, ms, active }: Props) {
+export function PlayerCard({
+  avatarDataUrl,
+  handle,
+  rating,
+  voiceState,
+  volume,
+  ms,
+  active,
+}: Props) {
   const low = ms < 30_000;
   const initial = (handle?.[0] ?? '?').toUpperCase();
   return (
@@ -27,30 +36,42 @@ export function PlayerCard({ avatarDataUrl, handle, rating, micState, ms, active
         <div className="player-handle">{handle}</div>
         <div className="player-rating">{rating}</div>
       </div>
-      <MicIcon state={micState} />
+      <VoiceIndicator state={voiceState} volume={volume} />
       <div className="player-clock-time">{formatClock(ms)}</div>
     </div>
   );
 }
 
-function MicIcon({ state }: { state: MicState }) {
+function VoiceIndicator({ state, volume }: { state: VoiceState; volume: number }) {
+  const vol = state === 'active' ? Math.max(0, Math.min(1, volume)) : 0;
+  const vibrating = state === 'active' && vol > 0.85;
   return (
-    <div className={`mic-icon mic-${state}`} title={micLabel(state)} aria-label={micLabel(state)}>
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-        <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z" />
-        <path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V21h-2a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-3.08A7 7 0 0 0 19 11z" />
-      </svg>
-      {state === 'muted' && <div className="mic-slash" />}
-      {state === 'talking' && <div className="mic-pulse" />}
+    <div
+      className={`voice-indicator state-${state} ${vibrating ? 'vibrating' : ''}`}
+      title={voiceLabel(state)}
+      aria-label={voiceLabel(state)}
+    >
+      <div className="voice-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <path d="M3 9v6h4l5 5V4L7 9H3z" />
+          <path d="M14.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+        </svg>
+        {state === 'muted' && <div className="voice-slash" />}
+      </div>
+      <div className="volume-track">
+        <div
+          className="volume-fill"
+          style={{ ['--vol' as any]: vol }}
+        />
+      </div>
     </div>
   );
 }
 
-function micLabel(state: MicState): string {
+function voiceLabel(state: VoiceState): string {
   switch (state) {
     case 'off': return 'Voice chat not started';
     case 'muted': return 'Mic muted';
-    case 'idle': return 'Mic on';
-    case 'talking': return 'Talking';
+    case 'active': return 'Voice active';
   }
 }

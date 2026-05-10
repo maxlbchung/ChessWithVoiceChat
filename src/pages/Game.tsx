@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
-import { PlayerCard, type MicState } from '../components/PlayerCard';
+import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
@@ -21,7 +21,7 @@ import type {
 import { eloDelta, newRating } from '../lib/elo';
 import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
-import { useSpeaking } from '../lib/voiceMeter';
+import { useVolume } from '../lib/voiceMeter';
 
 type EndState = {
   outcome: GameOutcome;
@@ -80,9 +80,9 @@ export function Game() {
     micOn: false,
   });
 
-  // Live "talking" detection from each side's audio stream
-  const iAmTalking = useSpeaking(localStream);
-  const oppIsTalking = useSpeaking(remoteStream);
+  // Live volume measurement from each side's audio stream (0..1)
+  const myVolume = useVolume(localStream);
+  const oppVolume = useVolume(remoteStream);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -504,15 +504,13 @@ export function Game() {
     } catch {}
   }, [voiceActive, micOn]);
 
-  // Resolve mic states for both sides
-  const myMicState: MicState = !voiceActive ? 'off' : !micOn ? 'muted' : iAmTalking ? 'talking' : 'idle';
-  const oppMicState: MicState = !oppVoice.voiceActive
+  // Resolve voice indicator states for both sides
+  const myVoiceState: VoiceState = !voiceActive ? 'off' : !micOn ? 'muted' : 'active';
+  const oppVoiceState: VoiceState = !oppVoice.voiceActive
     ? 'off'
     : !oppVoice.micOn
       ? 'muted'
-      : oppIsTalking
-        ? 'talking'
-        : 'idle';
+      : 'active';
 
   // ----------------------------------------------------------------------
   // Render
@@ -550,7 +548,8 @@ export function Game() {
           avatarDataUrl={oppAvatar}
           handle={opp.handle}
           rating={opp.rating}
-          micState={oppMicState}
+          voiceState={oppVoiceState}
+          volume={oppVolume}
           ms={oppColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(oppColor)}
         />
@@ -569,7 +568,8 @@ export function Game() {
           avatarDataUrl={avatar}
           handle={`${me.handle} (you)`}
           rating={me.rating}
-          micState={myMicState}
+          voiceState={myVoiceState}
+          volume={myVolume}
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
         />

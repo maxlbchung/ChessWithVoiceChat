@@ -420,61 +420,92 @@ a { color: inherit; text-decoration: none; }
   font-variant-numeric: tabular-nums;
 }
 
-.mic-icon {
-  position: relative;
-  width: 44px;
-  height: 44px;
+.voice-indicator {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  flex-shrink: 0;
-  transition: color 150ms, background 150ms, transform 150ms;
-}
-.mic-icon.mic-off {
-  color: var(--muted);
-  opacity: 0.4;
-}
-.mic-icon.mic-idle {
-  color: var(--muted);
+  gap: 8px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 22px;
   background: var(--accent-soft);
+  flex-shrink: 0;
+  transition: background 150ms, color 150ms, opacity 150ms;
 }
-.mic-icon.mic-muted {
+.voice-indicator.state-off {
+  color: var(--muted);
+  opacity: 0.45;
+  background: transparent;
+}
+.voice-indicator.state-muted {
   color: var(--bad);
   background: rgba(220, 38, 38, 0.10);
 }
-.mic-icon.mic-talking {
-  color: var(--good);
-  background: rgba(22, 163, 74, 0.18);
-  transform: scale(1.05);
+.voice-indicator.state-active {
+  color: var(--accent-strong);
 }
-.mic-pulse {
+.voice-indicator.vibrating {
+  animation: voice-vibrate 70ms infinite;
+}
+@keyframes voice-vibrate {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(-1px, 1px); }
+  50%  { transform: translate(1px, -1px); }
+  75%  { transform: translate(-1px, -1px); }
+  100% { transform: translate(1px, 1px); }
+}
+
+.voice-icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.voice-slash {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  border: 2px solid var(--good);
-  animation: mic-pulse 1.2s ease-out infinite;
   pointer-events: none;
 }
-@keyframes mic-pulse {
-  0%   { transform: scale(0.85); opacity: 1; }
-  100% { transform: scale(1.4);  opacity: 0; }
-}
-.mic-slash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.mic-slash::after {
+.voice-slash::after {
   content: '';
   position: absolute;
-  left: 8px;
-  right: 8px;
+  left: 4px;
+  right: 4px;
   top: 50%;
   height: 2.5px;
   background: var(--bad);
   transform: translateY(-50%) rotate(-45deg);
   border-radius: 2px;
+}
+
+.volume-track {
+  position: relative;
+  width: 72px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.voice-indicator.state-muted .volume-track,
+.voice-indicator.state-off .volume-track {
+  opacity: 0.5;
+}
+.volume-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #16a34a 0%,
+    #16a34a 55%,
+    #facc15 78%,
+    #dc2626 100%
+  );
+  /* Anchor the spectrum to the full track and clip the unfilled portion on the right */
+  clip-path: inset(0 calc((1 - var(--vol, 0)) * 100%) 0 0);
+  transition: clip-path 60ms linear;
 }
 
 .avatar-edit {
