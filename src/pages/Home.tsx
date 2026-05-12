@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
@@ -26,7 +26,43 @@ export function Home() {
   const [freeChess] = useState(() => new Chess());
   const [freeFen, setFreeFen] = useState(freeChess.fen());
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
+  const [freeSelected, setFreeSelected] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const freeLegalTargets = useMemo<string[]>(() => {
+    if (!freeSelected) return [];
+    try {
+      const moves = freeChess.moves({ square: freeSelected as any, verbose: true }) as Array<{ to: string }>;
+      return moves.map((m) => m.to);
+    } catch {
+      return [];
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeSelected, freeFen]);
+
+  const freeSquareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
+    const styles: Record<string, React.CSSProperties> = {};
+    if (freeSelected) {
+      styles[freeSelected] = {
+        background:
+          'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+      };
+      for (const t of freeLegalTargets) {
+        const isCapture = !!freeChess.get(t as any);
+        styles[t] = isCapture
+          ? {
+              background:
+                'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+            }
+          : {
+              background:
+                'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
+            };
+      }
+    }
+    return styles;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeSelected, freeLegalTargets, freeFen]);
 
   const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
     const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
@@ -37,12 +73,38 @@ export function Home() {
       return false;
     }
     setFreeFen(freeChess.fen());
+    setFreeSelected(null);
     return true;
+  };
+
+  const onFreeSquareClick = (square: string) => {
+    const piece = freeChess.get(square as any);
+    if (freeSelected === square) {
+      setFreeSelected(null);
+      return;
+    }
+    if (freeSelected && freeLegalTargets.includes(square)) {
+      try {
+        freeChess.move({ from: freeSelected, to: square, promotion: 'q' });
+        setFreeFen(freeChess.fen());
+      } catch {
+        // ignore
+      }
+      setFreeSelected(null);
+      return;
+    }
+    // In free play, the active color is whoever's turn it is.
+    if (piece && piece.color === freeChess.turn()) {
+      setFreeSelected(square);
+      return;
+    }
+    setFreeSelected(null);
   };
 
   const resetFreePlay = () => {
     freeChess.reset();
     setFreeFen(freeChess.fen());
+    setFreeSelected(null);
   };
 
   const flipFreePlay = () => {
@@ -277,10 +339,12 @@ export function Home() {
             <Chessboard
               position={freeFen}
               onPieceDrop={handleFreeDrop}
+              onSquareClick={onFreeSquareClick}
               boardOrientation={freeOrientation}
               customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
               customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
               customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
+              customSquareStyles={freeSquareStyles}
             />
           </div>
         </div>
