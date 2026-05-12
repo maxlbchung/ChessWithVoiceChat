@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { TIME_CONTROLS, type TimeControl } from '../lib/timeControls';
+import { timeControlsForVariant, type TimeControl } from '../lib/timeControls';
 
 type Props = {
   selectedId: string | null;
@@ -9,38 +9,50 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'two' | 'chaos';
+type SectionKey = 'normal' | 'merge' | 'two' | 'chaos';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     normal: true,
+    merge: false,
     two: false,
     chaos: false,
   });
   const toggle = (k: SectionKey) => setOpen((s) => ({ ...s, [k]: !s[k] }));
 
+  const renderGrid = (controls: TimeControl[]) => (
+    <div className="time-mode-grid">
+      {controls.map((tc) => {
+        const count = activityCounts?.[tc.id];
+        const player = count === 1 ? 'Player' : 'Players';
+        const label = count === undefined ? ' ' : `${count} ${player}`;
+        return (
+          <div key={tc.id} className="time-mode-cell">
+            <button
+              className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
+              onClick={() => onSelect(tc)}
+              disabled={disabled}
+            >
+              {tc.label}
+            </button>
+            <div className="time-mode-count muted">{label}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="time-mode-box">
       <Section title="Normal" open={open.normal} onToggle={() => toggle('normal')}>
-        <div className="time-mode-grid">
-          {TIME_CONTROLS.map((tc) => {
-            const count = activityCounts?.[tc.id];
-            const player = count === 1 ? 'Player' : 'Players';
-            const label = count === undefined ? ' ' : `${count} ${player}`;
-            return (
-              <div key={tc.id} className="time-mode-cell">
-                <button
-                  className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
-                  onClick={() => onSelect(tc)}
-                  disabled={disabled}
-                >
-                  {tc.label}
-                </button>
-                <div className="time-mode-count muted">{label}</div>
-              </div>
-            );
-          })}
+        {renderGrid(timeControlsForVariant('normal'))}
+      </Section>
+
+      <Section title="Merge" open={open.merge} onToggle={() => toggle('merge')}>
+        <div className="muted small time-mode-blurb">
+          Capture your own rook/knight/bishop/queen to merge their movement patterns into one piece.
         </div>
+        {renderGrid(timeControlsForVariant('merge'))}
       </Section>
 
       <Section title="2.0" open={open.two} onToggle={() => toggle('two')}>

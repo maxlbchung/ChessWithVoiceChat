@@ -29,3 +29,11 @@ export function takeLobbyHandoff(gameId: string): LobbyHandoff | null {
   }
   return null;
 }
+
+// Look at the pending handoff without consuming it. Used by route-level
+// dispatch so it can read timeControlId before deciding which game component
+// to mount.
+export function peekLobbyHandoff(gameId: string): LobbyHandoff | null {
+  if (pending && pending.gameId === gameId) return pending;
+  return null;
+}
