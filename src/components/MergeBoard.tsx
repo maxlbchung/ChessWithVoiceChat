@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
-import type { CSSProperties } from 'react';
-import type { Piece, PieceLetter, Square } from '../lib/mergeChess';
+import { useMemo, useRef, useState } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
+import type { Piece, Square } from '../lib/mergeChess';
 import { sqToIdx } from '../lib/mergeChess';
+import { lettersToPieceKeys, renderPiece } from '../lib/pieceSvgs';
 
 type Props = {
   board: (Piece | null)[];
@@ -9,31 +10,18 @@ type Props = {
   selectedSquare?: Square | null;
   legalTargets?: { to: Square; isCapture: boolean; isMerge: boolean }[];
   onSquareClick?: (sq: Square) => void;
+  // Called when a piece is dropped on `to` from `from`. Return true if the
+  // drop should be applied (consumer is responsible for actually moving).
+  onPieceDrop?: (from: Square, to: Square) => boolean;
+  // Called when a drag begins — consumer can use it to populate legalTargets
+  // (mirrors the click→select flow).
+  onDragStartSquare?: (from: Square) => void;
   interactive?: boolean;
-  boardWidth?: number;  // px
+  draggable?: boolean;
+  boardWidth?: number;
 };
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-
-// Per-letter glyph sequence to render. Unicode has distinct "outlined" (white)
-// and "solid" (black) chess glyphs; we use the outlined ones and rely on CSS
-// fill + text-shadow stroke to render either color clearly on both squares.
-const PIECE_GLYPHS: Record<string, string[]> = {
-  P: ['♙'],
-  K: ['♔'],
-  R: ['♖'],
-  N: ['♘'],
-  B: ['♗'],
-  Q: ['♕'],
-  C: ['♖', '♘'],      // R+N
-  A: ['♗', '♘'],      // B+N
-  Z: ['♕', '♘'],      // R+B+N (queen encodes R+B; add knight for the N)
-};
-
-function pieceGlyphs(p: Piece): string[] {
-  const up = p.letter.toUpperCase();
-  return PIECE_GLYPHS[up] ?? ['?'];
-}
 
 export function MergeBoard({
   board,
@@ -41,10 +29,15 @@ export function MergeBoard({
   selectedSquare,
   legalTargets,
   onSquareClick,
+  onPieceDrop,
+  onDragStartSquare,
   interactive = true,
+  draggable = true,
   boardWidth = 480,
 }: Props) {
   const squarePx = boardWidth / 8;
+  const [dragOver, setDragOver] = useState<Square | null>(null);
+  const dragSourceRef = useRef<Square | null>(null);
 
   const targetMap = useMemo(() => {
     const m = new Map<Square, { isCapture: boolean; isMerge: boolean }>();
@@ -52,10 +45,42 @@ export function MergeBoard({
     return m;
   }, [legalTargets]);
 
-  // Build the order of squares to render based on orientation. Top-left visual
-  // square = a8 (white at bottom) or h1 (black at bottom).
   const ranksTopDown = orientation === 'white' ? [7, 6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6, 7];
   const filesLeftRight = orientation === 'white' ? [0, 1, 2, 3, 4, 5, 6, 7] : [7, 6, 5, 4, 3, 2, 1, 0];
+
+  const handleDragStart = (e: DragEvent<HTMLDivElement>, sq: Square) => {
+    if (!draggable || !interactive) {
+      e.preventDefault();
+      return;
+    }
+    dragSourceRef.current = sq;
+    // Need *some* dataTransfer payload for Firefox to fire drop events.
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', sq); } catch {}
+    onDragStartSquare?.(sq);
+  };
+
+  const handleDragEnd = () => {
+    dragSourceRef.current = null;
+    setDragOver(null);
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>, sq: Square) => {
+    if (!dragSourceRef.current) return;
+    e.preventDefault();  // allow drop
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOver !== sq) setDragOver(sq);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>, to: Square) => {
+    e.preventDefault();
+    const from = dragSourceRef.current;
+    dragSourceRef.current = null;
+    setDragOver(null);
+    if (!from) return;
+    if (from === to) return;
+    onPieceDrop?.(from, to);
+  };
 
   return (
     <div
@@ -80,6 +105,8 @@ export function MergeBoard({
           const piece = board[idx];
           const isSelected = selectedSquare === sq;
           const target = targetMap.get(sq);
+          const isDragOver = dragOver === sq;
+
           const style: CSSProperties = {
             background: isLight ? '#dfe5f0' : '#5d6c89',
             position: 'relative',
@@ -87,9 +114,11 @@ export function MergeBoard({
             alignItems: 'center',
             justifyContent: 'center',
             cursor: interactive ? 'pointer' : 'default',
+            boxShadow: isDragOver
+              ? 'inset 0 0 1px 6px rgba(255,255,255,0.75)'
+              : undefined,
           };
 
-          // Selection + target overlays (radial gradients matching the standard board)
           let overlay: CSSProperties | null = null;
           if (isSelected) {
             overlay = {
@@ -97,11 +126,15 @@ export function MergeBoard({
                 'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
             };
           } else if (target) {
-            if (target.isCapture || target.isMerge) {
+            if (target.isMerge) {
               overlay = {
-                background: target.isMerge
-                  ? 'radial-gradient(circle, transparent 55%, rgba(80,200,120,0.55) 56%, rgba(80,200,120,0.55) 65%, transparent 66%)'
-                  : 'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+                background:
+                  'radial-gradient(circle, transparent 55%, rgba(80,200,120,0.55) 56%, rgba(80,200,120,0.55) 65%, transparent 66%)',
+              };
+            } else if (target.isCapture) {
+              overlay = {
+                background:
+                  'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
               };
             } else {
               overlay = {
@@ -116,6 +149,9 @@ export function MergeBoard({
               key={sq}
               data-sq={sq}
               onClick={() => interactive && onSquareClick?.(sq)}
+              onDragOver={(e) => handleDragOver(e, sq)}
+              onDragLeave={() => { if (dragOver === sq) setDragOver(null); }}
+              onDrop={(e) => handleDrop(e, sq)}
               style={style}
             >
               {overlay && (
@@ -128,8 +164,15 @@ export function MergeBoard({
                   }}
                 />
               )}
-              {piece && <PieceGlyph piece={piece} squarePx={squarePx} />}
-              {/* file / rank coords on edges */}
+              {piece && (
+                <PieceSprite
+                  piece={piece}
+                  squarePx={squarePx}
+                  draggable={draggable && interactive}
+                  onDragStart={(e) => handleDragStart(e, sq)}
+                  onDragEnd={handleDragEnd}
+                />
+              )}
               {f === filesLeftRight[0] && (
                 <span
                   style={{
@@ -168,55 +211,70 @@ export function MergeBoard({
   );
 }
 
-function PieceGlyph({ piece, squarePx }: { piece: Piece; squarePx: number }) {
-  const glyphs = pieceGlyphs(piece);
-  const isWhite = piece.color === 'w';
-  // For multi-glyph (merged) pieces, render side-by-side and scale to fit.
-  const baseFont = squarePx * 0.85;
-  const fontSize = glyphs.length === 1 ? baseFont : baseFont * 0.7;
-  // Stroke trick: white-piece glyphs are rendered as black-outlined-white using
-  // CSS text-shadow so they read on both square colors.
-  const fill = isWhite ? '#f8f9fb' : '#1a1d24';
-  const stroke = isWhite ? '#1a1d24' : '#f8f9fb';
-  const textShadow = `
-    -1px -1px 0 ${stroke},
-     1px -1px 0 ${stroke},
-    -1px  1px 0 ${stroke},
-     1px  1px 0 ${stroke},
-     0    0    2px rgba(0,0,0,0.3)
-  `;
+function PieceSprite({
+  piece,
+  squarePx,
+  draggable,
+  onDragStart,
+  onDragEnd,
+}: {
+  piece: Piece;
+  squarePx: number;
+  draggable: boolean;
+  onDragStart: (e: DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
+}) {
+  const keys = lettersToPieceKeys(piece.letter);
+  const isMerged = keys.length > 1;
+  // Single piece fills the square; merged pieces render two pieces overlapped
+  // (front-left + back-right) at ~70% scale so both shapes are legible.
+  const fullSize = squarePx * 0.95;
+  const pairSize = squarePx * 0.7;
+
   return (
     <div
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        lineHeight: 1,
-        position: 'relative',
+        cursor: draggable ? 'grab' : 'inherit',
         zIndex: 1,
       }}
     >
-      {glyphs.map((g, i) => (
-        <span
-          key={i}
-          style={{
-            fontSize,
-            color: fill,
-            textShadow,
-            fontFamily:
-              "'Segoe UI Symbol', 'DejaVu Sans', 'Apple Color Emoji', sans-serif",
-            // Tiny visual offset so overlapping glyphs read as a pair
-            marginLeft: i === 0 ? 0 : -squarePx * 0.18,
-          }}
-        >
-          {g}
-        </span>
-      ))}
+      {!isMerged ? (
+        renderPiece(keys[0], fullSize)
+      ) : (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: squarePx * 0.03,
+              top: squarePx * 0.18,
+              filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+              pointerEvents: 'none',
+            }}
+          >
+            {renderPiece(keys[0], pairSize)}
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              right: squarePx * 0.03,
+              bottom: squarePx * 0.02,
+              filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+              pointerEvents: 'none',
+            }}
+          >
+            {renderPiece(keys[1], pairSize)}
+          </div>
+        </>
+      )}
     </div>
   );
-}
-
-// Re-export for use sites that want to format a piece letter standalone.
-export function pieceLetterToGlyphs(letter: PieceLetter): string[] {
-  return PIECE_GLYPHS[letter.toUpperCase()] ?? ['?'];
 }

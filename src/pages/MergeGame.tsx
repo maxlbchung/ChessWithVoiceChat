@@ -514,26 +514,31 @@ export function MergeGame() {
     return (game.turn === 'w') === (c === 'white');
   };
 
+  // Try to play `from`→`to`. Handles pawn promotion via a quick prompt.
+  // Returns true if a move was attempted (caller can clear selection).
+  const attemptMove = (from: Square, to: Square): boolean => {
+    const piece = game.board[sqIdx(from)];
+    const isPawn = piece && piece.letter.toUpperCase() === 'P';
+    const targetRank = parseInt(to[1], 10);
+    const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
+    if (isPromoting) {
+      const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
+      const promo = (choice ?? 'Q').toUpperCase();
+      const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      void applyLocalMove(from, to, valid);
+    } else {
+      void applyLocalMove(from, to);
+    }
+    return true;
+  };
+
   const onSquareClick = (square: Square) => {
     if (end) return;
     if (!isMyTurn()) { setSelectedSquare(null); return; }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
-      // Detect promotion need
-      const idx = sqIdx(selectedSquare);
-      const piece = game.board[idx];
-      const isPawn = piece && piece.letter.toUpperCase() === 'P';
-      const targetRank = parseInt(square[1], 10);
-      const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
-      if (isPromoting) {
-        const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
-        const promo = (choice ?? 'Q').toUpperCase();
-        const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
-        void applyLocalMove(selectedSquare, square, valid);
-      } else {
-        void applyLocalMove(selectedSquare, square);
-      }
+      attemptMove(selectedSquare, square);
       return;
     }
     const piece = game.board[sqIdx(square)];
@@ -542,6 +547,28 @@ export function MergeGame() {
       return;
     }
     setSelectedSquare(null);
+  };
+
+  // Drag start on an own piece — same effect as clicking it, so the legal
+  // target rings show up while the user drags.
+  const onDragStartSquare = (from: Square) => {
+    if (end) return;
+    if (!isMyTurn()) return;
+    const piece = game.board[sqIdx(from)];
+    if (!piece || piece.color !== myEngineColor) return;
+    if (selectedSquare !== from) setSelectedSquare(from);
+  };
+
+  // Drop on a target — apply if legal, otherwise leave selection as-is so
+  // the user can still click-to-move.
+  const onPieceDrop = (from: Square, to: Square): boolean => {
+    if (end) return false;
+    if (!isMyTurn()) return false;
+    const piece = game.board[sqIdx(from)];
+    if (!piece || piece.color !== myEngineColor) return false;
+    const legal = legalMovesFrom(game, from).some((m) => m.to === to);
+    if (!legal) return false;
+    return attemptMove(from, to);
   };
 
   const movesDisplay = useMemo(() => {
@@ -588,7 +615,10 @@ export function MergeGame() {
             selectedSquare={selectedSquare}
             legalTargets={legalTargets}
             onSquareClick={onSquareClick}
+            onPieceDrop={onPieceDrop}
+            onDragStartSquare={onDragStartSquare}
             interactive={!end && isMyTurn()}
+            draggable={!end && isMyTurn()}
             boardWidth={480}
           />
         </div>
