@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import type { CSSProperties, DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, DragEvent, MouseEvent as ReactMouseEvent } from 'react';
 import type { Piece, Square } from '../lib/mergeChess';
 import { sqToIdx } from '../lib/mergeChess';
 import { lettersToPieceKeys, renderPiece } from '../lib/pieceSvgs';
@@ -10,18 +10,19 @@ type Props = {
   selectedSquare?: Square | null;
   legalTargets?: { to: Square; isCapture: boolean; isMerge: boolean }[];
   onSquareClick?: (sq: Square) => void;
-  // Called when a piece is dropped on `to` from `from`. Return true if the
-  // drop should be applied (consumer is responsible for actually moving).
   onPieceDrop?: (from: Square, to: Square) => boolean;
-  // Called when a drag begins — consumer can use it to populate legalTargets
-  // (mirrors the click→select flow).
   onDragStartSquare?: (from: Square) => void;
   interactive?: boolean;
   draggable?: boolean;
   boardWidth?: number;
 };
 
+type Arrow = { from: Square; to: Square };
+
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+// Match react-chessboard's default arrow color so both boards feel the same.
+const ARROW_COLOR = 'rgb(255,170,0)';
+const HIGHLIGHT_COLOR = 'rgba(255,170,0,0.45)';
 
 export function MergeBoard({
   board,
@@ -39,6 +40,13 @@ export function MergeBoard({
   const [dragOver, setDragOver] = useState<Square | null>(null);
   const dragSourceRef = useRef<Square | null>(null);
 
+  // Annotation state — orange arrows and highlighted squares are purely visual,
+  // not persisted, and shared across both players is intentionally out of scope.
+  const [arrows, setArrows] = useState<Arrow[]>([]);
+  const [highlights, setHighlights] = useState<Set<Square>>(new Set());
+  const [previewArrow, setPreviewArrow] = useState<Arrow | null>(null);
+  const rightDownSqRef = useRef<Square | null>(null);
+
   const targetMap = useMemo(() => {
     const m = new Map<Square, { isCapture: boolean; isMerge: boolean }>();
     for (const t of legalTargets ?? []) m.set(t.to, { isCapture: t.isCapture, isMerge: t.isMerge });
@@ -48,13 +56,15 @@ export function MergeBoard({
   const ranksTopDown = orientation === 'white' ? [7, 6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6, 7];
   const filesLeftRight = orientation === 'white' ? [0, 1, 2, 3, 4, 5, 6, 7] : [7, 6, 5, 4, 3, 2, 1, 0];
 
+  // ------------------------------------------------------------------
+  // Drag-and-drop (left button)
+  // ------------------------------------------------------------------
   const handleDragStart = (e: DragEvent<HTMLDivElement>, sq: Square) => {
     if (!draggable || !interactive) {
       e.preventDefault();
       return;
     }
     dragSourceRef.current = sq;
-    // Need *some* dataTransfer payload for Firefox to fire drop events.
     e.dataTransfer.effectAllowed = 'move';
     try { e.dataTransfer.setData('text/plain', sq); } catch {}
     onDragStartSquare?.(sq);
@@ -67,7 +77,7 @@ export function MergeBoard({
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>, sq: Square) => {
     if (!dragSourceRef.current) return;
-    e.preventDefault();  // allow drop
+    e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     if (dragOver !== sq) setDragOver(sq);
   };
@@ -82,12 +92,99 @@ export function MergeBoard({
     onPieceDrop?.(from, to);
   };
 
+  // ------------------------------------------------------------------
+  // Arrow drawing & square highlighting (right button)
+  // ------------------------------------------------------------------
+  const handleMouseDown = (e: ReactMouseEvent<HTMLDivElement>, sq: Square) => {
+    if (e.button === 2) {
+      e.preventDefault();
+      rightDownSqRef.current = sq;
+      setPreviewArrow({ from: sq, to: sq });
+    } else if (e.button === 0) {
+      // Any left-click clears annotations, mirroring chess.com / lichess.
+      if (arrows.length > 0) setArrows([]);
+      if (highlights.size > 0) setHighlights(new Set());
+    }
+  };
+
+  const handleMouseEnter = (sq: Square) => {
+    if (rightDownSqRef.current) {
+      setPreviewArrow({ from: rightDownSqRef.current, to: sq });
+    }
+  };
+
+  // Track right-button release globally so releasing outside the board still
+  // cancels the in-progress arrow.
+  useEffect(() => {
+    const onUp = (e: MouseEvent) => {
+      if (e.button !== 2) return;
+      const from = rightDownSqRef.current;
+      rightDownSqRef.current = null;
+      if (!from) { setPreviewArrow(null); return; }
+      // The target the user released on (find a [data-sq] ancestor).
+      let el: HTMLElement | null = e.target as HTMLElement | null;
+      let to: Square | null = null;
+      while (el && !to) {
+        const attr = el.getAttribute?.('data-sq');
+        if (attr) to = attr as Square;
+        el = el.parentElement;
+      }
+      setPreviewArrow(null);
+      if (!to) return;
+      if (from === to) {
+        // Single right-click → toggle highlight
+        setHighlights((prev) => {
+          const next = new Set(prev);
+          if (next.has(to as Square)) next.delete(to as Square);
+          else next.add(to as Square);
+          return next;
+        });
+      } else {
+        // Drag → toggle arrow
+        setArrows((prev) => {
+          const exists = prev.some((a) => a.from === from && a.to === to);
+          if (exists) return prev.filter((a) => !(a.from === from && a.to === to));
+          return [...prev, { from, to: to as Square }];
+        });
+      }
+    };
+    window.addEventListener('mouseup', onUp);
+    return () => window.removeEventListener('mouseup', onUp);
+  }, []);
+
+  // Suppress the browser context menu over the board so right-click is free
+  // for arrow/highlight gestures.
+  const suppressContext = (e: ReactMouseEvent<HTMLDivElement>) => e.preventDefault();
+
+  // Pixel coords of a square center, given current orientation.
+  const center = (sq: Square): { x: number; y: number } => {
+    const file = sq.charCodeAt(0) - 97;          // 0..7
+    const rank = parseInt(sq[1], 10) - 1;        // 0..7
+    const col = orientation === 'white' ? file : 7 - file;
+    const row = orientation === 'white' ? 7 - rank : rank;
+    return { x: col * squarePx + squarePx / 2, y: row * squarePx + squarePx / 2 };
+  };
+
+  // All arrows to render — committed + the in-progress preview at half opacity.
+  const renderedArrows = useMemo<Array<Arrow & { preview?: boolean }>>(
+    () => {
+      const list: Array<Arrow & { preview?: boolean }> = arrows.map((a) => ({ ...a }));
+      if (previewArrow && previewArrow.from !== previewArrow.to) {
+        list.push({ ...previewArrow, preview: true });
+      }
+      return list;
+    },
+    [arrows, previewArrow],
+  );
+
   return (
     <div
       className="merge-board"
+      onContextMenu={suppressContext}
       style={{
         width: boardWidth,
         height: boardWidth,
+        position: 'relative',
         display: 'grid',
         gridTemplateColumns: `repeat(8, ${squarePx}px)`,
         gridTemplateRows: `repeat(8, ${squarePx}px)`,
@@ -106,6 +203,7 @@ export function MergeBoard({
           const isSelected = selectedSquare === sq;
           const target = targetMap.get(sq);
           const isDragOver = dragOver === sq;
+          const isHighlighted = highlights.has(sq);
 
           const style: CSSProperties = {
             background: isLight ? '#dfe5f0' : '#5d6c89',
@@ -149,11 +247,23 @@ export function MergeBoard({
               key={sq}
               data-sq={sq}
               onClick={() => interactive && onSquareClick?.(sq)}
+              onMouseDown={(e) => handleMouseDown(e, sq)}
+              onMouseEnter={() => handleMouseEnter(sq)}
               onDragOver={(e) => handleDragOver(e, sq)}
               onDragLeave={() => { if (dragOver === sq) setDragOver(null); }}
               onDrop={(e) => handleDrop(e, sq)}
               style={style}
             >
+              {isHighlighted && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: HIGHLIGHT_COLOR,
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
               {overlay && (
                 <div
                   style={{
@@ -207,6 +317,60 @@ export function MergeBoard({
           );
         }),
       )}
+
+      {/* Arrow overlay — drawn on top of pieces, ignored by mouse. */}
+      {renderedArrows.length > 0 && (
+        <svg
+          width={boardWidth}
+          height={boardWidth}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            pointerEvents: 'none',
+            zIndex: 10,
+          }}
+        >
+          {renderedArrows.map((a, i) => {
+            const from = center(a.from);
+            const to = center(a.to);
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const r = Math.hypot(dx, dy);
+            if (r === 0) return null;
+            const reducer = boardWidth / 32;
+            const end = {
+              x: from.x + (dx * (r - reducer)) / r,
+              y: from.y + (dy * (r - reducer)) / r,
+            };
+            const markerId = `mb-arrow-${i}`;
+            return (
+              <g key={`${a.from}-${a.to}-${a.preview ? 'p' : 'c'}`}>
+                <marker
+                  id={markerId}
+                  markerWidth="2"
+                  markerHeight="2.5"
+                  refX="1.25"
+                  refY="1.25"
+                  orient="auto"
+                >
+                  <polygon points="0.3 0, 2 1.25, 0.3 2.5" fill={ARROW_COLOR} />
+                </marker>
+                <line
+                  x1={from.x}
+                  y1={from.y}
+                  x2={end.x}
+                  y2={end.y}
+                  opacity={a.preview ? 0.5 : 0.65}
+                  stroke={ARROW_COLOR}
+                  strokeWidth={a.preview ? (0.9 * boardWidth) / 40 : boardWidth / 40}
+                  markerEnd={`url(#${markerId})`}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      )}
     </div>
   );
 }
@@ -226,8 +390,6 @@ function PieceSprite({
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
-  // Single piece fills the square; merged pieces render two pieces overlapped
-  // (front-left + back-right) at ~70% scale so both shapes are legible.
   const fullSize = squarePx * 0.95;
   const pairSize = squarePx * 0.7;
 
