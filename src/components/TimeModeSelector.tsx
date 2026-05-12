@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { timeControlsForVariant, type TimeControl } from '../lib/timeControls';
+import * as sfx from '../lib/sfx';
 
 type Props = {
   selectedId: string | null;
@@ -18,7 +19,10 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     two: false,
     chaos: false,
   });
-  const toggle = (k: SectionKey) => setOpen((s) => ({ ...s, [k]: !s[k] }));
+  const toggle = (k: SectionKey) => {
+    if (open[k]) sfx.playClose(); else sfx.playOpen();
+    setOpen((s) => ({ ...s, [k]: !s[k] }));
+  };
 
   const renderGrid = (controls: TimeControl[]) => (
     <div className="time-mode-grid">
@@ -30,7 +34,11 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           <div key={tc.id} className="time-mode-cell">
             <button
               className={`time-mode-btn ${selectedId === tc.id ? 'selected' : ''}`}
-              onClick={() => onSelect(tc)}
+              data-no-sfx
+              onClick={() => {
+                if (selectedId !== tc.id) sfx.playSelect();
+                onSelect(tc);
+              }}
               disabled={disabled}
             >
               {tc.label}
@@ -82,6 +90,7 @@ function Section({
       <button
         type="button"
         className="time-mode-section-header"
+        data-no-sfx
         onClick={onToggle}
         aria-expanded={open}
       >

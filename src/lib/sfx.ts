@@ -180,6 +180,100 @@ export function playCheck() {
   }
 }
 
+// Generic UI click — subtle, neutral tap played on every button by default
+// (see the document-level click handler in Layout). Quiet enough to layer
+// under other SFX without doubling up annoyingly.
+export function playClick() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  const k = Math.pow(2, (Math.random() * 2 - 1) / 12); // ±1 semitone jitter
+  blip({ startAt: t, freq: 680 * k, durMs: 40, type: 'sine', peak: 0.14, attackMs: 1 });
+  // Tiny HF noise tick on top for tactile snap.
+  const dur = 0.01;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 2500;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.1, t + 0.0008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(hp).connect(g).connect(ac.destination);
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+
+// Button tap — short bright blip for picking an option.
+export function playSelect() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  const k = Math.pow(2, (Math.random() * 2 - 1) / 12); // ±1 semitone jitter
+  blip({ startAt: t, freq: 880 * k, durMs: 55, type: 'sine', peak: 0.22, attackMs: 1 });
+  blip({ startAt: t, freq: 1760 * k, durMs: 30, type: 'sine', peak: 0.08, attackMs: 0.5 });
+}
+
+// Dropdown opening — short rising chirp.
+export function playOpen() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  blip({ startAt: t, freq: 380, freqEnd: 760, durMs: 90, type: 'sine', peak: 0.22, attackMs: 2 });
+  blip({ startAt: t, freq: 760, freqEnd: 1520, durMs: 60, type: 'sine', peak: 0.07, attackMs: 1, lpHz: 4000 });
+}
+
+// Dropdown closing — short falling chirp (mirror of open).
+export function playClose() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  blip({ startAt: t, freq: 760, freqEnd: 380, durMs: 90, type: 'sine', peak: 0.22, attackMs: 2 });
+  blip({ startAt: t, freq: 1520, freqEnd: 760, durMs: 60, type: 'sine', peak: 0.07, attackMs: 1, lpHz: 4000 });
+}
+
+// Queuing a game — a short two-note rising synth confirmation. Detuned saws
+// through the same lowpass-pluck envelope used by the check sound, so it
+// reads as "you committed" rather than just "you clicked".
+export function playQueue() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  const notes = [
+    { f: 392, off: 0.0,  dur: 0.18 }, // G4
+    { f: 587, off: 0.09, dur: 0.32 }, // D5 (perfect 5th up)
+  ];
+
+  const filter = ac.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.Q.value = 4;
+  filter.frequency.setValueAtTime(700, t);
+  filter.frequency.linearRampToValueAtTime(3200, t + 0.05);
+  filter.frequency.exponentialRampToValueAtTime(700, t + 0.45);
+
+  const amp = ac.createGain();
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(0.28, t + 0.015);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  filter.connect(amp).connect(ac.destination);
+
+  for (const n of notes) {
+    const start = t + n.off;
+    for (const cents of [-6, +6]) {
+      const osc = ac.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = n.f * Math.pow(2, cents / 1200);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(0.35, start + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+      osc.connect(g).connect(filter);
+      osc.start(start);
+      osc.stop(start + n.dur + 0.05);
+    }
+  }
+}
+
 // Chat pop — quick sine sweep, short and bright.
 export function playChat() {
   const ac = getCtx();

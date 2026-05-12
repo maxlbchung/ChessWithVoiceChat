@@ -116,9 +116,19 @@ export function Home() {
     setFreeSelected(null);
   };
 
+  const undoFreePlay = () => {
+    const m = freeChess.undo();
+    if (!m) return;
+    setFreeFen(freeChess.fen());
+    setFreeSelected(null);
+  };
+
   const flipFreePlay = () => {
     setFreeOrientation((o) => (o === 'white' ? 'black' : 'white'));
   };
+
+  const freeTurn: 'w' | 'b' = freeChess.turn();
+  const canUndoFree = freeChess.history().length > 0;
 
   // Poll queue stats so the home page shows how many people are searching per mode.
   useEffect(() => {
@@ -337,9 +347,23 @@ export function Home() {
 
       <div className="home-play-area">
         <div className="free-play-board">
-          <div className="free-play-actions">
-            <button className="link-btn" onClick={flipFreePlay} type="button">Flip</button>
-            <button className="link-btn" onClick={resetFreePlay} type="button">Reset</button>
+          <div className="free-play-header">
+            <div className="free-play-turn" aria-label={`${freeTurn === 'w' ? 'White' : 'Black'} to move`}>
+              <span className={`turn-swatch ${freeTurn === 'w' ? 'white' : 'black'}`} aria-hidden />
+              <span className="turn-label">{freeTurn === 'w' ? 'White' : 'Black'} to move</span>
+            </div>
+            <div className="free-play-header-actions">
+              <button
+                className="free-play-btn"
+                onClick={undoFreePlay}
+                type="button"
+                disabled={!canUndoFree}
+              >
+                Undo
+              </button>
+              <button className="free-play-btn" onClick={flipFreePlay} type="button">Flip</button>
+              <button className="free-play-btn" onClick={resetFreePlay} type="button">Reset</button>
+            </div>
           </div>
           <div className="free-play-board-wrap">
             <Chessboard
@@ -367,15 +391,17 @@ export function Home() {
             <div className="play-row">
               <button
                 className="primary-btn big"
+                data-no-sfx
                 disabled={!selected}
-                onClick={() => setMode('searching')}
+                onClick={() => { sfx.playQueue(); setMode('searching'); }}
               >
                 Quickplay {selected?.label}
               </button>
               <button
                 className="secondary-btn big"
+                data-no-sfx
                 disabled={!selected}
-                onClick={() => setMode('hosting')}
+                onClick={() => { sfx.playQueue(); setMode('hosting'); }}
               >
                 Play a friend
               </button>

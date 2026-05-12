@@ -842,7 +842,7 @@ export function Game() {
               placeholder="say something…"
               maxLength={200}
             />
-            <button className="secondary-btn" type="submit">Send</button>
+            <button className="secondary-btn" data-no-sfx type="submit">Send</button>
           </form>
         </div>
       </aside>
