@@ -12,18 +12,18 @@ export function Layout() {
     if (!loaded) load();
   }, [loaded, load]);
 
-  // Global button click SFX. Any <button> that isn't disabled and doesn't
-  // opt out via data-no-sfx gets the generic click tap. Buttons that have
-  // their own dedicated SFX (time mode select, section open/close, queue,
-  // chat send) set data-no-sfx to avoid doubling.
+  // Global click SFX for any interactive control — buttons + router links
+  // (the nav <Link>s render as <a>). Anything that opts out via data-no-sfx
+  // or is disabled is skipped, so action-specific SFX (queue, select,
+  // open/close, chat send) don't double up.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
-      const btn = target.closest('button');
-      if (!btn) return;
-      if ((btn as HTMLButtonElement).disabled) return;
-      if (btn.hasAttribute('data-no-sfx')) return;
+      const el = target.closest('button, a');
+      if (!el) return;
+      if (el.tagName === 'BUTTON' && (el as HTMLButtonElement).disabled) return;
+      if (el.hasAttribute('data-no-sfx')) return;
       sfx.playClick();
     };
     document.addEventListener('click', handler, { capture: true });

@@ -28,18 +28,36 @@ export function Home() {
   const [freeFen, setFreeFen] = useState(freeChess.fen());
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
+  // Ply we're currently viewing. Equals freeChess.history().length at present.
+  // Free play lets the user make moves while in the past — doing so truncates
+  // the truth back to viewPly and branches a new line.
+  const [freeViewPly, setFreeViewPly] = useState(0);
   const navigate = useNavigate();
+
+  // Chess instance reflecting the viewed position. At present this is the
+  // mutable freeChess; in the past it's a freshly-replayed temporary.
+  const previewChess = useMemo(() => {
+    if (freeViewPly === freeChess.history().length) return freeChess;
+    const tmp = new Chess();
+    const all = freeChess.history();
+    for (let i = 0; i < freeViewPly; i++) tmp.move(all[i]);
+    return tmp;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeViewPly, freeFen]);
+
+  const freeDisplayFen = previewChess.fen();
+  const freeTurn: 'w' | 'b' = previewChess.turn();
+  const canUndoFree = freeViewPly > 0;
 
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
     try {
-      const moves = freeChess.moves({ square: freeSelected as any, verbose: true }) as Array<{ to: string }>;
+      const moves = previewChess.moves({ square: freeSelected as any, verbose: true }) as Array<{ to: string }>;
       return moves.map((m) => m.to);
     } catch {
       return [];
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeSelected, freeFen]);
+  }, [freeSelected, previewChess]);
 
   const freeSquareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
     const styles: Record<string, React.CSSProperties> = {};
@@ -49,7 +67,7 @@ export function Home() {
           'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
       };
       for (const t of freeLegalTargets) {
-        const isCapture = !!freeChess.get(t as any);
+        const isCapture = !!previewChess.get(t as any);
         styles[t] = isCapture
           ? {
               background:
@@ -62,48 +80,44 @@ export function Home() {
       }
     }
     return styles;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeSelected, freeLegalTargets, freeFen]);
+  }, [freeSelected, freeLegalTargets, previewChess]);
 
-  const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
-    const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
+  const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
+    // Moving while in the past branches the history: rewind truth to viewPly,
+    // then apply the new move. The viewed position becomes the new present.
+    while (freeChess.history().length > freeViewPly) freeChess.undo();
+    let m;
     try {
-      const m = freeChess.move({ from: sourceSquare, to: targetSquare, promotion: promotion ?? 'q' });
-      if (!m) return false;
-      if (m.captured) sfx.playCapture(); else sfx.playMove();
-      if (freeChess.isCheckmate()) sfx.playWin();
-      else if (freeChess.isCheck()) sfx.playCheck();
+      m = freeChess.move({ from, to, promotion: promotion ?? 'q' });
     } catch {
       return false;
     }
+    if (!m) return false;
+    if (m.captured) sfx.playCapture(); else sfx.playMove();
+    if (freeChess.isCheckmate()) sfx.playWin();
+    else if (freeChess.isCheck()) sfx.playCheck();
     setFreeFen(freeChess.fen());
+    setFreeViewPly(freeChess.history().length);
     setFreeSelected(null);
     return true;
   };
 
+  const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
+    const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
+    return applyFreeMove(sourceSquare, targetSquare, promotion);
+  };
+
   const onFreeSquareClick = (square: string) => {
-    const piece = freeChess.get(square as any);
+    const piece = previewChess.get(square as any);
     if (freeSelected === square) {
       setFreeSelected(null);
       return;
     }
     if (freeSelected && freeLegalTargets.includes(square)) {
-      try {
-        const m = freeChess.move({ from: freeSelected, to: square, promotion: 'q' });
-        if (m) {
-          if (m.captured) sfx.playCapture(); else sfx.playMove();
-          if (freeChess.isCheckmate()) sfx.playWin();
-          else if (freeChess.isCheck()) sfx.playCheck();
-        }
-        setFreeFen(freeChess.fen());
-      } catch {
-        // ignore
-      }
-      setFreeSelected(null);
+      applyFreeMove(freeSelected, square);
       return;
     }
-    // In free play, the active color is whoever's turn it is.
-    if (piece && piece.color === freeChess.turn()) {
+    if (piece && piece.color === previewChess.turn()) {
       setFreeSelected(square);
       return;
     }
@@ -113,22 +127,61 @@ export function Home() {
   const resetFreePlay = () => {
     freeChess.reset();
     setFreeFen(freeChess.fen());
+    setFreeViewPly(0);
     setFreeSelected(null);
   };
 
-  const undoFreePlay = () => {
-    const m = freeChess.undo();
-    if (!m) return;
-    setFreeFen(freeChess.fen());
-    setFreeSelected(null);
-  };
+  const undoFreePlay = () => navigateFreeView(false);
 
   const flipFreePlay = () => {
     setFreeOrientation((o) => (o === 'white' ? 'black' : 'white'));
   };
 
-  const freeTurn: 'w' | 'b' = freeChess.turn();
-  const canUndoFree = freeChess.history().length > 0;
+  // Scrub one ply forward or backward, playing the appropriate SFX for the
+  // move that we're crossing. Each scrub cuts off any in-flight scrub SFX so
+  // rapid presses don't stack overlapping sounds.
+  const navigateFreeView = (forward: boolean) => {
+    setFreeViewPly((p) => {
+      const verbose = freeChess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
+      const total = verbose.length;
+      const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+      if (next === p) return p;
+      const m = verbose[forward ? p : next];
+      if (m) {
+        sfx.cutoffChessSfx();
+        const isCheck = m.san.includes('+') || m.san.includes('#');
+        if (forward) {
+          if (m.captured) sfx.playCapture(); else sfx.playMove();
+          if (isCheck) sfx.playCheck();
+        } else {
+          if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+          if (isCheck) sfx.playCheckReversed();
+        }
+      }
+      return next;
+    });
+  };
+
+  const canRedoFree = freeViewPly < freeChess.history().length;
+
+  // Arrow keys scrub free-play history. Skip when an input/textarea is focused.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      navigateFreeView(e.key === 'ArrowRight');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Clear any stale selection when the viewed ply changes via arrow keys.
+  useEffect(() => {
+    setFreeSelected(null);
+  }, [freeViewPly]);
 
   // Poll queue stats so the home page shows how many people are searching per mode.
   useEffect(() => {
@@ -361,13 +414,21 @@ export function Home() {
               >
                 Undo
               </button>
+              <button
+                className="free-play-btn"
+                onClick={() => navigateFreeView(true)}
+                type="button"
+                disabled={!canRedoFree}
+              >
+                Redo
+              </button>
               <button className="free-play-btn" onClick={flipFreePlay} type="button">Flip</button>
               <button className="free-play-btn" onClick={resetFreePlay} type="button">Reset</button>
             </div>
           </div>
           <div className="free-play-board-wrap">
             <Chessboard
-              position={freeFen}
+              position={freeDisplayFen}
               onPieceDrop={handleFreeDrop}
               onSquareClick={onFreeSquareClick}
               boardOrientation={freeOrientation}

@@ -58,7 +58,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Merge" open={open.merge} onToggle={() => toggle('merge')}>
         <div className="muted small time-mode-blurb">
-          Capture your own rook/knight/bishop/queen to merge their movement patterns into one piece.
+          Merge by capturing your own peices! *Pawns and kings can't merge
         </div>
         {renderGrid(timeControlsForVariant('merge'))}
       </Section>

@@ -15,13 +15,48 @@ function getCtx(): AudioContext {
   return ctx;
 }
 
-// Master bus so every sound shares the same headroom & a gentle limiter feel.
+// Master bus for UI sounds (click, queue, etc.) — always live destination.
 function bus(): AudioNode {
   const ac = getCtx();
   return ac.destination;
 }
 
-// A pitched blip: oscillator + AD envelope. Returns when scheduled.
+// Chess SFX share a separate bus that we can fade to silence on scrub events
+// so rapid arrow-key scrubbing doesn't stack overlapping move/capture/check
+// sounds on top of each other. ensureChessBus() always returns a valid bus.
+let chessBus: GainNode | null = null;
+function ensureChessBus(): GainNode {
+  if (!chessBus) {
+    const ac = getCtx();
+    const g = ac.createGain();
+    g.gain.value = 1;
+    g.connect(ac.destination);
+    chessBus = g;
+  }
+  return chessBus;
+}
+
+// Cut off any in-flight chess SFX. Fades the current bus to 0 over ~12ms
+// (avoids a click) and detaches it; the next play creates a fresh bus.
+// Sound graphs scheduled on the old bus keep their schedule but play into
+// the muted node, so they self-stop without being heard.
+export function cutoffChessSfx() {
+  if (!chessBus) return;
+  const ac = getCtx();
+  const now = ac.currentTime;
+  const old = chessBus;
+  try {
+    old.gain.cancelScheduledValues(now);
+    old.gain.setValueAtTime(old.gain.value, now);
+    old.gain.linearRampToValueAtTime(0, now + 0.012);
+  } catch {}
+  setTimeout(() => { try { old.disconnect(); } catch {} }, 250);
+  chessBus = null;
+}
+
+// A pitched blip: oscillator + AD envelope. Connects to opts.dest (defaults
+// to the live UI bus). Works on AudioContext and OfflineAudioContext alike,
+// which is what lets the reversed-render path use the same builder.
 function blip(opts: {
   startAt: number;
   freq: number;
@@ -31,8 +66,10 @@ function blip(opts: {
   type?: OscillatorType;
   peak?: number;
   lpHz?: number;
+  dest?: AudioNode;
 }) {
-  const ac = getCtx();
+  const dest = opts.dest ?? bus();
+  const ac: BaseAudioContext = dest.context;
   const t = opts.startAt;
   const dur = opts.durMs / 1000;
   const attack = (opts.attackMs ?? 2) / 1000;
@@ -59,41 +96,76 @@ function blip(opts: {
     tail = lp;
   }
   osc.connect(gain);
-  tail.connect(bus());
+  tail.connect(dest);
   osc.start(t);
   osc.stop(t + dur + 0.02);
 }
 
-// Move — soft low wooden tap. Triangle at C3-ish, briefly lowpassed.
-// Random ±2-semitone pitch jitter per call so consecutive moves don't sound
-// identical.
-export function playMove() {
+// --- Reversed playback ---------------------------------------------------
+// Each chess SFX has a builder that schedules its node graph on any context
+// at a given start time, connected to a given destination. We can render
+// that graph offline, reverse the resulting PCM, and play it back via a
+// BufferSourceNode through the chess bus.
+//
+// Per-type tokens cancel earlier in-flight renders of the same type so
+// rapid arrow scrubbing doesn't end up playing 5 staggered move sounds.
+type Builder = (dest: AudioNode, t: number) => void;
+const reverseTokens = { move: 0, capture: 0, check: 0 };
+
+async function playReversed(
+  kind: 'move' | 'capture' | 'check',
+  builder: Builder,
+  durSec: number,
+) {
+  reverseTokens[kind] += 1;
+  const myToken = reverseTokens[kind];
   const ac = getCtx();
-  const t = ac.currentTime;
+  const frames = Math.ceil(durSec * ac.sampleRate);
+  const offline = new OfflineAudioContext(1, frames, ac.sampleRate);
+  builder(offline.destination, 0);
+  const rendered = await offline.startRendering();
+  if (myToken !== reverseTokens[kind]) return; // a newer scrub superseded us
+  // Reverse the rendered PCM in place.
+  const data = rendered.getChannelData(0);
+  for (let i = 0, j = data.length - 1; i < j; i++, j--) {
+    const tmp = data[i];
+    data[i] = data[j];
+    data[j] = tmp;
+  }
+  const src = ac.createBufferSource();
+  src.buffer = rendered;
+  src.connect(ensureChessBus());
+  src.start();
+}
+
+// Move — soft low wooden tap. Triangle at C3-ish, briefly lowpassed.
+// ±2-semitone pitch jitter per call so consecutive moves don't sound identical.
+const MOVE_DUR_SEC = 0.13;
+function buildMove(dest: AudioNode, t: number) {
   const k = Math.pow(2, (Math.random() * 4 - 2) / 12);
-  blip({ startAt: t, freq: 260 * k, freqEnd: 180 * k, durMs: 90, type: 'triangle', peak: 0.32, lpHz: 1800 });
-  blip({ startAt: t, freq: 520 * k, freqEnd: 360 * k, durMs: 60, type: 'sine', peak: 0.08, lpHz: 3000 });
+  blip({ dest, startAt: t, freq: 260 * k, freqEnd: 180 * k, durMs: 90, type: 'triangle', peak: 0.32, lpHz: 1800 });
+  blip({ dest, startAt: t, freq: 520 * k, freqEnd: 360 * k, durMs: 60, type: 'sine', peak: 0.08, lpHz: 3000 });
+}
+export function playMove() {
+  buildMove(ensureChessBus(), getCtx().currentTime);
+}
+export function playMoveReversed() {
+  return playReversed('move', buildMove, MOVE_DUR_SEC);
 }
 
 // Capture — heavy impact. Sub-bass thump that drops in pitch, a low body
 // triangle, a short filtered-noise transient for the impact "smack", and a
-// quick mid blip for snap. Long enough to feel weighty without dragging.
-// Random ±1.5-semitone pitch jitter per call so repeats vary without losing
-// the heaviness.
-export function playCapture() {
-  const ac = getCtx();
-  const t = ac.currentTime;
+// quick mid blip for snap. ±1.5-semitone jitter per call.
+const CAPTURE_DUR_SEC = 0.42;
+function buildCapture(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
   const k = Math.pow(2, (Math.random() * 3 - 1.5) / 12);
 
-  // Deep sub thump — does most of the "weight" work.
-  blip({ startAt: t, freq: 95 * k, freqEnd: 38 * k, durMs: 360, type: 'sine', peak: 0.55 });
-  // Low body layer.
-  blip({ startAt: t, freq: 140 * k, freqEnd: 70 * k, durMs: 260, type: 'triangle', peak: 0.4, lpHz: 1100 });
-  // Mid snap.
-  blip({ startAt: t, freq: 380 * k, freqEnd: 170 * k, durMs: 90, type: 'sine', peak: 0.16, lpHz: 2200 });
+  blip({ dest, startAt: t, freq: 95 * k, freqEnd: 38 * k, durMs: 360, type: 'sine', peak: 0.55 });
+  blip({ dest, startAt: t, freq: 140 * k, freqEnd: 70 * k, durMs: 260, type: 'triangle', peak: 0.4, lpHz: 1100 });
+  blip({ dest, startAt: t, freq: 380 * k, freqEnd: 170 * k, durMs: 90, type: 'sine', peak: 0.16, lpHz: 2200 });
 
-  // Impact noise transient — lowpassed white noise burst, fast attack, short
-  // decay. Adds the "smack" that pure tones can't produce.
+  // Impact noise transient — lowpassed white noise burst.
   const dur = 0.06;
   const length = Math.max(1, Math.floor(dur * ac.sampleRate));
   const buf = ac.createBuffer(1, length, ac.sampleRate);
@@ -108,9 +180,15 @@ export function playCapture() {
   gain.gain.setValueAtTime(0, t);
   gain.gain.linearRampToValueAtTime(0.5, t + 0.002);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(lp).connect(gain).connect(ac.destination);
+  src.connect(lp).connect(gain).connect(dest);
   src.start(t);
   src.stop(t + dur + 0.02);
+}
+export function playCapture() {
+  buildCapture(ensureChessBus(), getCtx().currentTime);
+}
+export function playCaptureReversed() {
+  return playReversed('capture', buildCapture, CAPTURE_DUR_SEC);
 }
 
 // Win — bright ascending major triad (C5 E5 G5), each note short with a slight
@@ -131,53 +209,37 @@ export function playWin() {
   }
 }
 
-// Check — low A-minor synth pluck. Detuned sawtooth voices on A3/C4/E4 pass
-// through a resonant lowpass whose cutoff snaps open on the attack and falls
-// back through the duration. That filter envelope is what gives it the
-// "electronic pluck" character instead of a drum thump.
-export function playCheck() {
-  const ac = getCtx();
-  const t = ac.currentTime;
-  const root = 220;     // A3
-  const m3 = 261.63;    // C4 (minor 3rd)
-  const fifth = 329.63; // E4
-  const dur = 0.6;
+// Check — a single short bouncy A3 note. Triangle voice with a tiny pitch
+// blip up at the very start (the "boing" inflection) then settles to the
+// note and decays. No layers, no triad — just one note with character.
+const CHECK_DUR_SEC = 0.22;
+function buildCheck(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const f = 220; // A3
+  const dur = 0.18;
 
-  // Resonant lowpass that sweeps open then closed.
-  const filter = ac.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.Q.value = 6;
-  filter.frequency.setValueAtTime(380, t);
-  filter.frequency.linearRampToValueAtTime(2600, t + 0.05);
-  filter.frequency.exponentialRampToValueAtTime(420, t + dur);
+  const osc = ac.createOscillator();
+  osc.type = 'triangle';
+  // Pitch blip: jumps up a 5th for ~10ms then snaps back. Gives the bounce
+  // without sounding like a swept note.
+  osc.frequency.setValueAtTime(f * 1.5, t);
+  osc.frequency.exponentialRampToValueAtTime(f, t + 0.025);
 
-  // Master amp envelope — slow enough attack that it doesn't punch like a kick.
   const amp = ac.createGain();
   amp.gain.setValueAtTime(0, t);
-  amp.gain.linearRampToValueAtTime(0.3, t + 0.015);
-  amp.gain.setValueAtTime(0.3, t + 0.05);
+  amp.gain.linearRampToValueAtTime(0.45, t + 0.004);
+  amp.gain.setValueAtTime(0.45, t + 0.04);
   amp.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 
-  filter.connect(amp).connect(ac.destination);
-
-  // Stack two detuned saws per note for chorus thickness.
-  const notes = [
-    { f: root,  level: 0.42 },
-    { f: m3,    level: 0.28 },
-    { f: fifth, level: 0.22 },
-  ];
-  for (const n of notes) {
-    for (const cents of [-6, +6]) {
-      const osc = ac.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.value = n.f * Math.pow(2, cents / 1200);
-      const g = ac.createGain();
-      g.gain.value = n.level;
-      osc.connect(g).connect(filter);
-      osc.start(t);
-      osc.stop(t + dur + 0.05);
-    }
-  }
+  osc.connect(amp).connect(dest);
+  osc.start(t);
+  osc.stop(t + dur + 0.03);
+}
+export function playCheck() {
+  buildCheck(ensureChessBus(), getCtx().currentTime);
+}
+export function playCheckReversed() {
+  return playReversed('check', buildCheck, CHECK_DUR_SEC);
 }
 
 // Generic UI click — subtle, neutral tap played on every button by default
