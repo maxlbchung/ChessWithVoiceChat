@@ -511,8 +511,80 @@ a { color: inherit; text-decoration: none; }
   gap: 12px;
 }
 .board-wrap {
+  position: relative;
   width: 100%;
   max-width: 640px;
+  border-radius: 8px;
+  transition: box-shadow 220ms;
+}
+@keyframes board-finish-fade {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  65%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.board-finish-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(8, 12, 24, 0.62);
+  color: #f5f7ff;
+  border-radius: 8px;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  animation: board-finish-fade 4s ease-in-out forwards;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+  z-index: 5;
+}
+.board-finish-overlay .victor {
+  font-size: clamp(28px, 5.5vw, 56px);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+  padding: 0 16px;
+}
+.board-finish-overlay .reason {
+  font-size: clamp(14px, 1.8vw, 18px);
+  opacity: 0.85;
+}
+.game-result-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.game-result-strip .result-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.game-result-strip .result-line .title {
+  font-size: 16px;
+  font-weight: 700;
+}
+.game-result-strip .result-line .reason {
+  font-size: 13px;
+  opacity: 0.75;
+}
+.game-result-strip .rating-delta {
+  margin: 0;
+  font-size: 20px;
+  gap: 10px;
+}
+.game-result-strip .rating-delta .delta { font-size: 14px; }
+.board-wrap.viewing-history {
+  box-shadow:
+    0 0 0 3px rgba(220, 38, 38, 0.7),
+    0 0 32px 6px rgba(220, 38, 38, 0.5);
 }
 
 .player-card {

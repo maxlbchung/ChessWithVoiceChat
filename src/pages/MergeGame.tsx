@@ -62,6 +62,7 @@ export function MergeGame() {
   const [blackMs, setBlackMs] = useState(tc.initialMs);
   const [moves, setMoves] = useState<SignedMove[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
+  const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
   const [drawOfferedByMe, setDrawOfferedByMe] = useState(false);
   const [drawOfferedByOpp, setDrawOfferedByOpp] = useState(false);
@@ -134,22 +135,34 @@ export function MergeGame() {
   };
 
   const startDisconnectCountdown = () => {
-    if (end) return;
+    if (endRef.current) return;
     if (disconnectDeadlineRef.current != null) return;
     const deadline = Date.now() + FORFEIT_DELAY_MS;
     disconnectDeadlineRef.current = deadline;
     setDisconnectMs(FORFEIT_DELAY_MS);
     const tick = () => {
+      if (endRef.current) {
+        cancelDisconnectCountdown();
+        return;
+      }
       const remaining = (disconnectDeadlineRef.current ?? 0) - Date.now();
       if (remaining <= 0) {
         cancelDisconnectCountdown();
-        if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
+        if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
         return;
       }
       setDisconnectMs(remaining);
     };
     disconnectTimerRef.current = window.setInterval(tick, 100);
   };
+
+  // Keep endRef synced and cancel any in-flight forfeit countdown the moment
+  // the match ends — peer-session handlers were bound at mount with a stale
+  // `end` closure and must read endRef.current instead.
+  useEffect(() => {
+    endRef.current = end;
+    if (end) cancelDisconnectCountdown();
+  }, [end]);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -229,14 +242,14 @@ export function MergeGame() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        if (end) return;
+        if (endRef.current) return;
         const next = disconnectCountRef.current + 1;
         disconnectCountRef.current = next;
         setDisconnectCount(next);
         setConnState('connecting');
         setConnDetail('opponent disconnected');
         if (next > MAX_GRACE_DISCONNECTS) {
-          finalize({ outcome: myColor, reason: 'disconnect' });
+          if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
           return;
         }
         startDisconnectCountdown();
@@ -621,6 +634,16 @@ export function MergeGame() {
             draggable={!end && isMyTurn()}
             boardWidth={480}
           />
+          {end && (
+            <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
+              <div className="victor">
+                {end.outcome === 'draw'
+                  ? 'Draw'
+                  : `${end.outcome === myColor ? me.handle : opp.handle} wins`}
+              </div>
+              <div className="reason">{labelFor(end.reason)}</div>
+            </div>
+          )}
         </div>
         <PlayerCard
           avatarDataUrl={avatar}
@@ -665,6 +688,32 @@ export function MergeGame() {
             ))
           )}
         </div>
+
+        {end && (
+          <div className="game-result-strip">
+            <div className="result-line">
+              <span className="title">
+                {end.outcome === 'draw'
+                  ? 'Draw'
+                  : end.outcome === myColor ? 'You won' : 'You lost'}
+              </span>
+              <span className="reason">{labelFor(end.reason)}</span>
+            </div>
+            <div className="rating-delta">
+              {end.outcome === 'draw'
+                ? '½ – ½'
+                : end.outcome === myColor
+                  ? '1 – 0'
+                  : '0 – 1'}
+              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
+                {myDelta >= 0 ? '+' : ''}{myDelta}
+              </span>
+            </div>
+            <button className="primary-btn" onClick={() => navigate('/')}>
+              Back to lobby
+            </button>
+          </div>
+        )}
 
         {!end && (
           <div className="action-row">
@@ -744,33 +793,6 @@ export function MergeGame() {
         </div>
       </aside>
 
-      {end && (
-        <div className="modal-overlay" onClick={() => navigate('/')}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>
-              {end.outcome === 'draw'
-                ? 'Draw'
-                : end.outcome === myColor
-                  ? 'You won'
-                  : 'You lost'}
-            </h2>
-            <p className="muted">{labelFor(end.reason)}</p>
-            <div className="rating-delta">
-              {end.outcome === 'draw'
-                ? '½ – ½'
-                : end.outcome === myColor
-                  ? '1 – 0'
-                  : '0 – 1'}
-              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
-                {myDelta >= 0 ? '+' : ''}{myDelta}
-              </span>
-            </div>
-            <button className="primary-btn" onClick={() => navigate('/')}>
-              Back to lobby
-            </button>
-          </div>
-        </div>
-      )}
       {/* tiny dev hook to keep toFen referenced */}
       <span style={{ display: 'none' }}>{toFen(game)}</span>
     </div>

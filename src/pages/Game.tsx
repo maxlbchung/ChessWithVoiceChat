@@ -56,6 +56,7 @@ export function Game() {
   const [blackMs, setBlackMs] = useState(tc.initialMs);
   const [moves, setMoves] = useState<SignedMove[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
+  const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
   const [drawOfferedByMe, setDrawOfferedByMe] = useState(false);
   const [drawOfferedByOpp, setDrawOfferedByOpp] = useState(false);
@@ -65,6 +66,12 @@ export function Game() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  // Move-history viewer: viewPly counts plies from the start. When it equals
+  // chess.history().length, we're "at the present" — input is allowed and
+  // the board shows live state. Arrow keys scrub through past positions.
+  const [viewPly, setViewPly] = useState(0);
+  const viewPlyRef = useRef(0);
+  useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -128,22 +135,34 @@ export function Game() {
   };
 
   const startDisconnectCountdown = () => {
-    if (end) return;
+    if (endRef.current) return;
     if (disconnectDeadlineRef.current != null) return; // already counting
     const deadline = Date.now() + FORFEIT_DELAY_MS;
     disconnectDeadlineRef.current = deadline;
     setDisconnectMs(FORFEIT_DELAY_MS);
     const tick = () => {
+      if (endRef.current) {
+        cancelDisconnectCountdown();
+        return;
+      }
       const remaining = (disconnectDeadlineRef.current ?? 0) - Date.now();
       if (remaining <= 0) {
         cancelDisconnectCountdown();
-        if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
+        if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
         return;
       }
       setDisconnectMs(remaining);
     };
     disconnectTimerRef.current = window.setInterval(tick, 100);
   };
+
+  // Keep endRef synced and cancel any in-flight forfeit countdown the moment
+  // the match ends. The peer-session handlers were bound at mount with a
+  // stale `end` closure, so they must read endRef.current instead.
+  useEffect(() => {
+    endRef.current = end;
+    if (end) cancelDisconnectCountdown();
+  }, [end]);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -260,7 +279,7 @@ export function Game() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        if (end) return;
+        if (endRef.current) return;
         const next = disconnectCountRef.current + 1;
         disconnectCountRef.current = next;
         setDisconnectCount(next);
@@ -269,7 +288,7 @@ export function Game() {
         setConnDetail('opponent disconnected');
         if (next > MAX_GRACE_DISCONNECTS) {
           // No grace period — forfeit immediately on the 3rd+ disconnect.
-          finalize({ outcome: myColor, reason: 'disconnect' });
+          if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
           return;
         }
         startDisconnectCountdown();
@@ -369,6 +388,7 @@ export function Game() {
   const applyLocalMove = async (from: string, to: string, promotion?: string): Promise<boolean> => {
     if (end) return false;
     if (!isMyTurn()) return false;
+    if (viewPlyRef.current !== chess.history().length) return false;
     const beforeTurn = chess.turn();
     let move;
     try {
@@ -405,6 +425,7 @@ export function Game() {
     const signed = await signMove(identity, gameId!, uci, chess.fen(), ply, wMs, bMs);
     setMoves((m) => [...m, signed]);
     setFen(chess.fen());
+    setViewPly(chess.history().length);
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -426,6 +447,7 @@ export function Game() {
       console.warn('out of order move', move.ply, 'expected', chess.history().length + 1);
       return;
     }
+    const wasAtPresent = viewPlyRef.current === chess.history().length;
     const beforeTurn = chess.turn();
     const from = move.uci.slice(0, 2);
     const to = move.uci.slice(2, 4);
@@ -441,6 +463,7 @@ export function Game() {
     if (r.captured) sfx.playCapture(); else sfx.playMove();
     if (chess.isCheck() && !chess.isCheckmate()) sfx.playCheck();
     setFen(chess.fen());
+    if (wasAtPresent) setViewPly(chess.history().length);
     setMoves((m) => [...m, move]);
     if (tc.perMoveMs != null) {
       // Per-move mode: next mover always starts with a fresh budget.
@@ -629,6 +652,7 @@ export function Game() {
 
   const onSquareClick = (square: string) => {
     if (end) return;
+    if (!atPresent) return;
     if (!isMyTurn()) {
       setSelectedSquare(null);
       return;
@@ -678,6 +702,57 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSquare, legalTargets, fen]);
 
+  const atPresent = viewPly === chess.history().length;
+
+  const displayFen = useMemo(() => {
+    if (atPresent) return fen;
+    const tmp = new Chess();
+    const all = chess.history();
+    for (let i = 0; i < viewPly; i++) tmp.move(all[i]);
+    return tmp.fen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewPly, fen, atPresent]);
+
+  // Arrow keys scrub history. Forward plays the move's normal SFX, backward
+  // plays the reversed SFX. Each scrub cuts off any in-flight scrub SFX so
+  // rapid arrows don't stack.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const forward = e.key === 'ArrowRight';
+      setViewPly((p) => {
+        const verbose = chess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
+        const total = verbose.length;
+        const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+        if (next === p) return p;
+        const m = verbose[forward ? p : next];
+        if (m) {
+          sfx.cutoffChessSfx();
+          const isCheck = m.san.includes('+') || m.san.includes('#');
+          if (forward) {
+            if (m.captured) sfx.playCapture(); else sfx.playMove();
+            if (isCheck) sfx.playCheck();
+          } else {
+            if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+            if (isCheck) sfx.playCheckReversed();
+          }
+        }
+        return next;
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Leaving the present clears any stale piece selection.
+  useEffect(() => {
+    if (!atPresent) setSelectedSquare(null);
+  }, [atPresent]);
+
   const movesPgn = useMemo(() => {
     return chess.history().reduce<string[]>((acc, mv, i) => {
       if (i % 2 === 0) acc.push(`${i / 2 + 1}. ${mv}`);
@@ -713,18 +788,28 @@ export function Game() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(oppColor)}
         />
-        <div className="board-wrap">
+        <div className={`board-wrap ${!atPresent ? 'viewing-history' : ''}`}>
           <Chessboard
-            position={fen}
+            position={displayFen}
             onPieceDrop={onPieceDrop}
             onSquareClick={onSquareClick}
             boardOrientation={handoff.iAmWhite ? 'white' : 'black'}
-            arePiecesDraggable={!end && isMyTurn()}
+            arePiecesDraggable={!end && isMyTurn() && atPresent}
             customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
             customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
             customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
-            customSquareStyles={squareStyles}
+            customSquareStyles={atPresent ? squareStyles : {}}
           />
+          {end && (
+            <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
+              <div className="victor">
+                {end.outcome === 'draw'
+                  ? 'Draw'
+                  : `${end.outcome === myColor ? me.handle : opp.handle} wins`}
+              </div>
+              <div className="reason">{labelFor(end.reason)}</div>
+            </div>
+          )}
         </div>
         <PlayerCard
           avatarDataUrl={avatar}
@@ -768,6 +853,32 @@ export function Game() {
             ))
           )}
         </div>
+
+        {end && (
+          <div className="game-result-strip">
+            <div className="result-line">
+              <span className="title">
+                {end.outcome === 'draw'
+                  ? 'Draw'
+                  : end.outcome === myColor ? 'You won' : 'You lost'}
+              </span>
+              <span className="reason">{labelFor(end.reason)}</span>
+            </div>
+            <div className="rating-delta">
+              {end.outcome === 'draw'
+                ? '½ – ½'
+                : end.outcome === myColor
+                  ? '1 – 0'
+                  : '0 – 1'}
+              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
+                {myDelta >= 0 ? '+' : ''}{myDelta}
+              </span>
+            </div>
+            <button className="primary-btn" onClick={() => navigate('/')}>
+              Back to lobby
+            </button>
+          </div>
+        )}
 
         {!end && (
           <div className="action-row">
@@ -847,33 +958,6 @@ export function Game() {
         </div>
       </aside>
 
-      {end && (
-        <div className="modal-overlay" onClick={() => navigate('/')}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>
-              {end.outcome === 'draw'
-                ? 'Draw'
-                : end.outcome === myColor
-                  ? 'You won'
-                  : 'You lost'}
-            </h2>
-            <p className="muted">{labelFor(end.reason)}</p>
-            <div className="rating-delta">
-              {end.outcome === 'draw'
-                ? '½ – ½'
-                : end.outcome === myColor
-                  ? '1 – 0'
-                  : '0 – 1'}
-              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
-                {myDelta >= 0 ? '+' : ''}{myDelta}
-              </span>
-            </div>
-            <button className="primary-btn" onClick={() => navigate('/')}>
-              Back to lobby
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
