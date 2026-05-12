@@ -1,23 +1,24 @@
 :root {
-  --bg: #fef2f2;
-  --bg-grad-1: #ffe4e6;
-  --bg-grad-2: #fff1f2;
-  --bg-grad-3: #fee2e2;
-  --glass: rgba(255, 255, 255, 0.55);
-  --glass-strong: rgba(255, 255, 255, 0.72);
-  --glass-soft: rgba(255, 255, 255, 0.38);
-  --border: rgba(220, 38, 38, 0.18);
-  --border-strong: rgba(220, 38, 38, 0.32);
-  --text: #1f1115;
-  --muted: #7a5560;
-  --accent: #dc2626;
-  --accent-strong: #b91c1c;
-  --accent-soft: rgba(220, 38, 38, 0.12);
-  --good: #16a34a;
-  --bad: #b91c1c;
-  --warn: #d97706;
-  --shadow: 0 8px 32px rgba(190, 30, 50, 0.12);
-  --shadow-soft: 0 4px 16px rgba(190, 30, 50, 0.08);
+  /* Deep ocean — cool dark blues with pale green highlight accents. */
+  --bg: #0c1e2c;            /* deep cool ocean base */
+  --bg-grad-1: #10283a;     /* lifted ocean band */
+  --bg-grad-2: #0a1f30;     /* mid ocean */
+  --bg-grad-3: #163245;     /* cool daylight on water */
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-strong: rgba(255, 255, 255, 0.10);
+  --glass-soft: rgba(255, 255, 255, 0.03);
+  --border: rgba(168, 216, 185, 0.20);
+  --border-strong: rgba(168, 216, 185, 0.38);
+  --text: #e6f0ea;          /* pale green-tinted off-white */
+  --muted: #88a8b3;         /* cool muted blue-green */
+  --accent: #a8d8b9;        /* pale green highlight */
+  --accent-strong: #7ec39a; /* slightly deeper pale green */
+  --accent-soft: rgba(168, 216, 185, 0.15);
+  --good: #7ec39a;
+  --bad: #d68b8b;           /* light muted red, visible on dark */
+  --warn: #e0c08a;          /* warm sand on dark */
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.30);
 }
 
 * {
@@ -80,7 +81,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--accent);
 }
 .brand-text {
-  background: linear-gradient(135deg, var(--accent), #ff7a8a);
+  background: linear-gradient(135deg, var(--accent), #5fa8c4);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
@@ -208,9 +209,9 @@ a { color: inherit; text-decoration: none; }
 }
 .primary-btn {
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: white;
+  color: #0c1e2c;
   font-weight: 600;
-  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25);
+  box-shadow: 0 4px 14px rgba(168, 216, 185, 0.25);
 }
 .primary-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
@@ -293,7 +294,7 @@ a { color: inherit; text-decoration: none; }
   background: #ffffff;
 }
 .turn-swatch.black {
-  background: #1f1115;
+  background: #102025;
 }
 .free-play-header-actions {
   display: flex;
@@ -344,7 +345,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--glass-soft);
 }
 .time-mode-section-header {
   display: flex;
@@ -382,6 +383,9 @@ a { color: inherit; text-decoration: none; }
 .time-mode-section-body {
   padding: 4px 12px 12px;
 }
+.time-mode-blurb {
+  margin-bottom: 12px;
+}
 .time-mode-grid {
   display: flex;
   gap: 8px;
@@ -411,8 +415,8 @@ a { color: inherit; text-decoration: none; }
 }
 .time-mode-btn.selected {
   border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(220, 38, 38, 0.16), rgba(220, 38, 38, 0.04));
-  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.15);
+  background: linear-gradient(180deg, rgba(168, 216, 185, 0.16), rgba(168, 216, 185, 0.04));
+  box-shadow: 0 4px 16px rgba(168, 216, 185, 0.15);
 }
 .time-mode-btn:disabled {
   cursor: not-allowed;
@@ -497,9 +501,9 @@ a { color: inherit; text-decoration: none; }
   grid-column: 1 / -1;
   padding: 10px 16px;
   border-radius: 8px;
-  background: linear-gradient(180deg, rgba(220, 38, 38, 0.18), rgba(220, 38, 38, 0.08));
-  border: 1px solid var(--border-strong);
-  color: var(--accent-strong);
+  background: linear-gradient(180deg, rgba(214, 139, 139, 0.18), rgba(214, 139, 139, 0.08));
+  border: 1px solid rgba(214, 139, 139, 0.32);
+  color: var(--bad);
   font-weight: 600;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -583,8 +587,8 @@ a { color: inherit; text-decoration: none; }
 .game-result-strip .rating-delta .delta { font-size: 14px; }
 .board-wrap.viewing-history {
   box-shadow:
-    0 0 0 3px rgba(220, 38, 38, 0.7),
-    0 0 32px 6px rgba(220, 38, 38, 0.5);
+    0 0 0 3px rgba(224, 192, 138, 0.7),
+    0 0 32px 6px rgba(224, 192, 138, 0.5);
 }
 
 .player-card {
@@ -601,13 +605,13 @@ a { color: inherit; text-decoration: none; }
 }
 .player-card.active {
   border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(220, 38, 38, 0.14), rgba(220, 38, 38, 0.04));
-  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.15);
+  background: linear-gradient(180deg, rgba(168, 216, 185, 0.14), rgba(168, 216, 185, 0.04));
+  box-shadow: 0 4px 16px rgba(168, 216, 185, 0.15);
 }
 .player-card.low.active {
   border-color: var(--warn);
-  background: linear-gradient(180deg, rgba(217, 119, 6, 0.18), rgba(217, 119, 6, 0.04));
-  box-shadow: 0 4px 16px rgba(217, 119, 6, 0.18);
+  background: linear-gradient(180deg, rgba(224, 192, 138, 0.18), rgba(224, 192, 138, 0.04));
+  box-shadow: 0 4px 16px rgba(224, 192, 138, 0.18);
 }
 .player-avatar {
   width: 48px;
@@ -678,7 +682,7 @@ a { color: inherit; text-decoration: none; }
 }
 .voice-indicator.state-muted {
   color: var(--bad);
-  background: rgba(220, 38, 38, 0.10);
+  background: rgba(214, 139, 139, 0.10);
 }
 .voice-indicator.state-active {
   color: var(--accent-strong);
@@ -795,9 +799,9 @@ a { color: inherit; text-decoration: none; }
 .voice-btn.primary {
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   border-color: var(--accent-strong);
-  color: white;
+  color: #0c1e2c;
   flex: 1;
-  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.22);
+  box-shadow: 0 2px 10px rgba(168, 216, 185, 0.22);
 }
 .voice-btn.on { border-color: var(--good); }
 .voice-btn.off { border-color: var(--bad); color: var(--muted); }
@@ -850,7 +854,7 @@ a { color: inherit; text-decoration: none; }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(254, 226, 226, 0.45);
+  background: rgba(12, 30, 44, 0.55);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
