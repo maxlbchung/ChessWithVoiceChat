@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Chess } from 'chess.js';
+import { Chessboard } from 'react-chessboard';
 import { TimeModeSelector } from '../components/TimeModeSelector';
 import { TIME_CONTROLS, type TimeControl } from '../lib/timeControls';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
@@ -21,7 +23,31 @@ export function Home() {
   const [shareUrl, setShareUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [searchingCounts, setSearchingCounts] = useState<Record<string, number>>({});
+  const [freeChess] = useState(() => new Chess());
+  const [freeFen, setFreeFen] = useState(freeChess.fen());
+  const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
   const navigate = useNavigate();
+
+  const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
+    const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
+    try {
+      const m = freeChess.move({ from: sourceSquare, to: targetSquare, promotion: promotion ?? 'q' });
+      if (!m) return false;
+    } catch {
+      return false;
+    }
+    setFreeFen(freeChess.fen());
+    return true;
+  };
+
+  const resetFreePlay = () => {
+    freeChess.reset();
+    setFreeFen(freeChess.fen());
+  };
+
+  const flipFreePlay = () => {
+    setFreeOrientation((o) => (o === 'white' ? 'black' : 'white'));
+  };
 
   // Poll queue stats so the home page shows how many people are searching per mode.
   useEffect(() => {
@@ -238,65 +264,89 @@ export function Home() {
         </p>
       </div>
 
-      <TimeModeSelector
-        selectedId={selected?.id ?? null}
-        onSelect={(tc) => setSelected(tc)}
-        disabled={busy}
-        activityCounts={searchingCounts}
-      />
-
-      {!busy && (
-        <div className="play-row">
-          <button
-            className="primary-btn big"
-            disabled={!selected}
-            onClick={() => setMode('searching')}
-          >
-            Quickplay {selected?.label}
-          </button>
-          <button
-            className="secondary-btn big"
-            disabled={!selected}
-            onClick={() => setMode('hosting')}
-          >
-            Play a friend
-          </button>
-        </div>
-      )}
-
-      {mode === 'searching' && (
-        <div className="play-row">
-          <button className="secondary-btn big" onClick={cancel}>Cancel search</button>
-          {statusMsg && <div className="status-msg">{statusMsg}</div>}
-        </div>
-      )}
-
-      {mode === 'hosting' && (
-        <div className="lobby-panel">
-          {shareUrl ? (
-            <>
-              <div className="lobby-label">Send this link to your friend:</div>
-              <div className="share-row">
-                <input
-                  className="text-input"
-                  readOnly
-                  value={shareUrl}
-                  onFocus={(e) => e.currentTarget.select()}
-                />
-                <button className="secondary-btn" onClick={copyShareUrl}>
-                  {copied ? 'Copied!' : 'Copy'}
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="muted">Spinning up lobby…</div>
-          )}
-          <div className="play-row">
-            <button className="secondary-btn big" onClick={cancel}>Cancel lobby</button>
-            {statusMsg && <div className="status-msg">{statusMsg}</div>}
+      <div className="home-play-area">
+        <div className="free-play-board">
+          <div className="free-play-label">
+            <span className="muted small">Practice while you wait — play yourself.</span>
+            <div className="free-play-actions">
+              <button className="link-btn" onClick={flipFreePlay} type="button">Flip</button>
+              <button className="link-btn" onClick={resetFreePlay} type="button">Reset</button>
+            </div>
+          </div>
+          <div className="free-play-board-wrap">
+            <Chessboard
+              position={freeFen}
+              onPieceDrop={handleFreeDrop}
+              boardOrientation={freeOrientation}
+              customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
+              customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
+              customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
+            />
           </div>
         </div>
-      )}
+
+        <div className="home-controls">
+          <TimeModeSelector
+            selectedId={selected?.id ?? null}
+            onSelect={(tc) => setSelected(tc)}
+            disabled={busy}
+            activityCounts={searchingCounts}
+          />
+
+          {!busy && (
+            <div className="play-row">
+              <button
+                className="primary-btn big"
+                disabled={!selected}
+                onClick={() => setMode('searching')}
+              >
+                Quickplay {selected?.label}
+              </button>
+              <button
+                className="secondary-btn big"
+                disabled={!selected}
+                onClick={() => setMode('hosting')}
+              >
+                Play a friend
+              </button>
+            </div>
+          )}
+
+          {mode === 'searching' && (
+            <div className="play-row">
+              <button className="secondary-btn big" onClick={cancel}>Cancel search</button>
+              {statusMsg && <div className="status-msg">{statusMsg}</div>}
+            </div>
+          )}
+
+          {mode === 'hosting' && (
+            <div className="lobby-panel">
+              {shareUrl ? (
+                <>
+                  <div className="lobby-label">Send this link to your friend:</div>
+                  <div className="share-row">
+                    <input
+                      className="text-input"
+                      readOnly
+                      value={shareUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <button className="secondary-btn" onClick={copyShareUrl}>
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="muted">Spinning up lobby…</div>
+              )}
+              <div className="play-row">
+                <button className="secondary-btn big" onClick={cancel}>Cancel lobby</button>
+                {statusMsg && <div className="status-msg">{statusMsg}</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
