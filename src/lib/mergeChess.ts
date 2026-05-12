@@ -60,6 +60,7 @@ export type MoveResult = {
   fenAfter: string;
   captured: boolean;
   merged: boolean;
+  castled: boolean;
   check: boolean;
   checkmate: boolean;
   stalemate: boolean;
@@ -653,6 +654,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   const destPiece = state.board[toIdx];
   const captured = !!destPiece || !!chosen.enPassantCapture;
   const merged = !!(destPiece && destPiece.color === moverColor);
+  const castled = !!chosen.castling;
   const check = isInCheck(next, next.turn);
   const oppHasMoves = allLegalMoves(next).length > 0;
   const checkmate = check && !oppHasMoves;
@@ -665,6 +667,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       fenAfter: toFen(next),
       captured,
       merged,
+      castled,
       check,
       checkmate,
       stalemate,

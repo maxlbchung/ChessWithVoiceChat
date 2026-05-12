@@ -330,7 +330,10 @@ export function MergeGame() {
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    if (res.result.captured) sfx.playCapture(); else sfx.playMove();
+    if (res.result.castled) sfx.playCastle();
+    else if (res.result.merged) sfx.playMerge();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
 
     // Update clocks
@@ -383,7 +386,10 @@ export function MergeGame() {
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.captured) sfx.playCapture(); else sfx.playMove();
+    if (res.result.castled) sfx.playCastle();
+    else if (res.result.merged) sfx.playMerge();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
     setGame(res.state);
     setMoves((m) => [...m, move]);

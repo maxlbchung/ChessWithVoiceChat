@@ -64,7 +64,12 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
       </Section>
 
       <Section title="2.0" open={open.two} onToggle={() => toggle('two')}>
-        <div className="muted small">Nothing here yet.</div>
+        <div className="muted small time-mode-blurb">
+          Queen moves like a king. Bishops slide 1-2 squares in any direction.
+          Knights hop over an adjacent piece, then slide. Rooks push instead
+          of capturing. No castling.
+        </div>
+        {renderGrid(timeControlsForVariant('two'))}
       </Section>
 
       <Section title="Chaos" open={open.chaos} onToggle={() => toggle('chaos')}>

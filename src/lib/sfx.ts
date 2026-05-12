@@ -242,6 +242,54 @@ export function playCheckReversed() {
   return playReversed('check', buildCheck, CHECK_DUR_SEC);
 }
 
+// Flip board — quick rising whoosh, evokes board rotation. Sine sweep up
+// with a soft octave-up shimmer layered on for sparkle.
+export function playFlip() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  blip({ startAt: t, freq: 400, freqEnd: 1150, durMs: 160, type: 'sine', peak: 0.28, attackMs: 4 });
+  blip({ startAt: t + 0.02, freq: 800, freqEnd: 2300, durMs: 130, type: 'sine', peak: 0.08, attackMs: 1 });
+}
+
+// Reset board — descending sweep, like pieces clearing back to start.
+export function playReset() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  blip({ startAt: t, freq: 900, freqEnd: 200, durMs: 240, type: 'triangle', peak: 0.32, attackMs: 4, lpHz: 2500 });
+  blip({ startAt: t + 0.04, freq: 1400, freqEnd: 400, durMs: 200, type: 'sine', peak: 0.1, attackMs: 1, lpHz: 3500 });
+}
+
+// Castling — two quick taps in succession (king slide + rook hop), slightly
+// pitched apart. Runs through the chess bus like playMove so scrub cutoff
+// works on it too.
+function buildCastle(dest: AudioNode, t: number) {
+  const k = Math.pow(2, (Math.random() * 2 - 1) / 12);
+  // King tap
+  blip({ dest, startAt: t, freq: 280 * k, freqEnd: 200 * k, durMs: 80, type: 'triangle', peak: 0.32, lpHz: 1800 });
+  blip({ dest, startAt: t, freq: 560 * k, freqEnd: 400 * k, durMs: 50, type: 'sine', peak: 0.08, lpHz: 3000 });
+  // Rook tap, ~130ms later, a bit higher pitch
+  const t2 = t + 0.13;
+  blip({ dest, startAt: t2, freq: 340 * k, freqEnd: 240 * k, durMs: 90, type: 'triangle', peak: 0.32, lpHz: 1800 });
+  blip({ dest, startAt: t2, freq: 680 * k, freqEnd: 480 * k, durMs: 55, type: 'sine', peak: 0.08, lpHz: 3000 });
+}
+export function playCastle() {
+  buildCastle(ensureChessBus(), getCtx().currentTime);
+}
+
+// Merge (merge gamemode) — two notes a 4th apart that converge to a single
+// pitch, with bell partials sparkling on top. Evokes "fusion".
+function buildMerge(dest: AudioNode, t: number) {
+  // A4 (440) + D5 (587) → both glide to C5 (523)
+  blip({ dest, startAt: t, freq: 440, freqEnd: 523, durMs: 300, type: 'triangle', peak: 0.28, attackMs: 4 });
+  blip({ dest, startAt: t, freq: 587, freqEnd: 523, durMs: 300, type: 'triangle', peak: 0.22, attackMs: 4 });
+  // Bell shimmer above
+  blip({ dest, startAt: t, freq: 1568, durMs: 200, type: 'sine', peak: 0.1, attackMs: 1 });
+  blip({ dest, startAt: t + 0.05, freq: 2093, durMs: 150, type: 'sine', peak: 0.06, attackMs: 1 });
+}
+export function playMerge() {
+  buildMerge(ensureChessBus(), getCtx().currentTime);
+}
+
 // Generic UI click — subtle, neutral tap played on every button by default
 // (see the document-level click handler in Layout). Quiet enough to layer
 // under other SFX without doubling up annoyingly.

@@ -28,6 +28,7 @@ export function Home() {
   const [freeFen, setFreeFen] = useState(freeChess.fen());
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
+  const [freeHighlights, setFreeHighlights] = useState<Set<string>>(new Set());
   // Ply we're currently viewing. Equals freeChess.history().length at present.
   // Free play lets the user make moves while in the past — doing so truncates
   // the truth back to viewPly and branches a new line.
@@ -61,6 +62,10 @@ export function Home() {
 
   const freeSquareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
     const styles: Record<string, React.CSSProperties> = {};
+    // Right-click highlights underlay everything else.
+    for (const sq of freeHighlights) {
+      styles[sq] = { backgroundColor: 'rgba(255,170,0,0.45)' };
+    }
     if (freeSelected) {
       styles[freeSelected] = {
         background:
@@ -70,17 +75,17 @@ export function Home() {
         const isCapture = !!previewChess.get(t as any);
         styles[t] = isCapture
           ? {
-              background:
-                'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
-            }
+            background:
+              'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+          }
           : {
-              background:
-                'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
-            };
+            background:
+              'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
+          };
       }
     }
     return styles;
-  }, [freeSelected, freeLegalTargets, previewChess]);
+  }, [freeSelected, freeLegalTargets, previewChess, freeHighlights]);
 
   const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
     // Moving while in the past branches the history: rewind truth to viewPly,
@@ -93,7 +98,10 @@ export function Home() {
       return false;
     }
     if (!m) return false;
-    if (m.captured) sfx.playCapture(); else sfx.playMove();
+    const castled = m.flags && (m.flags.includes('k') || m.flags.includes('q'));
+    if (castled) sfx.playCastle();
+    else if (m.captured) sfx.playCapture();
+    else sfx.playMove();
     if (freeChess.isCheckmate()) sfx.playWin();
     else if (freeChess.isCheck()) sfx.playCheck();
     setFreeFen(freeChess.fen());
@@ -108,6 +116,9 @@ export function Home() {
   };
 
   const onFreeSquareClick = (square: string) => {
+    // Any left-click on a square clears right-click highlights, mirroring
+    // chess.com / lichess and the merge board.
+    if (freeHighlights.size > 0) setFreeHighlights(new Set());
     const piece = previewChess.get(square as any);
     if (freeSelected === square) {
       setFreeSelected(null);
@@ -124,38 +135,51 @@ export function Home() {
     setFreeSelected(null);
   };
 
+  const onFreeSquareRightClick = (square: string) => {
+    setFreeHighlights((prev) => {
+      const next = new Set(prev);
+      if (next.has(square)) next.delete(square);
+      else next.add(square);
+      return next;
+    });
+  };
+
   const resetFreePlay = () => {
+    sfx.playReset();
     freeChess.reset();
     setFreeFen(freeChess.fen());
     setFreeViewPly(0);
     setFreeSelected(null);
   };
 
-  const undoFreePlay = () => navigateFreeView(false);
+  const undoFreePlay = () => navigateFreeView(false, false);
 
   const flipFreePlay = () => {
+    sfx.playFlip();
     setFreeOrientation((o) => (o === 'white' ? 'black' : 'white'));
   };
 
-  // Scrub one ply forward or backward, playing the appropriate SFX for the
-  // move that we're crossing. Each scrub cuts off any in-flight scrub SFX so
-  // rapid presses don't stack overlapping sounds.
-  const navigateFreeView = (forward: boolean) => {
+  // Scrub one ply forward or backward. Plays piece SFX (forward or reversed)
+  // when invoked from the keyboard; the Undo/Redo buttons pass playSfx=false
+  // so they rely on the global button-click SFX instead.
+  const navigateFreeView = (forward: boolean, playSfx = true) => {
     setFreeViewPly((p) => {
       const verbose = freeChess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
       const total = verbose.length;
       const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
       if (next === p) return p;
-      const m = verbose[forward ? p : next];
-      if (m) {
-        sfx.cutoffChessSfx();
-        const isCheck = m.san.includes('+') || m.san.includes('#');
-        if (forward) {
-          if (m.captured) sfx.playCapture(); else sfx.playMove();
-          if (isCheck) sfx.playCheck();
-        } else {
-          if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
-          if (isCheck) sfx.playCheckReversed();
+      if (playSfx) {
+        const m = verbose[forward ? p : next];
+        if (m) {
+          sfx.cutoffChessSfx();
+          const isCheck = m.san.includes('+') || m.san.includes('#');
+          if (forward) {
+            if (m.captured) sfx.playCapture(); else sfx.playMove();
+            if (isCheck) sfx.playCheck();
+          } else {
+            if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+            if (isCheck) sfx.playCheckReversed();
+          }
         }
       }
       return next;
@@ -262,7 +286,7 @@ export function Home() {
       cancelled = true;
       matcher.cancel();
       if (!handedOff) {
-        try { session?.destroy(); } catch {}
+        try { session?.destroy(); } catch { }
       }
     };
   }, [mode, identity, selected, rating, navigate]);
@@ -330,7 +354,7 @@ export function Home() {
     return () => {
       cancelled = true;
       if (!handedOff) {
-        try { session.destroy(); } catch {}
+        try { session.destroy(); } catch { }
       }
     };
   }, [mode, identity, selected, rating, navigate]);
@@ -391,10 +415,9 @@ export function Home() {
   return (
     <div className="page">
       <div className="hero">
-        <h1 className="page-title">Find a game</h1>
+        <h1 className="page-title">Voice Chat Chess</h1>
         <p className="muted">
-          Pick a time control — moves go peer-to-peer, voice chat rides along, and your rating
-          updates locally from signed game records.
+          Chess with voice chat, new variants, and more!
         </p>
       </div>
 
@@ -416,7 +439,7 @@ export function Home() {
               </button>
               <button
                 className="free-play-btn"
-                onClick={() => navigateFreeView(true)}
+                onClick={() => navigateFreeView(true, false)}
                 type="button"
                 disabled={!canRedoFree}
               >
@@ -431,6 +454,7 @@ export function Home() {
               position={freeDisplayFen}
               onPieceDrop={handleFreeDrop}
               onSquareClick={onFreeSquareClick}
+              onSquareRightClick={onFreeSquareRightClick}
               boardOrientation={freeOrientation}
               customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
               customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
