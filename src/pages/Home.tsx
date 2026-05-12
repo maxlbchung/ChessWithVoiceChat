@@ -71,7 +71,8 @@ export function Home() {
       const m = freeChess.move({ from: sourceSquare, to: targetSquare, promotion: promotion ?? 'q' });
       if (!m) return false;
       if (m.captured) sfx.playCapture(); else sfx.playMove();
-      if (freeChess.isCheck()) sfx.playCheck();
+      if (freeChess.isCheckmate()) sfx.playWin();
+      else if (freeChess.isCheck()) sfx.playCheck();
     } catch {
       return false;
     }
@@ -91,7 +92,8 @@ export function Home() {
         const m = freeChess.move({ from: freeSelected, to: square, promotion: 'q' });
         if (m) {
           if (m.captured) sfx.playCapture(); else sfx.playMove();
-          if (freeChess.isCheck()) sfx.playCheck();
+          if (freeChess.isCheckmate()) sfx.playWin();
+          else if (freeChess.isCheck()) sfx.playCheck();
         }
         setFreeFen(freeChess.fen());
       } catch {
@@ -335,12 +337,9 @@ export function Home() {
 
       <div className="home-play-area">
         <div className="free-play-board">
-          <div className="free-play-label">
-            <span className="muted small">Practice while you wait — play yourself.</span>
-            <div className="free-play-actions">
-              <button className="link-btn" onClick={flipFreePlay} type="button">Flip</button>
-              <button className="link-btn" onClick={resetFreePlay} type="button">Reset</button>
-            </div>
+          <div className="free-play-actions">
+            <button className="link-btn" onClick={flipFreePlay} type="button">Flip</button>
+            <button className="link-btn" onClick={resetFreePlay} type="button">Reset</button>
           </div>
           <div className="free-play-board-wrap">
             <Chessboard

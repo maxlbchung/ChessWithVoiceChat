@@ -65,27 +65,32 @@ function blip(opts: {
 }
 
 // Move — soft low wooden tap. Triangle at C3-ish, briefly lowpassed.
+// Random ±2-semitone pitch jitter per call so consecutive moves don't sound
+// identical.
 export function playMove() {
   const ac = getCtx();
   const t = ac.currentTime;
-  blip({ startAt: t, freq: 260, freqEnd: 180, durMs: 90, type: 'triangle', peak: 0.32, lpHz: 1800 });
-  // A second, quieter octave-up layer for a touch of brightness.
-  blip({ startAt: t, freq: 520, freqEnd: 360, durMs: 60, type: 'sine', peak: 0.08, lpHz: 3000 });
+  const k = Math.pow(2, (Math.random() * 4 - 2) / 12);
+  blip({ startAt: t, freq: 260 * k, freqEnd: 180 * k, durMs: 90, type: 'triangle', peak: 0.32, lpHz: 1800 });
+  blip({ startAt: t, freq: 520 * k, freqEnd: 360 * k, durMs: 60, type: 'sine', peak: 0.08, lpHz: 3000 });
 }
 
 // Capture — heavy impact. Sub-bass thump that drops in pitch, a low body
 // triangle, a short filtered-noise transient for the impact "smack", and a
 // quick mid blip for snap. Long enough to feel weighty without dragging.
+// Random ±1.5-semitone pitch jitter per call so repeats vary without losing
+// the heaviness.
 export function playCapture() {
   const ac = getCtx();
   const t = ac.currentTime;
+  const k = Math.pow(2, (Math.random() * 3 - 1.5) / 12);
 
   // Deep sub thump — does most of the "weight" work.
-  blip({ startAt: t, freq: 95, freqEnd: 38, durMs: 360, type: 'sine', peak: 0.55 });
+  blip({ startAt: t, freq: 95 * k, freqEnd: 38 * k, durMs: 360, type: 'sine', peak: 0.55 });
   // Low body layer.
-  blip({ startAt: t, freq: 140, freqEnd: 70, durMs: 260, type: 'triangle', peak: 0.4, lpHz: 1100 });
+  blip({ startAt: t, freq: 140 * k, freqEnd: 70 * k, durMs: 260, type: 'triangle', peak: 0.4, lpHz: 1100 });
   // Mid snap.
-  blip({ startAt: t, freq: 380, freqEnd: 170, durMs: 90, type: 'sine', peak: 0.16, lpHz: 2200 });
+  blip({ startAt: t, freq: 380 * k, freqEnd: 170 * k, durMs: 90, type: 'sine', peak: 0.16, lpHz: 2200 });
 
   // Impact noise transient — lowpassed white noise burst, fast attack, short
   // decay. Adds the "smack" that pure tones can't produce.
@@ -126,19 +131,53 @@ export function playWin() {
   }
 }
 
-// Check — a clean bell ding. Fundamental + an inharmonic partial at ~2.76×
-// (close to a real bell's strike tone ratio) so it has metallic colour
-// without being aggressive.
+// Check — low A-minor synth pluck. Detuned sawtooth voices on A3/C4/E4 pass
+// through a resonant lowpass whose cutoff snaps open on the attack and falls
+// back through the duration. That filter envelope is what gives it the
+// "electronic pluck" character instead of a drum thump.
 export function playCheck() {
   const ac = getCtx();
   const t = ac.currentTime;
-  const f = 880; // A5
-  // Fundamental with a long-ish exponential decay.
-  blip({ startAt: t, freq: f, durMs: 350, type: 'sine', peak: 0.32, attackMs: 1 });
-  // Bell partial — quieter, decays a bit faster.
-  blip({ startAt: t, freq: f * 2.76, durMs: 220, type: 'sine', peak: 0.14, attackMs: 1 });
-  // Tiny higher shimmer.
-  blip({ startAt: t, freq: f * 5.4, durMs: 120, type: 'sine', peak: 0.06, attackMs: 1 });
+  const root = 220;     // A3
+  const m3 = 261.63;    // C4 (minor 3rd)
+  const fifth = 329.63; // E4
+  const dur = 0.6;
+
+  // Resonant lowpass that sweeps open then closed.
+  const filter = ac.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.Q.value = 6;
+  filter.frequency.setValueAtTime(380, t);
+  filter.frequency.linearRampToValueAtTime(2600, t + 0.05);
+  filter.frequency.exponentialRampToValueAtTime(420, t + dur);
+
+  // Master amp envelope — slow enough attack that it doesn't punch like a kick.
+  const amp = ac.createGain();
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(0.3, t + 0.015);
+  amp.gain.setValueAtTime(0.3, t + 0.05);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  filter.connect(amp).connect(ac.destination);
+
+  // Stack two detuned saws per note for chorus thickness.
+  const notes = [
+    { f: root,  level: 0.42 },
+    { f: m3,    level: 0.28 },
+    { f: fifth, level: 0.22 },
+  ];
+  for (const n of notes) {
+    for (const cents of [-6, +6]) {
+      const osc = ac.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = n.f * Math.pow(2, cents / 1200);
+      const g = ac.createGain();
+      g.gain.value = n.level;
+      osc.connect(g).connect(filter);
+      osc.start(t);
+      osc.stop(t + dur + 0.05);
+    }
+  }
 }
 
 // Chat pop — quick sine sweep, short and bright.
