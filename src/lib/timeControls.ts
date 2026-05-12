@@ -1,4 +1,4 @@
-export type GameVariant = 'normal' | 'merge' | 'two';
+export type GameVariant = 'normal' | 'merge' | 'two' | 'cash';
 
 export type TimeControl = {
   id: string;
@@ -24,6 +24,9 @@ export const TIME_CONTROLS: TimeControl[] = [
   { id: 'two-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 10 * 60_000, variant: 'two' },
   { id: 'two-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 20 * 60_000, variant: 'two' },
   { id: 'two-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'two' },
+  { id: 'cash-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 15 * 60_000, variant: 'cash' },
+  { id: 'cash-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 30 * 60_000, variant: 'cash' },
+  { id: 'cash-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'cash' },
 ];
 
 export function getTimeControl(id: string): TimeControl | undefined {
@@ -36,6 +39,10 @@ export function isMergeTimeControl(id: string): boolean {
 
 export function isTwoTimeControl(id: string): boolean {
   return getTimeControl(id)?.variant === 'two';
+}
+
+export function isCashTimeControl(id: string): boolean {
+  return getTimeControl(id)?.variant === 'cash';
 }
 
 export function timeControlsForVariant(variant: GameVariant): TimeControl[] {

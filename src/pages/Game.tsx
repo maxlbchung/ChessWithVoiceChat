@@ -4,6 +4,8 @@ import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
+import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
+import { useSettingsStore } from '../store/settingsStore';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
@@ -117,6 +119,13 @@ export function Game() {
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
+
+  // Privacy toggles — hide the real opponent handle/avatar when the user has
+  // turned them off in settings. The real values still travel over the wire
+  // and are persisted in the game record; this only affects display.
+  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
+  const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
   // ----------------------------------------------------------------------
   // Wire up peer session for *this* page (handoff.session was started by Home)
@@ -719,21 +728,16 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewPly, fen, atPresent]);
 
-  // Arrow keys scrub history. Forward plays the move's normal SFX, backward
-  // plays the reversed SFX. Each scrub cuts off any in-flight scrub SFX so
-  // rapid arrows don't stack.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault();
-      const forward = e.key === 'ArrowRight';
-      setViewPly((p) => {
-        const verbose = chess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
-        const total = verbose.length;
-        const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
-        if (next === p) return p;
+  // Scrub one ply forward or backward. Plays piece SFX (forward or reversed)
+  // when invoked from the keyboard; the Undo/Redo buttons pass playSfx=false
+  // so they rely on the global button-click SFX instead.
+  const navigateGameView = (forward: boolean, playSfx = true) => {
+    setViewPly((p) => {
+      const verbose = chess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
+      const total = verbose.length;
+      const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+      if (next === p) return p;
+      if (playSfx) {
         const m = verbose[forward ? p : next];
         if (m) {
           sfx.cutoffChessSfx();
@@ -746,8 +750,24 @@ export function Game() {
             if (isCheck) sfx.playCheckReversed();
           }
         }
-        return next;
-      });
+      }
+      return next;
+    });
+  };
+
+  const canUndoGame = viewPly > 0;
+  const canRedoGame = viewPly < chess.history().length;
+
+  // Arrow keys scrub history. Forward plays the move's normal SFX, backward
+  // plays the reversed SFX. Each scrub cuts off any in-flight scrub SFX so
+  // rapid arrows don't stack.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      navigateGameView(e.key === 'ArrowRight');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -786,8 +806,8 @@ export function Game() {
       )}
       <div className="board-column">
         <PlayerCard
-          avatarDataUrl={oppAvatar}
-          handle={opp.handle}
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
           rating={opp.rating}
           voiceState={oppVoiceState}
           volume={oppVolume}
@@ -808,10 +828,23 @@ export function Game() {
           />
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
+              <div className="finish-avatars">
+                {end.outcome === 'draw' ? (
+                  <>
+                    <FinishAvatar src={avatar} handle={me.handle} />
+                    <FinishAvatar src={oppDisplayAvatar} handle={oppDisplayHandle} />
+                  </>
+                ) : (
+                  <FinishAvatar
+                    src={end.outcome === myColor ? avatar : oppDisplayAvatar}
+                    handle={end.outcome === myColor ? me.handle : oppDisplayHandle}
+                  />
+                )}
+              </div>
               <div className="victor">
                 {end.outcome === 'draw'
                   ? 'Draw'
-                  : `${end.outcome === myColor ? me.handle : opp.handle} wins`}
+                  : `${end.outcome === myColor ? me.handle : oppDisplayHandle} wins`}
               </div>
               <div className="reason">{labelFor(end.reason)}</div>
             </div>
@@ -850,6 +883,25 @@ export function Game() {
           voiceActive={voiceActive}
         />
 
+        <div className="history-nav-row">
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(false, false)}
+            type="button"
+            disabled={!canUndoGame}
+          >
+            Undo
+          </button>
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(true, false)}
+            type="button"
+            disabled={!canRedoGame}
+          >
+            Redo
+          </button>
+        </div>
+
         <div className="moves-panel">
           {movesPgn.length === 0 ? (
             <div className="muted small">No moves yet.</div>
@@ -863,10 +915,24 @@ export function Game() {
         {end && (
           <div className="game-result-strip">
             <div className="result-line">
-              <span className="title">
-                {end.outcome === 'draw'
-                  ? 'Draw'
-                  : end.outcome === myColor ? 'You won' : 'You lost'}
+              <span className="title-group">
+                <ResultAvatar
+                  src={
+                    end.outcome === 'draw'
+                      ? avatar
+                      : end.outcome === myColor ? avatar : oppDisplayAvatar
+                  }
+                  handle={
+                    end.outcome === 'draw'
+                      ? me.handle
+                      : end.outcome === myColor ? me.handle : oppDisplayHandle
+                  }
+                />
+                <span className="title">
+                  {end.outcome === 'draw'
+                    ? 'Draw'
+                    : end.outcome === myColor ? 'You won' : 'You lost'}
+                </span>
               </span>
               <span className="reason">{labelFor(end.reason)}</span>
             </div>
@@ -933,35 +999,37 @@ export function Game() {
           </div>
         )}
 
-        <div className="chat-panel">
-          <div className="chat-log">
-            {chatLog.map((m, i) => (
-              <div key={i} className={`chat-msg ${m.from}`}>
-                <span className="chat-from">{m.from === 'me' ? me.handle : opp.handle}:</span> {m.text}
-              </div>
-            ))}
+        {chatEnabled && (
+          <div className="chat-panel">
+            <div className="chat-log">
+              {chatLog.map((m, i) => (
+                <div key={i} className={`chat-msg ${m.from}`}>
+                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {m.text}
+                </div>
+              ))}
+            </div>
+            <form
+              className="chat-input-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!chatInput.trim()) return;
+                sessionRef.current.send({ type: 'chat', text: chatInput });
+                setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
+                sfx.playChat();
+                setChatInput('');
+              }}
+            >
+              <input
+                className="text-input"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="say something…"
+                maxLength={200}
+              />
+              <button className="secondary-btn" data-no-sfx type="submit">Send</button>
+            </form>
           </div>
-          <form
-            className="chat-input-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!chatInput.trim()) return;
-              sessionRef.current.send({ type: 'chat', text: chatInput });
-              setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
-              sfx.playChat();
-              setChatInput('');
-            }}
-          >
-            <input
-              className="text-input"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="say something…"
-              maxLength={200}
-            />
-            <button className="secondary-btn" data-no-sfx type="submit">Send</button>
-          </form>
-        </div>
+        )}
       </aside>
 
     </div>

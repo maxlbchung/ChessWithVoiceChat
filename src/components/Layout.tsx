@@ -5,7 +5,7 @@ import { APP_VERSION } from '../lib/version';
 import * as sfx from '../lib/sfx';
 
 export function Layout() {
-  const { identity, rating, loaded, load } = useIdentityStore();
+  const { identity, rating, avatar, loaded, load } = useIdentityStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -47,10 +47,23 @@ export function Layout() {
           >
             Profile
           </Link>
+          <Link
+            to="/settings"
+            className={location.pathname.startsWith('/settings') ? 'active' : ''}
+          >
+            Settings
+          </Link>
         </nav>
         <div className="user-chip">
           {identity ? (
             <>
+              {avatar ? (
+                <img className="user-chip-avatar" src={avatar} alt="" />
+              ) : (
+                <span className="user-chip-avatar placeholder" aria-hidden>
+                  {identity.handle.slice(0, 1).toUpperCase()}
+                </span>
+              )}
               <span className="handle">{identity.handle}</span>
               <span className="rating">{rating}</span>
             </>

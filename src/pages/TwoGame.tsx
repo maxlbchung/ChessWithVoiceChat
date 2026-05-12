@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
+import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
+import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
@@ -116,6 +118,10 @@ export function TwoGame() {
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
+
+  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
+  const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
   const sessionRef = useRef<PeerSession>(handoff.session);
   const startedAtRef = useRef<number>(Date.now());
@@ -315,9 +321,7 @@ export function TwoGame() {
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    // Push uses the merge sound — it moves pieces around without destroying
-    // them, so the "fusion" timbre fits the vibe.
-    if (res.result.pushed) sfx.playMerge();
+    if (res.result.pushed) sfx.playPush();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -370,7 +374,7 @@ export function TwoGame() {
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.pushed) sfx.playMerge();
+    if (res.result.pushed) sfx.playPush();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -603,8 +607,8 @@ export function TwoGame() {
       )}
       <div className="board-column">
         <PlayerCard
-          avatarDataUrl={oppAvatar}
-          handle={opp.handle}
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
           rating={opp.rating}
           voiceState={oppVoiceState}
           volume={oppVolume}
@@ -626,10 +630,23 @@ export function TwoGame() {
           />
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
+              <div className="finish-avatars">
+                {end.outcome === 'draw' ? (
+                  <>
+                    <FinishAvatar src={avatar} handle={me.handle} />
+                    <FinishAvatar src={oppDisplayAvatar} handle={oppDisplayHandle} />
+                  </>
+                ) : (
+                  <FinishAvatar
+                    src={end.outcome === myColor ? avatar : oppDisplayAvatar}
+                    handle={end.outcome === myColor ? me.handle : oppDisplayHandle}
+                  />
+                )}
+              </div>
               <div className="victor">
                 {end.outcome === 'draw'
                   ? 'Draw'
-                  : `${end.outcome === myColor ? me.handle : opp.handle} wins`}
+                  : `${end.outcome === myColor ? me.handle : oppDisplayHandle} wins`}
               </div>
               <div className="reason">{labelFor(end.reason)}</div>
             </div>
@@ -648,7 +665,7 @@ export function TwoGame() {
 
       <aside className="side-panel">
         <div className="game-meta">
-          <div className="game-meta-title">2.0 · {tc.label}</div>
+          <div className="game-meta-title">Guerrilla · {tc.label}</div>
           <div className="muted small">
             peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}
             {' · '}
@@ -682,10 +699,24 @@ export function TwoGame() {
         {end && (
           <div className="game-result-strip">
             <div className="result-line">
-              <span className="title">
-                {end.outcome === 'draw'
-                  ? 'Draw'
-                  : end.outcome === myColor ? 'You won' : 'You lost'}
+              <span className="title-group">
+                <ResultAvatar
+                  src={
+                    end.outcome === 'draw'
+                      ? avatar
+                      : end.outcome === myColor ? avatar : oppDisplayAvatar
+                  }
+                  handle={
+                    end.outcome === 'draw'
+                      ? me.handle
+                      : end.outcome === myColor ? me.handle : oppDisplayHandle
+                  }
+                />
+                <span className="title">
+                  {end.outcome === 'draw'
+                    ? 'Draw'
+                    : end.outcome === myColor ? 'You won' : 'You lost'}
+                </span>
               </span>
               <span className="reason">{labelFor(end.reason)}</span>
             </div>
@@ -752,35 +783,37 @@ export function TwoGame() {
           </div>
         )}
 
-        <div className="chat-panel">
-          <div className="chat-log">
-            {chatLog.map((m, i) => (
-              <div key={i} className={`chat-msg ${m.from}`}>
-                <span className="chat-from">{m.from === 'me' ? me.handle : opp.handle}:</span> {m.text}
-              </div>
-            ))}
+        {chatEnabled && (
+          <div className="chat-panel">
+            <div className="chat-log">
+              {chatLog.map((m, i) => (
+                <div key={i} className={`chat-msg ${m.from}`}>
+                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {m.text}
+                </div>
+              ))}
+            </div>
+            <form
+              className="chat-input-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!chatInput.trim()) return;
+                sessionRef.current.send({ type: 'chat', text: chatInput });
+                setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
+                sfx.playChat();
+                setChatInput('');
+              }}
+            >
+              <input
+                className="text-input"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="say something…"
+                maxLength={200}
+              />
+              <button className="secondary-btn" data-no-sfx type="submit">Send</button>
+            </form>
           </div>
-          <form
-            className="chat-input-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!chatInput.trim()) return;
-              sessionRef.current.send({ type: 'chat', text: chatInput });
-              setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
-              sfx.playChat();
-              setChatInput('');
-            }}
-          >
-            <input
-              className="text-input"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="say something…"
-              maxLength={200}
-            />
-            <button className="secondary-btn" data-no-sfx type="submit">Send</button>
-          </form>
-        </div>
+        )}
       </aside>
 
       <span style={{ display: 'none' }}>{toFen(game)}</span>

@@ -1,9 +1,40 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
+import { MergeBoard } from '../components/MergeBoard';
+import { CashShop } from '../components/CashShop';
 import { TimeModeSelector } from '../components/TimeModeSelector';
 import { TIME_CONTROLS, type TimeControl } from '../lib/timeControls';
+import {
+  initialState as mergeInitial,
+  applyMove as mergeApply,
+  legalMovesFrom as mergeLegal,
+  sqToIdx as mergeSqToIdx,
+  type GameState as MergeState,
+  type MoveResult as MergeResult,
+} from '../lib/mergeChess';
+import {
+  initialState as twoInitial,
+  applyMove as twoApply,
+  legalMovesFrom as twoLegal,
+  sqToIdx as twoSqToIdx,
+  type GameState as TwoState,
+  type MoveResult as TwoResult,
+} from '../lib/chess2';
+import {
+  initialState as cashInitial,
+  applyMove as cashApply,
+  legalMovesFrom as cashLegal,
+  legalBuyTargets as cashLegalBuyTargets,
+  affordableLetters as cashAffordable,
+  buyUci as cashBuyUci,
+  sqToIdx as cashSqToIdx,
+  type GameState as CashState,
+  type MoveResult as CashResult,
+  type ShopLetter,
+} from '../lib/cashChess';
+import type { Piece as MergePiece } from '../lib/mergeChess';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
   TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
 );
@@ -12,6 +43,8 @@ import { Matchmaker, fetchQueueStats } from '../lib/matchmaking';
 import { PeerSession, makePeerId } from '../lib/peer';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
+
+type FreeVariant = 'normal' | 'merge' | 'two' | 'cash';
 
 type Mode = 'idle' | 'searching' | 'hosting';
 
@@ -29,25 +62,71 @@ export function Home() {
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
   const [freeHighlights, setFreeHighlights] = useState<Set<string>>(new Set());
-  // Ply we're currently viewing. Equals freeChess.history().length at present.
-  // Free play lets the user make moves while in the past — doing so truncates
-  // the truth back to viewPly and branches a new line.
+  // Ply we're currently viewing. Equals the active engine's history length at
+  // present. Free play lets you make moves while in the past — doing so
+  // truncates truth back to viewPly and branches a new line.
   const [freeViewPly, setFreeViewPly] = useState(0);
+  const [freeVariant, setFreeVariant] = useState<FreeVariant>('normal');
+
+  // Merge / 2.0 / Cash keep an explicit snapshot list so viewPly can index in
+  // O(1) without re-replaying the whole game each render.
+  const [mergeStates, setMergeStates] = useState<MergeState[]>(() => [mergeInitial()]);
+  const [mergeResults, setMergeResults] = useState<MergeResult[]>([]);
+  const [twoStates, setTwoStates] = useState<TwoState[]>(() => [twoInitial()]);
+  const [twoResults, setTwoResults] = useState<TwoResult[]>([]);
+  const [cashStates, setCashStates] = useState<CashState[]>(() => [cashInitial()]);
+  const [cashResults, setCashResults] = useState<CashResult[]>([]);
+  // Shop selection (Cash only). When set, board clicks attempt to place the
+  // bought piece on a legal target square.
+  const [cashShopLetter, setCashShopLetter] = useState<ShopLetter | null>(null);
+
   const navigate = useNavigate();
 
-  // Chess instance reflecting the viewed position. At present this is the
-  // mutable freeChess; in the past it's a freshly-replayed temporary.
+  // Switching variants resets the board so each mode starts fresh.
+  useEffect(() => {
+    freeChess.reset();
+    setFreeFen(freeChess.fen());
+    setMergeStates([mergeInitial()]);
+    setMergeResults([]);
+    setTwoStates([twoInitial()]);
+    setTwoResults([]);
+    setCashStates([cashInitial()]);
+    setCashResults([]);
+    setCashShopLetter(null);
+    setFreeViewPly(0);
+    setFreeSelected(null);
+    setFreeHighlights(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeVariant]);
+
+  // Chess instance reflecting the viewed position for the normal variant. At
+  // present this is the mutable freeChess; in the past it's a freshly-replayed
+  // temporary. Bounded to the actual chess.js history length so we don't
+  // replay past the end while merge / 2.0 are driving freeViewPly.
   const previewChess = useMemo(() => {
     if (freeViewPly === freeChess.history().length) return freeChess;
     const tmp = new Chess();
     const all = freeChess.history();
-    for (let i = 0; i < freeViewPly; i++) tmp.move(all[i]);
+    const upTo = Math.min(freeViewPly, all.length);
+    for (let i = 0; i < upTo; i++) tmp.move(all[i]);
     return tmp;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeViewPly, freeFen]);
 
   const freeDisplayFen = previewChess.fen();
-  const freeTurn: 'w' | 'b' = previewChess.turn();
+  const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
+  const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
+  const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
+  const totalFreePly =
+    freeVariant === 'normal' ? freeChess.history().length :
+    freeVariant === 'merge' ? mergeResults.length :
+    freeVariant === 'two' ? twoResults.length :
+    cashResults.length;
+  const freeTurn: 'w' | 'b' =
+    freeVariant === 'normal' ? previewChess.turn() :
+    freeVariant === 'merge' ? mergeViewState.turn :
+    freeVariant === 'two' ? twoViewState.turn :
+    cashViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
   const freeLegalTargets = useMemo<string[]>(() => {
@@ -87,9 +166,57 @@ export function Home() {
     return styles;
   }, [freeSelected, freeLegalTargets, previewChess, freeHighlights]);
 
+  // Merge / 2.0 legal-target sets, in the shape MergeBoard expects.
+  const mergeLegalTargets = useMemo(() => {
+    if (freeVariant !== 'merge' || !freeSelected) return [];
+    return mergeLegal(mergeViewState, freeSelected).map((m) => ({
+      to: m.to, isCapture: m.isCapture, isMerge: m.isMerge,
+    }));
+  }, [freeVariant, freeSelected, mergeViewState]);
+
+  const twoLegalTargets = useMemo(() => {
+    if (freeVariant !== 'two' || !freeSelected) return [];
+    return twoLegal(twoViewState, freeSelected).map((m) => ({
+      // Remap chess2's `isSpecial` (rook push) onto MergeBoard's green-ring
+      // `isMerge` slot — same visual treatment.
+      to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
+    }));
+  }, [freeVariant, freeSelected, twoViewState]);
+
+  // Cash buy-target squares are derived from the shop selection. When a shop
+  // letter is selected, those squares get the green "special" ring and board
+  // piece moves are suppressed.
+  const cashBuyTargets = useMemo<Set<string>>(() => {
+    if (freeVariant !== 'cash' || !cashShopLetter) return new Set();
+    return new Set(cashLegalBuyTargets(cashViewState, cashShopLetter));
+  }, [freeVariant, cashShopLetter, cashViewState]);
+
+  const cashLegalTargets = useMemo(() => {
+    if (freeVariant !== 'cash') return [];
+    if (cashShopLetter) {
+      return Array.from(cashBuyTargets).map((to) => ({
+        to, isCapture: false, isMerge: true,
+      }));
+    }
+    if (!freeSelected) return [];
+    return cashLegal(cashViewState, freeSelected).map((m) => ({
+      to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
+    }));
+  }, [freeVariant, freeSelected, cashViewState, cashShopLetter, cashBuyTargets]);
+
+  // Affordable + has-legal-target shop letters for the side currently to move.
+  const cashAffordableSet = useMemo<Set<ShopLetter>>(() => {
+    if (freeVariant !== 'cash') return new Set();
+    // Only allow buying at the present (not while scrubbing history).
+    if (freeViewPly !== cashResults.length) return new Set();
+    const out = new Set<ShopLetter>();
+    for (const L of cashAffordable(cashViewState)) {
+      if (cashLegalBuyTargets(cashViewState, L).length > 0) out.add(L);
+    }
+    return out;
+  }, [freeVariant, cashViewState, freeViewPly, cashResults.length]);
+
   const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
-    // Moving while in the past branches the history: rewind truth to viewPly,
-    // then apply the new move. The viewed position becomes the new present.
     while (freeChess.history().length > freeViewPly) freeChess.undo();
     let m;
     try {
@@ -110,29 +237,198 @@ export function Home() {
     return true;
   };
 
+  const applyMergeMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+    // Branch in past: drop everything after viewPly, then apply on the snapshot we're viewing.
+    const truncStates = mergeStates.slice(0, freeViewPly + 1);
+    const truncResults = mergeResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    const res = mergeApply(base, uci);
+    if (!res) return false;
+    if (res.result.castled) sfx.playCastle();
+    else if (res.result.merged) sfx.playMerge();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setMergeStates([...truncStates, res.state]);
+    setMergeResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    return true;
+  };
+
+  const applyTwoMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+    const truncStates = twoStates.slice(0, freeViewPly + 1);
+    const truncResults = twoResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    const res = twoApply(base, uci);
+    if (!res) return false;
+    if (res.result.pushed) sfx.playPush();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setTwoStates([...truncStates, res.state]);
+    setTwoResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    return true;
+  };
+
+  const commitCashMove = (uci: string): boolean => {
+    const truncStates = cashStates.slice(0, freeViewPly + 1);
+    const truncResults = cashResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    const res = cashApply(base, uci);
+    if (!res) return false;
+    if (res.result.cashedIn) sfx.playMerge();
+    else if (res.result.bought) sfx.playPlace();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setCashStates([...truncStates, res.state]);
+    setCashResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    setCashShopLetter(null);
+    return true;
+  };
+
+  const applyCashMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    return commitCashMove(uci);
+  };
+
+  const applyCashBuy = (letter: ShopLetter, to: string): boolean => {
+    return commitCashMove(cashBuyUci(letter, to));
+  };
+
+  // Pawn promotions in free play default to queen — no prompt mid-board to
+  // keep the practice flow snappy. (chess.js handles 'q' via its own arg.)
+  // Cash has no promotion: pawns reaching the back rank cash in for gold.
+  const promotionFor = (
+    variant: 'merge' | 'two' | 'cash',
+    from: string,
+    to: string,
+  ): 'Q' | undefined => {
+    if (variant === 'cash') return undefined;
+    const rank = parseInt(to[1], 10);
+    if (rank !== 1 && rank !== 8) return undefined;
+    const idx = variant === 'merge' ? mergeSqToIdx(from) : twoSqToIdx(from);
+    const piece = variant === 'merge' ? mergeViewState.board[idx] : twoViewState.board[idx];
+    if (!piece) return undefined;
+    return piece.letter.toUpperCase() === 'P' ? 'Q' : undefined;
+  };
+
   const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
     const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
     return applyFreeMove(sourceSquare, targetSquare, promotion);
   };
 
+  const handleMergeDrop = (from: string, to: string): boolean => {
+    return applyMergeMove(from, to, promotionFor('merge', from, to));
+  };
+  const handleTwoDrop = (from: string, to: string): boolean => {
+    return applyTwoMove(from, to, promotionFor('two', from, to));
+  };
+  const handleCashDrop = (from: string, to: string): boolean => {
+    return applyCashMove(from, to, promotionFor('cash', from, to));
+  };
+
   const onFreeSquareClick = (square: string) => {
-    // Any left-click on a square clears right-click highlights, mirroring
-    // chess.com / lichess and the merge board.
     if (freeHighlights.size > 0) setFreeHighlights(new Set());
-    const piece = previewChess.get(square as any);
     if (freeSelected === square) {
       setFreeSelected(null);
       return;
     }
-    if (freeSelected && freeLegalTargets.includes(square)) {
-      applyFreeMove(freeSelected, square);
+    if (freeVariant === 'normal') {
+      const piece = previewChess.get(square as any);
+      if (freeSelected && freeLegalTargets.includes(square)) {
+        applyFreeMove(freeSelected, square);
+        return;
+      }
+      if (piece && piece.color === previewChess.turn()) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
       return;
     }
-    if (piece && piece.color === previewChess.turn()) {
+    if (freeVariant === 'merge') {
+      const targets = mergeLegalTargets;
+      if (freeSelected && targets.some((t) => t.to === square)) {
+        applyMergeMove(freeSelected, square, promotionFor('merge', freeSelected, square));
+        return;
+      }
+      const piece = mergeViewState.board[mergeSqToIdx(square)];
+      if (piece && piece.color === mergeViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
+      return;
+    }
+    if (freeVariant === 'two') {
+      const targets = twoLegalTargets;
+      if (freeSelected && targets.some((t) => t.to === square)) {
+        applyTwoMove(freeSelected, square, promotionFor('two', freeSelected, square));
+        return;
+      }
+      const piece = twoViewState.board[twoSqToIdx(square)];
+      if (piece && piece.color === twoViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
+      return;
+    }
+    // cash
+    if (cashShopLetter) {
+      if (cashBuyTargets.has(square)) {
+        applyCashBuy(cashShopLetter, square);
+        return;
+      }
+      // Click on a non-target square cancels the shop selection.
+      setCashShopLetter(null);
+      return;
+    }
+    const cashTargets = cashLegalTargets;
+    if (freeSelected && cashTargets.some((t) => t.to === square)) {
+      applyCashMove(freeSelected, square, promotionFor('cash', freeSelected, square));
+      return;
+    }
+    const cashPiece = cashViewState.board[cashSqToIdx(square)];
+    if (cashPiece && cashPiece.color === cashViewState.turn) {
       setFreeSelected(square);
       return;
     }
     setFreeSelected(null);
+  };
+
+  // Set selection when dragging starts on the merge / 2.0 board so the
+  // legal-target rings appear while dragging, matching MergeGame's behavior.
+  const onFreeDragStart = (from: string) => {
+    if (freeVariant === 'merge') {
+      const piece = mergeViewState.board[mergeSqToIdx(from)];
+      if (!piece || piece.color !== mergeViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
+    if (freeVariant === 'two') {
+      const piece = twoViewState.board[twoSqToIdx(from)];
+      if (!piece || piece.color !== twoViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
+    if (freeVariant === 'cash') {
+      if (cashShopLetter) setCashShopLetter(null);
+      const piece = cashViewState.board[cashSqToIdx(from)];
+      if (!piece || piece.color !== cashViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+    }
   };
 
   const onFreeSquareRightClick = (square: string) => {
@@ -148,6 +444,13 @@ export function Home() {
     sfx.playReset();
     freeChess.reset();
     setFreeFen(freeChess.fen());
+    setMergeStates([mergeInitial()]);
+    setMergeResults([]);
+    setTwoStates([twoInitial()]);
+    setTwoResults([]);
+    setCashStates([cashInitial()]);
+    setCashResults([]);
+    setCashShopLetter(null);
     setFreeViewPly(0);
     setFreeSelected(null);
   };
@@ -161,24 +464,67 @@ export function Home() {
 
   // Scrub one ply forward or backward. Plays piece SFX (forward or reversed)
   // when invoked from the keyboard; the Undo/Redo buttons pass playSfx=false
-  // so they rely on the global button-click SFX instead.
+  // so they rely on the global button-click SFX instead. Variant-aware so
+  // merge/2.0 history navigation plays the right sounds.
   const navigateFreeView = (forward: boolean, playSfx = true) => {
     setFreeViewPly((p) => {
-      const verbose = freeChess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
-      const total = verbose.length;
-      const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+      const next = forward ? Math.min(totalFreePly, p + 1) : Math.max(0, p - 1);
       if (next === p) return p;
       if (playSfx) {
-        const m = verbose[forward ? p : next];
-        if (m) {
-          sfx.cutoffChessSfx();
-          const isCheck = m.san.includes('+') || m.san.includes('#');
-          if (forward) {
-            if (m.captured) sfx.playCapture(); else sfx.playMove();
-            if (isCheck) sfx.playCheck();
-          } else {
-            if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
-            if (isCheck) sfx.playCheckReversed();
+        sfx.cutoffChessSfx();
+        if (freeVariant === 'normal') {
+          const verbose = freeChess.history({ verbose: true }) as Array<{ captured?: string; san: string }>;
+          const m = verbose[forward ? p : next];
+          if (m) {
+            const isCheck = m.san.includes('+') || m.san.includes('#');
+            if (forward) {
+              if (m.captured) sfx.playCapture(); else sfx.playMove();
+              if (isCheck) sfx.playCheck();
+            } else {
+              if (m.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (isCheck) sfx.playCheckReversed();
+            }
+          }
+        } else if (freeVariant === 'merge') {
+          const r = mergeResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.castled) sfx.playCastle();
+              else if (r.merged) sfx.playMerge();
+              else if (r.captured) sfx.playCapture();
+              else sfx.playMove();
+              if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
+        } else if (freeVariant === 'two') {
+          const r = twoResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.pushed) sfx.playPush();
+              else if (r.captured) sfx.playCapture();
+              else sfx.playMove();
+              if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
+        } else {
+          const r = cashResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.cashedIn) sfx.playMerge();
+              else if (r.bought) sfx.playPlace();
+              else if (r.captured) sfx.playCapture();
+              else sfx.playMove();
+              if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
           }
         }
       }
@@ -186,7 +532,12 @@ export function Home() {
     });
   };
 
-  const canRedoFree = freeViewPly < freeChess.history().length;
+  const canRedoFree = freeViewPly < totalFreePly;
+
+  // Stash the latest navigate callback so the keydown handler — registered
+  // once at mount — always sees current variant + history state.
+  const navigateRef = useRef(navigateFreeView);
+  useEffect(() => { navigateRef.current = navigateFreeView; });
 
   // Arrow keys scrub free-play history. Skip when an input/textarea is focused.
   useEffect(() => {
@@ -195,7 +546,7 @@ export function Home() {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
-      navigateFreeView(e.key === 'ArrowRight');
+      navigateRef.current(e.key === 'ArrowRight');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -205,6 +556,7 @@ export function Home() {
   // Clear any stale selection when the viewed ply changes via arrow keys.
   useEffect(() => {
     setFreeSelected(null);
+    setCashShopLetter(null);
   }, [freeViewPly]);
 
   // Poll queue stats so the home page shows how many people are searching per mode.
@@ -422,11 +774,52 @@ export function Home() {
       </div>
 
       <div className="home-play-area">
-        <div className="free-play-board">
+        <div className={`free-play-board${freeVariant === 'cash' ? ' with-shop' : ''}`}>
+          {freeVariant === 'cash' && (
+            <div className="free-play-shop-col">
+              <CashShop
+                whiteGold={cashViewState.gold.w}
+                blackGold={cashViewState.gold.b}
+                // Free play: shop reflects whichever side is to move (alternates
+                // each turn). Online play passes the local player's color.
+                perspective={cashViewState.turn === 'w' ? 'white' : 'black'}
+                canBuy={freeViewPly === cashResults.length}
+                selectedLetter={cashShopLetter}
+                affordable={cashAffordableSet}
+                onSelect={(L) => {
+                  setFreeSelected(null);
+                  setCashShopLetter(L);
+                  if (L) sfx.playBuy();
+                }}
+                compact
+              />
+            </div>
+          )}
           <div className="free-play-header">
-            <div className="free-play-turn" aria-label={`${freeTurn === 'w' ? 'White' : 'Black'} to move`}>
-              <span className={`turn-swatch ${freeTurn === 'w' ? 'white' : 'black'}`} aria-hidden />
-              <span className="turn-label">{freeTurn === 'w' ? 'White' : 'Black'} to move</span>
+            <div className="free-play-turn-group">
+              <div className="free-play-turn" aria-label={`${freeTurn === 'w' ? 'White' : 'Black'} to move`}>
+                <span className={`turn-swatch ${freeTurn === 'w' ? 'white' : 'black'}`} aria-hidden />
+              </div>
+              <select
+                className="free-play-select"
+                value={freeVariant}
+                onChange={(e) => {
+                  const next = e.target.value as FreeVariant;
+                  if (next !== freeVariant) {
+                    if (next === 'merge') sfx.playMerge();
+                    else if (next === 'two') sfx.playPush();
+                    else if (next === 'cash') sfx.playPlace();
+                    else sfx.playMove();
+                  }
+                  setFreeVariant(next);
+                }}
+                aria-label="Free-play game mode"
+              >
+                <option value="normal">Normal</option>
+                <option value="merge">Merge</option>
+                <option value="two">Guerrilla</option>
+                <option value="cash">Cash Money</option>
+              </select>
             </div>
             <div className="free-play-header-actions">
               <button
@@ -450,17 +843,49 @@ export function Home() {
             </div>
           </div>
           <div className="free-play-board-wrap">
-            <Chessboard
-              position={freeDisplayFen}
-              onPieceDrop={handleFreeDrop}
-              onSquareClick={onFreeSquareClick}
-              onSquareRightClick={onFreeSquareRightClick}
-              boardOrientation={freeOrientation}
-              customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
-              customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
-              customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
-              customSquareStyles={freeSquareStyles}
-            />
+              {freeVariant === 'normal' ? (
+                <Chessboard
+                  position={freeDisplayFen}
+                  onPieceDrop={handleFreeDrop}
+                  onSquareClick={onFreeSquareClick}
+                  onSquareRightClick={onFreeSquareRightClick}
+                  boardOrientation={freeOrientation}
+                  customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
+                  customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
+                  customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
+                  customSquareStyles={freeSquareStyles}
+                />
+              ) : freeVariant === 'merge' ? (
+                <MergeBoard
+                  board={mergeViewState.board as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={freeSelected}
+                  legalTargets={mergeLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleMergeDrop}
+                  onDragStartSquare={onFreeDragStart}
+                />
+              ) : freeVariant === 'two' ? (
+                <MergeBoard
+                  board={twoViewState.board as unknown as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={freeSelected}
+                  legalTargets={twoLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleTwoDrop}
+                  onDragStartSquare={onFreeDragStart}
+                />
+              ) : (
+                <MergeBoard
+                  board={cashViewState.board as unknown as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={cashShopLetter ? null : freeSelected}
+                  legalTargets={cashLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleCashDrop}
+                  onDragStartSquare={onFreeDragStart}
+                />
+              )}
           </div>
         </div>
 

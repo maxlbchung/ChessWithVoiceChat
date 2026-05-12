@@ -1,15 +1,18 @@
 // Chess 2.0 — back-rank pieces follow new rules:
 //   Q (queen)  → moves like a king (1 square any direction).
-//   B (bishop) → moves 1 or 2 squares in any of the 8 directions, blocked by
+//   B (bishop) → moves 1 to 3 squares in any of the 8 directions, blocked by
 //                pieces in the path (a short-range queen).
-//   N (knight) → can only move by hopping over a piece adjacent to it in one
-//                of the 8 directions, then sliding to any square along the
-//                line beyond the hopped piece (stopping at edge / capturing
-//                the first enemy / blocked by own).
-//   R (rook)   → moves 1 square orthogonally. It cannot capture. If the
-//                destination is occupied, it PUSHES the piece(s) one square
-//                in the same direction. Push fails if the chain reaches the
-//                board edge or contains another rook (own or enemy).
+//   N (knight) → jumps over an adjacent piece (any of the 8 directions) and
+//                lands directly on the square two away. The hopped piece, if
+//                enemy, is captured checkers-style; the landing square may be
+//                empty or hold an enemy (also captured). May not land on an
+//                own piece. A single jump can capture both the hopped piece
+//                and the landed-on piece.
+//   R (rook)   → moves 1 square orthogonally. Captures adjacent enemy
+//                pieces normally. If the destination holds an own piece, it
+//                PUSHES the chain one square in the same direction. Push
+//                fails if the chain reaches the board edge or contains
+//                another rook (own or enemy).
 //   K (king)   → standard 1-square move (no castling in 2.0).
 //   P (pawn)   → standard pawn rules (incl. en passant, promotion).
 //
@@ -119,6 +122,9 @@ type PseudoMove = {
   doublePawn?: boolean;
   // Rook push: direction the chain shifts.
   push?: { df: number; dr: number };
+  // Knight jump: square index of an enemy piece the knight hopped over,
+  // captured checkers-style. Undefined if the hopped piece was friendly.
+  knightHopCapture?: number;
 };
 
 function pseudoMoves(state: GameState, from: number): PseudoMove[] {
@@ -167,7 +173,7 @@ function pseudoBishop(
   state: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[],
 ) {
   for (const [df, dr] of EIGHT_DIRS) {
-    for (let step = 1; step <= 2; step++) {
+    for (let step = 1; step <= 3; step++) {
       const f = ff + df * step, r = fr + dr * step;
       if (!onBoard(f, r)) break;
       const t = idxFR(f, r);
@@ -185,29 +191,27 @@ function pseudoKnight(
   state: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[],
 ) {
   for (const [df, dr] of EIGHT_DIRS) {
-    const af = ff + df, ar = fr + dr;
+    const af = ff + df, ar = fr + dr;          // adjacent (hopped) square
     if (!onBoard(af, ar)) continue;
-    const hopped = state.board[idxFR(af, ar)];
-    if (!hopped) continue;  // need an adjacent piece to hop over
-    // Slide from the square just past the hopped piece, in the same direction.
-    let f = ff + 2 * df, r = fr + 2 * dr;
-    while (onBoard(f, r)) {
-      const t = idxFR(f, r);
-      const dest = state.board[t];
-      if (dest) {
-        if (dest.color !== p.color) out.push({ from, to: t });
-        break;
-      }
-      out.push({ from, to: t });
-      f += df; r += dr;
-    }
+    const hoppedIdx = idxFR(af, ar);
+    const hopped = state.board[hoppedIdx];
+    if (!hopped) continue;                      // need a piece to hop over
+    const lf = ff + 2 * df, lr = fr + 2 * dr;   // landing square
+    if (!onBoard(lf, lr)) continue;
+    const t = idxFR(lf, lr);
+    const dest = state.board[t];
+    if (dest && dest.color === p.color) continue;  // can't land on own piece
+    out.push({
+      from,
+      to: t,
+      knightHopCapture: hopped.color !== p.color ? hoppedIdx : undefined,
+    });
   }
 }
 
 function pseudoRook(
   state: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[],
 ) {
-  void p;
   for (const [df, dr] of ROOK_DIRS) {
     const f = ff + df, r = fr + dr;
     if (!onBoard(f, r)) continue;
@@ -215,7 +219,11 @@ function pseudoRook(
     const dest = state.board[t];
     if (!dest) {
       out.push({ from, to: t });
+    } else if (dest.color !== p.color) {
+      // Adjacent enemy — capture normally (no push).
+      out.push({ from, to: t });
     } else if (canPush(state, t, df, dr)) {
+      // Adjacent own piece — push the chain.
       out.push({ from, to: t, push: { df, dr } });
     }
   }
@@ -309,9 +317,17 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (p && p.color === byColor && p.letter.toUpperCase() === 'Q') return true;
   }
 
-  // Bishop (1 or 2 sq, blocked by intervening pieces)
+  // Rook (1 sq orthogonal — can capture adjacent enemies in 2.0)
+  for (const [df, dr] of ROOK_DIRS) {
+    const f = tf + df, r = tr + dr;
+    if (!onBoard(f, r)) continue;
+    const p = state.board[idxFR(f, r)];
+    if (p && p.color === byColor && p.letter.toUpperCase() === 'R') return true;
+  }
+
+  // Bishop (1 to 3 sq, blocked by intervening pieces)
   for (const [df, dr] of EIGHT_DIRS) {
-    for (let step = 1; step <= 2; step++) {
+    for (let step = 1; step <= 3; step++) {
       const f = tf - df * step, r = tr - dr * step;
       if (!onBoard(f, r)) break;
       const p = state.board[idxFR(f, r)];
@@ -322,27 +338,28 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     }
   }
 
-  // Knight (hop over an adjacent piece). From target, walk back along each
-  // direction. The first piece encountered must be the hopped piece; one more
-  // step further back must be an enemy knight.
+  // Knight (jump rules): attacks the target by either landing on it or by
+  // hopping directly over it (checkers-style).
   for (const [df, dr] of EIGHT_DIRS) {
-    let f = tf - df, r = tr - dr;
-    let saw: number | null = null;
-    while (onBoard(f, r)) {
-      const idx = idxFR(f, r);
-      const p = state.board[idx];
-      if (p) {
-        saw = idx;
-        break;
-      }
-      f -= df; r -= dr;
+    // Case A: knight lands on T. Knight sits at T - 2*(df,dr); the hopped
+    // square at T - (df,dr) just needs *some* piece on it.
+    const kf = tf - 2 * df, kr = tr - 2 * dr;
+    const hf = tf - df, hr = tr - dr;
+    if (onBoard(kf, kr) && onBoard(hf, hr) && state.board[idxFR(hf, hr)]) {
+      const k = state.board[idxFR(kf, kr)];
+      if (k && k.color === byColor && k.letter.toUpperCase() === 'N') return true;
     }
-    if (saw == null) continue;
-    // Hopped piece at (f, r) — knight should be one step further back.
-    const kf = f - df, kr = r - dr;
-    if (!onBoard(kf, kr)) continue;
-    const knight = state.board[idxFR(kf, kr)];
-    if (knight && knight.color === byColor && knight.letter.toUpperCase() === 'N') return true;
+    // Case B: knight hops over T. Knight at T - (df,dr), lands at T + (df,dr);
+    // the landing square must not hold one of the knight's own pieces.
+    const kf2 = tf - df, kr2 = tr - dr;
+    const lf = tf + df, lr = tr + dr;
+    if (onBoard(kf2, kr2) && onBoard(lf, lr)) {
+      const k = state.board[idxFR(kf2, kr2)];
+      if (k && k.color === byColor && k.letter.toUpperCase() === 'N') {
+        const land = state.board[idxFR(lf, lr)];
+        if (!land || land.color !== byColor) return true;
+      }
+    }
   }
 
   return false;
@@ -420,6 +437,11 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     }
     next.board[mv.to] = resultPiece;
     next.board[mv.from] = null;
+
+    if (mv.knightHopCapture != null) {
+      next.board[mv.knightHopCapture] = null;
+      next.halfmove = 0;
+    }
   }
 
   if (moverUp === 'P') next.halfmove = 0;
@@ -456,7 +478,7 @@ export function legalMovesFrom(state: GameState, from: Square): {
     const next = applyPseudo(state, pm);
     if (isInCheck(next, moverColor)) continue;
     const dest = state.board[pm.to];
-    const isCapture = !pm.push && (!!dest || !!pm.enPassantCapture);
+    const isCapture = !pm.push && (!!dest || !!pm.enPassantCapture || pm.knightHopCapture != null);
     const isSpecial = !!pm.push;
     out.push({ to: idxToSq(pm.to), promotion: pm.promotion, isCapture, isSpecial });
   }
@@ -504,7 +526,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   if (isInCheck(next, moverColor)) return null;
 
   const dest = state.board[toIdx];
-  const captured = !chosen.push && (!!dest || !!chosen.enPassantCapture);
+  const captured = !chosen.push && (!!dest || !!chosen.enPassantCapture || chosen.knightHopCapture != null);
   const pushed = !!chosen.push;
   const check = isInCheck(next, next.turn);
   const oppHasMoves = allLegalMoves(next).length > 0;

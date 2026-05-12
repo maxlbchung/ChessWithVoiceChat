@@ -5,6 +5,7 @@ import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { CashShop } from '../components/CashShop';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
@@ -25,23 +26,28 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import {
+  affordableLetters,
   applyMove,
+  buyUci,
   initialState,
   isCheckmate,
   isFiftyMoveRule,
   isInCheck,
-  isInsufficientMaterial,
   isStalemate,
   isThreefoldRepetition,
+  kingsOnlyOutcome,
+  legalBuyTargets,
   legalMovesFrom,
   toFen,
   type GameState,
+  type ShopLetter,
   type Square,
-} from '../lib/mergeChess';
+} from '../lib/cashChess';
+import type { Piece as MergePieceShape } from '../lib/mergeChess';
 
 type EndState = { outcome: GameOutcome; reason: GameEndReason };
 
-export function MergeGame() {
+export function CashGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
   const { identity, rating, avatar, setRating } = useIdentityStore();
@@ -74,6 +80,9 @@ export function MergeGame() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  // When a shop letter is selected, board clicks attempt to place that piece
+  // on a legal target square instead of moving.
+  const [selectedShop, setSelectedShop] = useState<ShopLetter | null>(null);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -83,7 +92,6 @@ export function MergeGame() {
   const MAX_GRACE_DISCONNECTS = 2;
   const [_, forceTick] = useState(0);
 
-  // Voice
   const [voiceActive, setVoiceActive] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [speakerOn, setSpeakerOn] = useState(true);
@@ -100,9 +108,7 @@ export function MergeGame() {
   const myVolume = useVolume(localStream);
   const oppVolume = useVolume(remoteStream);
 
-  useEffect(() => {
-    localStreamRef.current = localStream;
-  }, [localStream]);
+  useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
 
   const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
   const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
@@ -147,10 +153,7 @@ export function MergeGame() {
     disconnectDeadlineRef.current = deadline;
     setDisconnectMs(FORFEIT_DELAY_MS);
     const tick = () => {
-      if (endRef.current) {
-        cancelDisconnectCountdown();
-        return;
-      }
+      if (endRef.current) { cancelDisconnectCountdown(); return; }
       const remaining = (disconnectDeadlineRef.current ?? 0) - Date.now();
       if (remaining <= 0) {
         cancelDisconnectCountdown();
@@ -162,9 +165,6 @@ export function MergeGame() {
     disconnectTimerRef.current = window.setInterval(tick, 100);
   };
 
-  // Keep endRef synced and cancel any in-flight forfeit countdown the moment
-  // the match ends — peer-session handlers were bound at mount with a stale
-  // `end` closure and must read endRef.current instead.
   useEffect(() => {
     endRef.current = end;
     if (end) cancelDisconnectCountdown();
@@ -200,10 +200,7 @@ export function MergeGame() {
     const handleIncomingCall = async (call: any) => {
       try {
         let stream = localStreamRef.current;
-        if (!stream) {
-          stream = await getMicStream();
-          setLocalStream(stream);
-        }
+        if (!stream) { stream = await getMicStream(); setLocalStream(stream); }
         session.answerCall(call, stream);
         setVoiceActive(true);
         const id = setInterval(() => {
@@ -237,10 +234,7 @@ export function MergeGame() {
 
     session.setEvents({
       ...session.events,
-      onConnect: () => {
-        cancelDisconnectCountdown();
-        sendIntro();
-      },
+      onConnect: () => { cancelDisconnectCountdown(); sendIntro(); },
       onMessage: handleMessage,
       onIncomingCall: handleIncomingCall,
       onError: (err) => {
@@ -271,7 +265,7 @@ export function MergeGame() {
       setConnDetail('waiting');
     }
 
-    return () => { /* teardown on unmount handled below */ };
+    return () => { /* teardown handled below */ };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -289,14 +283,12 @@ export function MergeGame() {
     };
   }, []);
 
-  // Clocks
   useEffect(() => {
     if (end) return;
     let raf = 0;
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      // Tick only after a move has been played
       if (movesCountRef.current > 0) {
         const turn = gameRef.current.turn;
         if (turn === 'w') setWhiteMs((ms) => Math.max(0, ms - dt));
@@ -322,27 +314,21 @@ export function MergeGame() {
     finalize({ outcome: loser === 'white' ? 'black' : 'white', reason: 'timeout' });
   };
 
-  // --------------------------------------------------------------------
-  // Move handling
-  // --------------------------------------------------------------------
+  // ----------------------------------------------------------------
+  // Move / buy handling
+  // ----------------------------------------------------------------
   const isMyTurn = () => game.turn === myEngineColor;
 
-  const applyLocalMove = async (from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N'): Promise<boolean> => {
-    if (end) return false;
-    if (!isMyTurn()) return false;
-    const beforeTurn = game.turn;
-    let uci = from + to;
-    if (promotion) uci += promotion.toLowerCase();
+  const commitMove = async (uci: string, beforeTurn: 'w' | 'b'): Promise<boolean> => {
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    if (res.result.castled) sfx.playCastle();
-    else if (res.result.merged) sfx.playMerge();
+    if (res.result.cashedIn) sfx.playMerge();
+    else if (res.result.bought) sfx.playPlace();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
 
-    // Update clocks
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
       setBlackMs(tc.perMoveMs);
@@ -367,33 +353,45 @@ export function MergeGame() {
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
     setSelectedSquare(null);
+    setSelectedShop(null);
 
     checkBoardEnd(res.state);
     return true;
   };
 
+  const applyLocalMove = async (
+    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
+  ): Promise<boolean> => {
+    if (end) return false;
+    if (!isMyTurn()) return false;
+    const beforeTurn = game.turn;
+    let uci = from + to;
+    if (promotion) uci += promotion.toLowerCase();
+    return commitMove(uci, beforeTurn);
+  };
+
+  const applyLocalBuy = async (letter: ShopLetter, to: Square): Promise<boolean> => {
+    if (end) return false;
+    if (!isMyTurn()) return false;
+    const beforeTurn = game.turn;
+    return commitMove(buyUci(letter, to), beforeTurn);
+  };
+
   const applyRemoteMove = async (move: SignedMove) => {
     if (end) return;
     const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) {
-      console.warn('signature failed for move', move);
-      return;
-    }
+    if (!ok) { console.warn('signature failed for move', move); return; }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
     }
     const res = applyMove(gameRef.current, move.uci);
-    if (!res) {
-      console.warn('illegal remote move', move);
-      return;
-    }
-    // Defense in depth: ensure fenAfter matches
+    if (!res) { console.warn('illegal remote move', move); return; }
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.castled) sfx.playCastle();
-    else if (res.result.merged) sfx.playMerge();
+    if (res.result.cashedIn) sfx.playMerge();
+    else if (res.result.bought) sfx.playPlace();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -409,6 +407,7 @@ export function MergeGame() {
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
     setSelectedSquare(null);
+    setSelectedShop(null);
     checkBoardEnd(res.state);
   };
 
@@ -419,8 +418,15 @@ export function MergeGame() {
       return;
     }
     if (isStalemate(s)) { finalize({ outcome: 'draw', reason: 'stalemate' }); return; }
+    // K-vs-K is decided by gold in Cash. Higher gold wins; ties draw. We
+    // reuse the 'insufficient' end-reason for the closest label match.
+    const kvk = kingsOnlyOutcome(s);
+    if (kvk) {
+      const outcome: GameOutcome = kvk === 'w' ? 'white' : kvk === 'b' ? 'black' : 'draw';
+      finalize({ outcome, reason: 'insufficient' });
+      return;
+    }
     if (isThreefoldRepetition(s)) { finalize({ outcome: 'draw', reason: 'threefold' }); return; }
-    if (isInsufficientMaterial(s)) { finalize({ outcome: 'draw', reason: 'insufficient' }); return; }
     if (isFiftyMoveRule(s)) { finalize({ outcome: 'draw', reason: 'fifty-move' }); return; }
   };
 
@@ -522,16 +528,39 @@ export function MergeGame() {
       ? 'muted'
       : 'active';
 
-  // --------------------------------------------------------------------
+  // ----------------------------------------------------------------
   // Rendering
-  // --------------------------------------------------------------------
+  // ----------------------------------------------------------------
+  const buyTargetSquares = useMemo<Set<Square>>(() => {
+    if (!selectedShop) return new Set();
+    return new Set(legalBuyTargets(game, selectedShop));
+  }, [selectedShop, game]);
+
   const legalTargets = useMemo(() => {
+    // When a shop piece is selected, board-piece moves are suppressed; only
+    // placement targets are shown (as green "special" rings).
+    if (selectedShop) {
+      return Array.from(buyTargetSquares).map((sq) => ({
+        to: sq, isCapture: false, isMerge: true,
+      }));
+    }
     if (!selectedSquare) return [];
     return legalMovesFrom(game, selectedSquare).map((m) => ({
-      to: m.to, isCapture: m.isCapture, isMerge: m.isMerge,
+      to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, game]);
+  }, [selectedSquare, selectedShop, game, buyTargetSquares]);
+
+  const affordableSet = useMemo<Set<ShopLetter>>(() => {
+    if (!isMyTurn() || end) return new Set();
+    // Filter to letters that actually have at least one legal placement square.
+    const out = new Set<ShopLetter>();
+    for (const L of affordableLetters(game)) {
+      if (legalBuyTargets(game, L).length > 0) out.add(L);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, end]);
 
   const isActiveSide = (c: Color): boolean => {
     if (end) return false;
@@ -539,27 +568,31 @@ export function MergeGame() {
     return (game.turn === 'w') === (c === 'white');
   };
 
-  // Try to play `from`→`to`. Handles pawn promotion via a quick prompt.
-  // Returns true if a move was attempted (caller can clear selection).
+  const handleSelectShop = (letter: ShopLetter | null) => {
+    setSelectedSquare(null);
+    setSelectedShop(letter);
+    if (letter) sfx.playBuy();
+  };
+
   const attemptMove = (from: Square, to: Square): boolean => {
-    const piece = game.board[sqIdx(from)];
-    const isPawn = piece && piece.letter.toUpperCase() === 'P';
-    const targetRank = parseInt(to[1], 10);
-    const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
-    if (isPromoting) {
-      const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
-      const promo = (choice ?? 'Q').toUpperCase();
-      const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
-      void applyLocalMove(from, to, valid);
-    } else {
-      void applyLocalMove(from, to);
-    }
+    // No promotion in Cash — a pawn that lands on the back rank cashes in
+    // for gold instead. So we never prompt.
+    void applyLocalMove(from, to);
     return true;
   };
 
   const onSquareClick = (square: Square) => {
     if (end) return;
-    if (!isMyTurn()) { setSelectedSquare(null); return; }
+    if (!isMyTurn()) { setSelectedSquare(null); setSelectedShop(null); return; }
+    if (selectedShop) {
+      if (buyTargetSquares.has(square)) {
+        void applyLocalBuy(selectedShop, square);
+        return;
+      }
+      // Click a non-target square cancels the buy selection.
+      setSelectedShop(null);
+      return;
+    }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
@@ -574,18 +607,15 @@ export function MergeGame() {
     setSelectedSquare(null);
   };
 
-  // Drag start on an own piece — same effect as clicking it, so the legal
-  // target rings show up while the user drags.
   const onDragStartSquare = (from: Square) => {
     if (end) return;
     if (!isMyTurn()) return;
+    if (selectedShop) setSelectedShop(null);
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return;
     if (selectedSquare !== from) setSelectedSquare(from);
   };
 
-  // Drop on a target — apply if legal, otherwise leave selection as-is so
-  // the user can still click-to-move.
   const onPieceDrop = (from: Square, to: Square): boolean => {
     if (end) return false;
     if (!isMyTurn()) return false;
@@ -611,8 +641,12 @@ export function MergeGame() {
 
   const inCheck = !end && isInCheck(game, game.turn);
 
+  // cashChess.Piece has the same shape as mergeChess.Piece structurally; the
+  // letter unions overlap but TS still needs the cast.
+  const boardForRender = game.board as unknown as (MergePieceShape | null)[];
+
   return (
-    <div className="game-layout">
+    <div className="game-layout cash-game-layout">
       {disconnectMs != null && (
         <div className="disconnect-banner">
           Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
@@ -623,6 +657,19 @@ export function MergeGame() {
           </span>
         </div>
       )}
+
+      <div className="cash-shop-column">
+        <CashShop
+          whiteGold={game.gold.w}
+          blackGold={game.gold.b}
+          perspective={handoff.iAmWhite ? 'white' : 'black'}
+          canBuy={isMyTurn() && !end}
+          selectedLetter={selectedShop}
+          affordable={affordableSet}
+          onSelect={handleSelectShop}
+        />
+      </div>
+
       <div className="board-column">
         <PlayerCard
           avatarDataUrl={oppDisplayAvatar}
@@ -635,7 +682,7 @@ export function MergeGame() {
         />
         <div className="board-wrap">
           <MergeBoard
-            board={game.board}
+            board={boardForRender}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
             selectedSquare={selectedSquare}
             legalTargets={legalTargets}
@@ -683,7 +730,7 @@ export function MergeGame() {
 
       <aside className="side-panel">
         <div className="game-meta">
-          <div className="game-meta-title">Merge · {tc.label}</div>
+          <div className="game-meta-title">Cash Money · {tc.label}</div>
           <div className="muted small">
             peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}
             {' · '}
@@ -834,7 +881,6 @@ export function MergeGame() {
         )}
       </aside>
 
-      {/* tiny dev hook to keep toFen referenced */}
       <span style={{ display: 'none' }}>{toFen(game)}</span>
     </div>
   );

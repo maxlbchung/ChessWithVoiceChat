@@ -14,6 +14,9 @@ type Props = {
   onDragStartSquare?: (from: Square) => void;
   interactive?: boolean;
   draggable?: boolean;
+  // When set, the board is a fixed pixel size. When omitted, the board fills
+  // its container width (1:1 aspect ratio) and measures itself so pieces and
+  // arrows scale to the actual rendered size.
   boardWidth?: number;
 };
 
@@ -34,9 +37,29 @@ export function MergeBoard({
   onDragStartSquare,
   interactive = true,
   draggable = true,
-  boardWidth = 480,
+  boardWidth,
 }: Props) {
-  const squarePx = boardWidth / 8;
+  // Measure the container when boardWidth isn't fixed, so pieces and arrows
+  // can scale to whatever the parent gives us.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [measured, setMeasured] = useState<number>(boardWidth ?? 480);
+  useEffect(() => {
+    if (boardWidth != null) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0) setMeasured(rect.width);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width;
+        if (w > 0) setMeasured(w);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [boardWidth]);
+  const effectiveSize = boardWidth ?? measured;
+  const squarePx = effectiveSize / 8;
   const [dragOver, setDragOver] = useState<Square | null>(null);
   const dragSourceRef = useRef<Square | null>(null);
 
@@ -179,15 +202,17 @@ export function MergeBoard({
 
   return (
     <div
+      ref={containerRef}
       className="merge-board"
       onContextMenu={suppressContext}
       style={{
-        width: boardWidth,
+        width: boardWidth ?? '100%',
         height: boardWidth,
+        aspectRatio: boardWidth == null ? '1 / 1' : undefined,
         position: 'relative',
         display: 'grid',
-        gridTemplateColumns: `repeat(8, ${squarePx}px)`,
-        gridTemplateRows: `repeat(8, ${squarePx}px)`,
+        gridTemplateColumns: 'repeat(8, 1fr)',
+        gridTemplateRows: 'repeat(8, 1fr)',
         borderRadius: 8,
         overflow: 'hidden',
         boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
@@ -321,8 +346,8 @@ export function MergeBoard({
       {/* Arrow overlay — drawn on top of pieces, ignored by mouse. */}
       {renderedArrows.length > 0 && (
         <svg
-          width={boardWidth}
-          height={boardWidth}
+          width={effectiveSize}
+          height={effectiveSize}
           style={{
             position: 'absolute',
             top: 0,
@@ -338,7 +363,7 @@ export function MergeBoard({
             const dy = to.y - from.y;
             const r = Math.hypot(dx, dy);
             if (r === 0) return null;
-            const reducer = boardWidth / 32;
+            const reducer = effectiveSize / 32;
             const end = {
               x: from.x + (dx * (r - reducer)) / r,
               y: from.y + (dy * (r - reducer)) / r,
@@ -363,7 +388,7 @@ export function MergeBoard({
                   y2={end.y}
                   opacity={a.preview ? 0.5 : 0.65}
                   stroke={ARROW_COLOR}
-                  strokeWidth={a.preview ? (0.9 * boardWidth) / 40 : boardWidth / 40}
+                  strokeWidth={a.preview ? (0.9 * effectiveSize) / 40 : effectiveSize / 40}
                   markerEnd={`url(#${markerId})`}
                 />
               </g>

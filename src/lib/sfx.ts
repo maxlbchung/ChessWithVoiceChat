@@ -15,10 +15,39 @@ function getCtx(): AudioContext {
   return ctx;
 }
 
-// Master bus for UI sounds (click, queue, etc.) — always live destination.
-function bus(): AudioNode {
+// Master gain — every SFX (UI + chess) eventually routes through this so the
+// settings volume slider can attenuate the whole bus at once.
+let master: GainNode | null = null;
+let pendingMasterVolume = 1;
+function getMaster(): GainNode {
+  if (!master) {
+    const ac = getCtx();
+    const g = ac.createGain();
+    g.gain.value = pendingMasterVolume;
+    g.connect(ac.destination);
+    master = g;
+  }
+  return master;
+}
+export function setMasterVolume(v: number) {
+  const clamped = Math.max(0, Math.min(1, v));
+  pendingMasterVolume = clamped;
+  if (!master) return;
   const ac = getCtx();
-  return ac.destination;
+  const now = ac.currentTime;
+  try {
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(clamped, now + 0.04);
+  } catch {
+    master.gain.value = clamped;
+  }
+}
+
+// Master bus for UI sounds (click, queue, etc.) — routed through the master
+// gain so the volume slider attenuates UI clicks alongside chess SFX.
+function bus(): AudioNode {
+  return getMaster();
 }
 
 // Chess SFX share a separate bus that we can fade to silence on scrub events
@@ -30,7 +59,7 @@ function ensureChessBus(): GainNode {
     const ac = getCtx();
     const g = ac.createGain();
     g.gain.value = 1;
-    g.connect(ac.destination);
+    g.connect(getMaster());
     chessBus = g;
   }
   return chessBus;
@@ -276,18 +305,128 @@ export function playCastle() {
   buildCastle(ensureChessBus(), getCtx().currentTime);
 }
 
+// Push (chess 2.0) — sounds like shoving a piece across the board. A low
+// triangle slide drops in pitch over the duration (momentum of the shove),
+// a sub-octave sine layer adds weight, a lowpassed-noise burst over the
+// first ~200ms gives the scraping texture, and a small low thud at the end
+// is the pushed piece settling onto its new square.
+function buildPush(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  blip({ dest, startAt: t, freq: 200, freqEnd: 120, durMs: 250, type: 'triangle', peak: 0.42, attackMs: 18, lpHz: 1300 });
+  blip({ dest, startAt: t, freq: 100, freqEnd: 60,  durMs: 260, type: 'sine',     peak: 0.28, attackMs: 18 });
+
+  // Scrape layer — LP-noise that softens as the slide progresses.
+  const scrapeDur = 0.22;
+  const len = Math.max(1, Math.floor(scrapeDur * ac.sampleRate));
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(1400, t);
+  lp.frequency.exponentialRampToValueAtTime(500, t + scrapeDur);
+  const scrapeGain = ac.createGain();
+  scrapeGain.gain.setValueAtTime(0, t);
+  scrapeGain.gain.linearRampToValueAtTime(0.18, t + 0.015);
+  scrapeGain.gain.exponentialRampToValueAtTime(0.0001, t + scrapeDur);
+  src.connect(lp).connect(scrapeGain).connect(dest);
+  src.start(t);
+  src.stop(t + scrapeDur + 0.02);
+
+  // Settle thud as the piece lands.
+  const tThud = t + 0.18;
+  blip({ dest, startAt: tThud, freq: 110, freqEnd: 70, durMs: 90, type: 'triangle', peak: 0.32, attackMs: 1, lpHz: 900 });
+}
+export function playPush() {
+  buildPush(ensureChessBus(), getCtx().currentTime);
+}
+
 // Merge (merge gamemode) — two notes a 4th apart that converge to a single
 // pitch, with bell partials sparkling on top. Evokes "fusion".
 function buildMerge(dest: AudioNode, t: number) {
-  // A4 (440) + D5 (587) → both glide to C5 (523)
-  blip({ dest, startAt: t, freq: 440, freqEnd: 523, durMs: 300, type: 'triangle', peak: 0.28, attackMs: 4 });
-  blip({ dest, startAt: t, freq: 587, freqEnd: 523, durMs: 300, type: 'triangle', peak: 0.22, attackMs: 4 });
-  // Bell shimmer above
-  blip({ dest, startAt: t, freq: 1568, durMs: 200, type: 'sine', peak: 0.1, attackMs: 1 });
-  blip({ dest, startAt: t + 0.05, freq: 2093, durMs: 150, type: 'sine', peak: 0.06, attackMs: 1 });
+  const ac: BaseAudioContext = dest.context;
+
+  // Rustling layer — 10–14 short HF-filtered noise grains scattered over
+  // ~260ms. Each grain is a quick band-pass burst at a randomized pitch and
+  // amplitude; stacked together they sound like pieces shuffling together.
+  const n = 10 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < n; i++) {
+    const jitter = (Math.random() - 0.5) * 0.6;
+    const at = t + (0.26 * (i + 0.5 + jitter)) / n;
+    const gDur = 0.012 + Math.random() * 0.022;
+    const len = Math.max(1, Math.floor((gDur + 0.005) * ac.sampleRate));
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < len; j++) data[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1500 + Math.random() * 2800;
+    bp.Q.value = 1.5;
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    const g = ac.createGain();
+    const amp = 0.14 + Math.random() * 0.14;
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(amp, at + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + gDur);
+    src.connect(bp).connect(hp).connect(g).connect(dest);
+    src.start(at);
+    src.stop(at + gDur + 0.01);
+  }
+
 }
 export function playMerge() {
   buildMerge(ensureChessBus(), getCtx().currentTime);
+}
+
+// Buy (cash variant shop pick) — bright bell-like "ka-ching" chime. Two
+// stacked high harmonics + a short delayed fundamental for a register-bell
+// shape, plus a metallic noise snap at the very start.
+export function playBuy() {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  blip({ startAt: t, freq: 1760, durMs: 220, type: 'sine', peak: 0.24, attackMs: 1 });
+  blip({ startAt: t, freq: 2637, durMs: 190, type: 'sine', peak: 0.14, attackMs: 1 });
+  blip({ startAt: t + 0.06, freq: 1320, durMs: 240, type: 'sine', peak: 0.14, attackMs: 1 });
+  const dur = 0.018;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 4000;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.18, t + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(hp).connect(g).connect(getMaster());
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+
+// Place (cash variant — dropping a bought piece on the board). A weightier
+// wooden thud than a normal move with an ascending shimmer arpeggio on top
+// to read as "summoned into being". Runs through the chess bus so scrub
+// cutoff applies.
+function buildPlace(dest: AudioNode, t: number) {
+  blip({ dest, startAt: t, freq: 220, freqEnd: 140, durMs: 130, type: 'triangle', peak: 0.4, lpHz: 1500 });
+  blip({ dest, startAt: t, freq: 440, freqEnd: 280, durMs: 80, type: 'sine', peak: 0.1, lpHz: 2800 });
+  const shim = [880, 1320, 1760];
+  for (let i = 0; i < shim.length; i++) {
+    blip({ dest, startAt: t + 0.02 + i * 0.035, freq: shim[i], durMs: 100, type: 'sine', peak: 0.13 - i * 0.025, attackMs: 1 });
+  }
+}
+export function playPlace() {
+  buildPlace(ensureChessBus(), getCtx().currentTime);
 }
 
 // Generic UI click — subtle, neutral tap played on every button by default
@@ -313,7 +452,7 @@ export function playClick() {
   g.gain.setValueAtTime(0, t);
   g.gain.linearRampToValueAtTime(0.1, t + 0.0008);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(hp).connect(g).connect(ac.destination);
+  src.connect(hp).connect(g).connect(getMaster());
   src.start(t);
   src.stop(t + dur + 0.01);
 }
@@ -365,7 +504,7 @@ export function playQueue() {
   amp.gain.setValueAtTime(0, t);
   amp.gain.linearRampToValueAtTime(0.28, t + 0.015);
   amp.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-  filter.connect(amp).connect(ac.destination);
+  filter.connect(amp).connect(getMaster());
 
   for (const n of notes) {
     const start = t + n.off;

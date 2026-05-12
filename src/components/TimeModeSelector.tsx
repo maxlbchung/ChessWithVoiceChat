@@ -10,13 +10,14 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'chaos';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'chaos';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     normal: true,
     merge: false,
     two: false,
+    cash: false,
     chaos: false,
   });
   const toggle = (k: SectionKey) => {
@@ -63,13 +64,23 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
         {renderGrid(timeControlsForVariant('merge'))}
       </Section>
 
-      <Section title="2.0" open={open.two} onToggle={() => toggle('two')}>
+      <Section title="Guerrilla" open={open.two} onToggle={() => toggle('two')}>
         <div className="muted small time-mode-blurb">
-          Queen moves like a king. Bishops slide 1-2 squares in any direction.
-          Knights hop over an adjacent piece, then slide. Rooks push instead
-          of capturing. No castling.
+          Queen moves like a king. Bishops slide 1-3 squares in any direction.
+          Knights jump over an adjacent piece and land directly behind it,
+          capturing the hopped enemy checkers-style and any enemy on the
+          landing square. Rooks move 1 square orthogonally and push own
+          peices. No castling.
         </div>
         {renderGrid(timeControlsForVariant('two'))}
+      </Section>
+
+      <Section title="Cash Money" open={open.cash} onToggle={() => toggle('cash')}>
+        <div className="muted small time-mode-blurb">
+          Spend gold in the shop to buy pieces (N/B/R/Q), placed adjacent to your
+          king. Buying uses your turn. One queen per side at a time.
+        </div>
+        {renderGrid(timeControlsForVariant('cash'))}
       </Section>
 
       <Section title="Chaos" open={open.chaos} onToggle={() => toggle('chaos')}>
