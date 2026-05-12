@@ -429,6 +429,41 @@ export function playPlace() {
   buildPlace(ensureChessBus(), getCtx().currentTime);
 }
 
+// Cash-in (cash variant — pawn reaches back rank and converts to gold).
+// A coin cascade: 7 short bright blips scattered across ~350ms at randomized
+// high pitches, with a warm sustaining bell underneath and a metallic noise
+// snap at the start. Distinctly more celebratory than playBuy's single ding.
+function buildCashIn(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const baseFreqs = [1320, 1760, 2093, 2637, 3136];
+  for (let i = 0; i < baseFreqs.length; i++) {
+    const f = baseFreqs[i] * (0.95 + Math.random() * 0.1);
+    const at = t + i * 0.04 + Math.random() * 0.015;
+    blip({ dest, startAt: at, freq: f, durMs: 110, type: 'sine', peak: 0.22, attackMs: 1 });
+    blip({ dest, startAt: at, freq: f * 2, durMs: 60, type: 'sine', peak: 0.07, attackMs: 1 });
+  }
+  const dur = 0.04;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 3500;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.14, t + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(hp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+export function playCashIn() {
+  buildCashIn(ensureChessBus(), getCtx().currentTime);
+}
+
 // Generic UI click — subtle, neutral tap played on every button by default
 // (see the document-level click handler in Layout). Quiet enough to layer
 // under other SFX without doubling up annoyingly.

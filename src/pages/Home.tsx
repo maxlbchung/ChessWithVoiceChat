@@ -129,6 +129,30 @@ export function Home() {
     cashViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
+  // Detect checkmate at the currently-viewed position so the fade-in overlay
+  // shows live in free play. Winner = the side that *just* moved (opposite of
+  // the side now to move, since the side to move has no legal replies).
+  const freeEnd = useMemo<{ winner: 'w' | 'b' } | null>(() => {
+    if (freeVariant === 'normal') {
+      if (!previewChess.isCheckmate()) return null;
+      return { winner: previewChess.turn() === 'w' ? 'b' : 'w' };
+    }
+    if (freeViewPly === 0) return null;
+    if (freeVariant === 'merge') {
+      const r = mergeResults[freeViewPly - 1];
+      if (!r?.checkmate) return null;
+      return { winner: mergeViewState.turn === 'w' ? 'b' : 'w' };
+    }
+    if (freeVariant === 'two') {
+      const r = twoResults[freeViewPly - 1];
+      if (!r?.checkmate) return null;
+      return { winner: twoViewState.turn === 'w' ? 'b' : 'w' };
+    }
+    const r = cashResults[freeViewPly - 1];
+    if (!r?.checkmate) return null;
+    return { winner: cashViewState.turn === 'w' ? 'b' : 'w' };
+  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn]);
+
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
     try {
@@ -283,7 +307,7 @@ export function Home() {
     const base = truncStates[truncStates.length - 1];
     const res = cashApply(base, uci);
     if (!res) return false;
-    if (res.result.cashedIn) sfx.playMerge();
+    if (res.result.cashedIn) sfx.playCashIn();
     else if (res.result.bought) sfx.playPlace();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -516,7 +540,7 @@ export function Home() {
           const r = cashResults[forward ? p : next];
           if (r) {
             if (forward) {
-              if (r.cashedIn) sfx.playMerge();
+              if (r.cashedIn) sfx.playCashIn();
               else if (r.bought) sfx.playPlace();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
@@ -752,7 +776,7 @@ export function Home() {
             placeholder="your handle"
             value={handleInput}
             onChange={(e) => setHandleInput(e.target.value)}
-            maxLength={24}
+            maxLength={20}
           />
           <button className="primary-btn" type="submit" disabled={!handleInput.trim()}>
             Create identity
@@ -850,7 +874,7 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onSquareRightClick={onFreeSquareRightClick}
                   boardOrientation={freeOrientation}
-                  customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}
+                  customBoardStyle={{ borderRadius: 8 }}
                   customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
                   customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
                   customSquareStyles={freeSquareStyles}
@@ -885,6 +909,16 @@ export function Home() {
                   onPieceDrop={handleCashDrop}
                   onDragStartSquare={onFreeDragStart}
                 />
+              )}
+              {freeEnd && (
+                <div
+                  className="board-finish-overlay"
+                  key={`${freeVariant}-${freeViewPly}-${freeEnd.winner}`}
+                >
+                  <div className="victor">
+                    {freeEnd.winner === 'w' ? 'White wins' : 'Black wins'}
+                  </div>
+                </div>
               )}
           </div>
         </div>

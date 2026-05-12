@@ -102,7 +102,7 @@ export function Profile() {
                   className="text-input"
                   value={handleDraft}
                   onChange={(e) => setHandleDraft(e.target.value)}
-                  maxLength={24}
+                  maxLength={20}
                   autoFocus
                 />
                 <button className="primary-btn" type="submit">Save</button>

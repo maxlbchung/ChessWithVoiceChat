@@ -5,6 +5,8 @@ import { loadRating, saveRating } from '../lib/storage';
 import { loadAvatar, saveAvatar, clearAvatar } from '../lib/avatar';
 import { STARTING_ELO } from '../lib/elo';
 
+const MAX_HANDLE_LEN = 20;
+
 type IdentityStore = {
   identity: Identity | null;
   rating: number;
@@ -34,14 +36,14 @@ export const useIdentityStore = create<IdentityStore>((set, get) => ({
   },
 
   async signUp(handle: string) {
-    const identity = await createIdentity(handle.trim() || 'anon');
+    const identity = await createIdentity(handle.trim().slice(0, MAX_HANDLE_LEN) || 'anon');
     set({ identity });
   },
 
   async setHandle(handle: string) {
     const cur = get().identity;
     if (!cur) return;
-    const next = await persistHandle(cur, handle.trim());
+    const next = await persistHandle(cur, handle.trim().slice(0, MAX_HANDLE_LEN));
     set({ identity: next });
   },
 

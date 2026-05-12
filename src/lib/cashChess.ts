@@ -317,17 +317,13 @@ function hasQueen(state: GameState, color: C2Color): boolean {
   return false;
 }
 
-// Squares adjacent to the active player's king that are empty.
-export function adjacentEmptySquares(state: GameState, color: C2Color): number[] {
-  const k = findKing(state, color);
-  if (k === -1) return [];
-  const [kf, kr] = frOfIdx(k);
+// Board indices of the active player's own pawns — these are the squares a
+// buy can target, since buys upgrade an existing pawn into the bought piece.
+export function ownPawnSquares(state: GameState, color: C2Color): number[] {
   const out: number[] = [];
-  for (const [df, dr] of EIGHT_DIRS) {
-    const f = kf + df, r = kr + dr;
-    if (!onBoard(f, r)) continue;
-    const idx = idxFR(f, r);
-    if (state.board[idx] == null) out.push(idx);
+  for (let i = 0; i < 64; i++) {
+    const p = state.board[i];
+    if (p && p.color === color && p.letter.toUpperCase() === 'P') out.push(i);
   }
   return out;
 }
@@ -400,7 +396,9 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   return next;
 }
 
-// Apply a buy (already validated by the caller, see legalBuys).
+// Apply a buy — replaces the pawn at `toIdx` with the bought piece.
+// Caller has already validated that `toIdx` holds an own pawn and the player
+// can afford the piece.
 function applyBuy(state: GameState, letter: ShopLetter, toIdx: number): GameState {
   const next: GameState = {
     board: state.board.slice(),
@@ -479,12 +477,13 @@ export function affordableLetters(state: GameState): ShopLetter[] {
   return out;
 }
 
-// Squares (adjacent to own king, empty) where the given letter can be placed
-// without leaving the mover in check.
+// Pawn squares the active player can legally upgrade into the given letter
+// without leaving themselves in check. (Buys now *upgrade* one of your own
+// pawns rather than spawning a new piece.)
 export function legalBuyTargets(state: GameState, letter: ShopLetter): Square[] {
   if (SHOP_PRICES[letter] > state.gold[state.turn]) return [];
   if (letter === 'Q' && hasQueen(state, state.turn)) return [];
-  const candidates = adjacentEmptySquares(state, state.turn);
+  const candidates = ownPawnSquares(state, state.turn);
   const out: Square[] = [];
   const moverColor = state.turn;
   for (const idx of candidates) {
@@ -698,22 +697,48 @@ export function isFiftyMoveRule(state: GameState): boolean {
   return state.halfmove >= 100;
 }
 
-// In Cash Money the K-vs-K endgame is decided by gold rather than by material
-// alone: the side with more gold wins, ties draw. So the standard
-// "insufficient material" auto-draw is never reached — callers should use
-// kingsOnlyOutcome to detect and resolve the K-vs-K position instead.
+// In Cash Money the standard "insufficient material" auto-draw is never
+// reached on its own — positions that *would* be drawn by insufficient
+// material (K vs K, K+N vs K, K+B vs K) are instead decided by total wealth.
+// Callers should use wealthTiebreakOutcome for those positions.
 export function isInsufficientMaterial(_state: GameState): boolean {
   void _state;
   return false;
 }
 
-// Returns 'w' | 'b' if a side wins on gold in a K-vs-K position, 'draw' if
-// gold is equal, or null if at least one non-king piece remains on the board.
-export function kingsOnlyOutcome(state: GameState): 'w' | 'b' | 'draw' | null {
+// Total "wealth" of a side counts gold plus the shop-price of every non-king
+// piece they own on the board. Pawn value is 0 — they aren't shop pieces and
+// wealth-tiebreak positions never contain pawns anyway.
+const MATERIAL_VALUE: Record<string, number> = {
+  N: SHOP_PRICES.N,
+  B: SHOP_PRICES.B,
+  R: SHOP_PRICES.R,
+  Q: SHOP_PRICES.Q,
+};
+
+// Returns 'w' | 'b' if a side wins on wealth (gold + on-board piece value) in
+// a tiebreak-eligible position, 'draw' if wealth is equal, or null otherwise.
+// Triggers on K vs K, K+N vs K, K+B vs K — i.e. classical "insufficient mating
+// material" — extended so the richer side wins instead of auto-drawing.
+export function wealthTiebreakOutcome(state: GameState): 'w' | 'b' | 'draw' | null {
+  let wNonKing = 0, bNonKing = 0;
+  let wValue = 0, bValue = 0;
   for (const p of state.board) {
-    if (p && p.letter.toUpperCase() !== 'K') return null;
+    if (!p) continue;
+    const up = p.letter.toUpperCase();
+    if (up === 'K') continue;
+    // Any rook / queen / pawn disqualifies the position from tiebreak — both
+    // sides must hold only K or K + a single minor.
+    if (up !== 'N' && up !== 'B') return null;
+    const v = MATERIAL_VALUE[up] ?? 0;
+    if (p.color === 'w') { wNonKing++; wValue += v; }
+    else { bNonKing++; bValue += v; }
   }
-  if (state.gold.w > state.gold.b) return 'w';
-  if (state.gold.b > state.gold.w) return 'b';
+  // K+N vs K+N (or any 2+ minors) is still playable, not a tiebreak.
+  if (wNonKing + bNonKing > 1) return null;
+  const wealthW = state.gold.w + wValue;
+  const wealthB = state.gold.b + bValue;
+  if (wealthW > wealthB) return 'w';
+  if (wealthB > wealthW) return 'b';
   return 'draw';
 }

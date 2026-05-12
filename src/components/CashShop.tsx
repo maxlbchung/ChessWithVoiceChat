@@ -78,9 +78,9 @@ export function CashShop({
 
       <div className="cash-shop-hint muted small">
         {selectedLetter
-          ? 'Click a highlighted square next to your king.'
+          ? 'Click one of your pawns to upgrade it.'
           : canBuy
-            ? 'Pick a piece to buy. Placed adjacent to your king.'
+            ? 'Pick a piece to upgrade a pawn into.'
             : 'Wait for your turn to buy.'}
       </div>
     </div>

@@ -821,7 +821,7 @@ export function Game() {
             onSquareClick={onSquareClick}
             boardOrientation={handoff.iAmWhite ? 'white' : 'black'}
             arePiecesDraggable={!end && isMyTurn() && atPresent}
-            customBoardStyle={{ borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
+            customBoardStyle={{ borderRadius: 8 }}
             customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
             customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
             customSquareStyles={atPresent ? squareStyles : {}}

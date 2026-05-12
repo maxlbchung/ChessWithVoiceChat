@@ -35,7 +35,7 @@ import {
   isInCheck,
   isStalemate,
   isThreefoldRepetition,
-  kingsOnlyOutcome,
+  wealthTiebreakOutcome,
   legalBuyTargets,
   legalMovesFrom,
   toFen,
@@ -323,7 +323,7 @@ export function CashGame() {
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    if (res.result.cashedIn) sfx.playMerge();
+    if (res.result.cashedIn) sfx.playCashIn();
     else if (res.result.bought) sfx.playPlace();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -390,7 +390,7 @@ export function CashGame() {
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.cashedIn) sfx.playMerge();
+    if (res.result.cashedIn) sfx.playCashIn();
     else if (res.result.bought) sfx.playPlace();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -418,11 +418,12 @@ export function CashGame() {
       return;
     }
     if (isStalemate(s)) { finalize({ outcome: 'draw', reason: 'stalemate' }); return; }
-    // K-vs-K is decided by gold in Cash. Higher gold wins; ties draw. We
+    // K-vs-K, K+N vs K, and K+B vs K are decided by total wealth in Cash:
+    // gold + sum of on-board piece prices. Richer side wins; ties draw. We
     // reuse the 'insufficient' end-reason for the closest label match.
-    const kvk = kingsOnlyOutcome(s);
-    if (kvk) {
-      const outcome: GameOutcome = kvk === 'w' ? 'white' : kvk === 'b' ? 'black' : 'draw';
+    const tiebreak = wealthTiebreakOutcome(s);
+    if (tiebreak) {
+      const outcome: GameOutcome = tiebreak === 'w' ? 'white' : tiebreak === 'b' ? 'black' : 'draw';
       finalize({ outcome, reason: 'insufficient' });
       return;
     }

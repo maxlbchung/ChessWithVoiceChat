@@ -105,7 +105,7 @@ export function Join() {
             placeholder="your handle"
             value={handleInput}
             onChange={(e) => setHandleInput(e.target.value)}
-            maxLength={24}
+            maxLength={20}
           />
           <button className="primary-btn" type="submit" disabled={!handleInput.trim()}>
             Continue
