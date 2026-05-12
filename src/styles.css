@@ -332,9 +332,13 @@ a { color: inherit; text-decoration: none; }
   padding: 4px 12px 12px;
 }
 .time-mode-grid {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.time-mode-grid .time-mode-cell {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .time-mode-btn {
   background: var(--glass);

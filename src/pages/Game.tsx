@@ -22,6 +22,7 @@ import { eloDelta, newRating } from '../lib/elo';
 import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
+import * as sfx from '../lib/sfx';
 
 type EndState = {
   outcome: GameOutcome;
@@ -189,6 +190,7 @@ export function Game() {
       }
       if (msg.type === 'chat') {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
+        sfx.playChat();
         return;
       }
       if (msg.type === 'avatar') {
@@ -376,6 +378,11 @@ export function Game() {
     }
     if (!move) return false;
 
+    if (move.captured) sfx.playCapture(); else sfx.playMove();
+    // Skip the check sound on checkmate — finalize will fire the airhorn or
+    // (for the loser) leave the move/capture sound as the final cue.
+    if (chess.isCheck() && !chess.isCheckmate()) sfx.playCheck();
+
     // For per-move mode: every move resets both clocks to perMoveMs so the next
     // mover gets a fresh budget. Otherwise apply Fischer increment to the mover.
     if (tc.perMoveMs != null) {
@@ -431,6 +438,8 @@ export function Game() {
       return;
     }
     if (!r) return;
+    if (r.captured) sfx.playCapture(); else sfx.playMove();
+    if (chess.isCheck() && !chess.isCheckmate()) sfx.playCheck();
     setFen(chess.fen());
     setMoves((m) => [...m, move]);
     if (tc.perMoveMs != null) {
@@ -482,6 +491,7 @@ export function Game() {
     if (endHandled) return;
     setEndHandled(true);
     setEnd(state);
+    if (state.outcome === myColor) sfx.playWin();
 
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
@@ -560,6 +570,13 @@ export function Game() {
   const toggleSpeaker = () => {
     setSpeakerOn((v) => !v);
   };
+
+  // Faint TV-static when either volume bar is pinned at max.
+  useEffect(() => {
+    const maxed = myVolume >= 0.99 || oppVolume >= 0.99;
+    sfx.setStaticActive(maxed);
+  }, [myVolume, oppVolume]);
+  useEffect(() => () => sfx.setStaticActive(false), []);
 
   // Tell the opponent whenever our voice state changes (skip until conn is up;
   // the initial state ships as part of sendIntro on connect).
@@ -814,6 +831,7 @@ export function Game() {
               if (!chatInput.trim()) return;
               sessionRef.current.send({ type: 'chat', text: chatInput });
               setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
+              sfx.playChat();
               setChatInput('');
             }}
           >

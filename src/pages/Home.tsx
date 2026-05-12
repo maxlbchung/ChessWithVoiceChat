@@ -11,6 +11,7 @@ import { useIdentityStore } from '../store/identityStore';
 import { Matchmaker, fetchQueueStats } from '../lib/matchmaking';
 import { PeerSession, makePeerId } from '../lib/peer';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
+import * as sfx from '../lib/sfx';
 
 type Mode = 'idle' | 'searching' | 'hosting';
 
@@ -69,6 +70,8 @@ export function Home() {
     try {
       const m = freeChess.move({ from: sourceSquare, to: targetSquare, promotion: promotion ?? 'q' });
       if (!m) return false;
+      if (m.captured) sfx.playCapture(); else sfx.playMove();
+      if (freeChess.isCheck()) sfx.playCheck();
     } catch {
       return false;
     }
@@ -85,7 +88,11 @@ export function Home() {
     }
     if (freeSelected && freeLegalTargets.includes(square)) {
       try {
-        freeChess.move({ from: freeSelected, to: square, promotion: 'q' });
+        const m = freeChess.move({ from: freeSelected, to: square, promotion: 'q' });
+        if (m) {
+          if (m.captured) sfx.playCapture(); else sfx.playMove();
+          if (freeChess.isCheck()) sfx.playCheck();
+        }
         setFreeFen(freeChess.fen());
       } catch {
         // ignore
