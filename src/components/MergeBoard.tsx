@@ -21,6 +21,27 @@ type Props = {
   // Optional coloured glow around each side's king square, e.g. for Hero
   // mode where each king has a hero-specific aura. CSS colour per side.
   kingGlows?: { w?: string; b?: string };
+  // Square holding a currently-frozen piece (Hero / Frost). Renders an icy
+  // overlay + snowflake so the player can see what's locked.
+  frozenSquare?: Square | null;
+  // Transient ability animation. Mounted with a fresh `key` each time the
+  // parent wants the animation to play; CSS keyframes do the rest.
+  abilityAnim?: AbilityAnim | null;
+};
+
+export type AbilityAnim = {
+  kind: 'frost' | 'knight' | 'necromancer' | 'flight';
+  // Flight: king's old square. Knight: king's square (pivot for shake).
+  // Necromancer / Frost: unused.
+  fromSq?: Square;
+  // Flight: king's new square. Knight: destroyed piece's square.
+  // Necromancer: spawn square. Frost: frozen piece's square.
+  toSq: Square;
+  // Side that used the ability — drives the rendered king's color for Flight.
+  color: 'w' | 'b';
+  // Unique per ability event so React remounts the overlay (CSS animation
+  // re-fires from 0%). Typically a `${ply}-${uci}` string.
+  key: string;
 };
 
 type Arrow = { from: Square; to: Square };
@@ -42,6 +63,8 @@ export function MergeBoard({
   draggable = true,
   boardWidth,
   kingGlows,
+  frozenSquare,
+  abilityAnim,
 }: Props) {
   // Measure the container when boardWidth isn't fixed, so pieces and arrows
   // can scale to whatever the parent gives us.
@@ -236,6 +259,7 @@ export function MergeBoard({
           const kingGlowColor = piece && piece.letter.toUpperCase() === 'K'
             ? (piece.color === 'w' ? kingGlows?.w : kingGlows?.b)
             : undefined;
+          const isFrozen = frozenSquare === sq;
 
           const style: CSSProperties = {
             background: isLight ? '#dfe5f0' : '#5d6c89',
@@ -300,10 +324,15 @@ export function MergeBoard({
                 <div
                   style={{
                     position: 'absolute',
-                    inset: '8%',
+                    // Fill the whole square so the radial fade has room to
+                    // breathe past the piece silhouette.
+                    inset: 0,
                     borderRadius: '50%',
-                    background: `radial-gradient(circle, ${kingGlowColor}66 0%, ${kingGlowColor}33 45%, transparent 70%)`,
-                    boxShadow: `0 0 ${squarePx * 0.25}px ${kingGlowColor}`,
+                    background: `radial-gradient(circle, ${kingGlowColor}cc 0%, ${kingGlowColor}88 28%, ${kingGlowColor}44 52%, transparent 78%)`,
+                    boxShadow: `
+                      0 0 ${squarePx * 0.18}px ${squarePx * 0.04}px ${kingGlowColor},
+                      0 0 ${squarePx * 0.45}px ${squarePx * 0.12}px ${kingGlowColor}aa
+                    `,
                     pointerEvents: 'none',
                     zIndex: 0,
                   }}
@@ -326,7 +355,16 @@ export function MergeBoard({
                   draggable={draggable && interactive}
                   onDragStart={(e) => handleDragStart(e, sq)}
                   onDragEnd={handleDragEnd}
+                  glowColor={kingGlowColor}
                 />
+              )}
+              {isFrozen && (
+                <div className="frozen-overlay" aria-hidden>
+                  <span
+                    className="frozen-flake"
+                    style={{ fontSize: Math.max(12, squarePx * 0.32) }}
+                  >❄</span>
+                </div>
               )}
               {f === filesLeftRight[0] && (
                 <span
@@ -416,8 +454,100 @@ export function MergeBoard({
           })}
         </svg>
       )}
+
+      {abilityAnim && (
+        <AbilityOverlay
+          key={abilityAnim.key}
+          anim={abilityAnim}
+          squarePx={squarePx}
+          centerOf={center}
+        />
+      )}
     </div>
   );
+}
+
+function AbilityOverlay({
+  anim,
+  squarePx,
+  centerOf,
+}: {
+  anim: AbilityAnim;
+  squarePx: number;
+  centerOf: (sq: Square) => { x: number; y: number };
+}) {
+  const to = centerOf(anim.toSq);
+  if (anim.kind === 'flight' && anim.fromSq) {
+    const from = centerOf(anim.fromSq);
+    const kingKey = anim.color === 'w' ? 'wK' : 'bK';
+    return (
+      <div
+        className="ability-flight"
+        style={{
+          // CSS uses these vars to translate the king from -> to.
+          ['--from-x' as any]: `${from.x}px`,
+          ['--from-y' as any]: `${from.y}px`,
+          ['--to-x' as any]: `${to.x}px`,
+          ['--to-y' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <div className="ability-flight-body">
+          <span className="ability-flight-wing left" aria-hidden />
+          <span className="ability-flight-wing right" aria-hidden />
+          <span className="ability-flight-king">
+            {renderPiece(kingKey, squarePx * 0.95)}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (anim.kind === 'necromancer') {
+    return (
+      <div
+        className="ability-necromancer"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="ability-necro-burst" aria-hidden />
+        <span className="ability-necro-ring" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'knight' && anim.fromSq) {
+    // Shake the king's square (king didn't move, but it just smote a piece).
+    const k = centerOf(anim.fromSq);
+    return (
+      <div
+        className="ability-knight"
+        style={{
+          ['--cx' as any]: `${k.x}px`,
+          ['--cy' as any]: `${k.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="ability-knight-shake" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'frost') {
+    return (
+      <div
+        className="ability-frost"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="ability-frost-burst" aria-hidden />
+      </div>
+    );
+  }
+  return null;
 }
 
 function PieceSprite({
@@ -426,17 +556,24 @@ function PieceSprite({
   draggable,
   onDragStart,
   onDragEnd,
+  glowColor,
 }: {
   piece: Piece;
   squarePx: number;
   draggable: boolean;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
+  glowColor?: string;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
   const fullSize = squarePx * 0.95;
   const pairSize = squarePx * 0.7;
+  // Stack two drop-shadows for a tight inner ring + soft outer halo that
+  // hugs the actual piece silhouette (not the square).
+  const glowFilter = glowColor
+    ? `drop-shadow(0 0 ${squarePx * 0.06}px ${glowColor}) drop-shadow(0 0 ${squarePx * 0.18}px ${glowColor})`
+    : undefined;
 
   return (
     <div
@@ -452,6 +589,7 @@ function PieceSprite({
         justifyContent: 'center',
         cursor: draggable ? 'grab' : 'inherit',
         zIndex: 1,
+        filter: glowFilter,
       }}
     >
       {!isMerged ? (

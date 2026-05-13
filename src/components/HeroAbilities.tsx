@@ -13,6 +13,11 @@ type Props = {
   // Whose turn it is in the engine. The Use button is only enabled if it's
   // the local player's turn AND their ability is ready.
   myTurn: boolean;
+  // Whether the ability has at least one legal target square right now.
+  // Necromancer with no empty adjacent squares (e.g. king fully surrounded)
+  // is the common case; same idea for Knight with no adjacent enemy, Frost
+  // with no non-king pieces, or Flight when every empty square is attacked.
+  hasTargets: boolean;
   // Whether a hero action is currently armed (waiting for a board target).
   armed: boolean;
   onArm: () => void;
@@ -28,6 +33,7 @@ export function HeroAbilities({
   myCooldownTurns,
   oppCooldownTurns,
   myTurn,
+  hasTargets,
   armed,
   onArm,
   onCancel,
@@ -64,7 +70,7 @@ export function HeroAbilities({
           <button
             type="button"
             className="primary-btn"
-            disabled={!myTurn || !myReady}
+            disabled={!myTurn || !myReady || !hasTargets}
             onClick={onArm}
             data-no-sfx
           >
@@ -84,7 +90,9 @@ export function HeroAbilities({
           ? 'Click a highlighted square to confirm.'
           : myTurn
             ? myReady
-              ? 'Click "Use ability" to arm it.'
+              ? hasTargets
+                ? 'Click "Use ability" to arm it.'
+                : noTargetHint(myHero)
               : myInfo.cooldownTurns == null
                 ? 'One-shot — already used.'
                 : `Ready in ${myCooldownTurns} turn${myCooldownTurns === 1 ? '' : 's'}.`
@@ -92,6 +100,15 @@ export function HeroAbilities({
       </div>
     </div>
   );
+}
+
+function noTargetHint(hero: HeroKind): string {
+  switch (hero) {
+    case 'necromancer': return 'No empty square next to your king.';
+    case 'knight':      return 'No enemy piece adjacent to your king.';
+    case 'frost':       return 'No piece available to freeze.';
+    case 'flight':      return 'No safe square to fly to.';
+  }
 }
 
 function HeroCard({

@@ -32,6 +32,7 @@ import {
   abilityUci,
   applyMove,
   HERO_INFO,
+  idxToSq,
   initialState,
   isCheckmate,
   isFiftyMoveRule,
@@ -39,6 +40,7 @@ import {
   isInsufficientMaterial,
   isStalemate,
   isThreefoldRepetition,
+  kingSquareOf,
   legalMovesFrom,
   toFen,
   turnsUntilReady,
@@ -47,6 +49,7 @@ import {
   type MoveResult,
   type Square,
 } from '../lib/heroChess';
+import type { AbilityAnim } from '../components/MergeBoard';
 import type { Piece as MergePieceShape } from '../lib/mergeChess';
 
 type EndState = { outcome: GameOutcome; reason: GameEndReason };
@@ -103,6 +106,16 @@ export function HeroGame() {
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   // True when the ability is "armed" — next board click selects the target.
   const [abilityArmed, setAbilityArmed] = useState(false);
+  // Transient ability animation overlay state. Bumped to a fresh key every
+  // time we want the animation to re-fire (CSS keyframes restart on remount).
+  const [abilityAnim, setAbilityAnim] = useState<AbilityAnim | null>(null);
+  // Auto-clear shortly after the visible effect ends so the value can't
+  // outlive its animation and accidentally replay later.
+  useEffect(() => {
+    if (!abilityAnim) return;
+    const t = window.setTimeout(() => setAbilityAnim(null), 1200);
+    return () => clearTimeout(t);
+  }, [abilityAnim]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -375,6 +388,33 @@ export function HeroGame() {
     sessionRef.current.send({ type: 'hero-pick', hero: h });
   };
 
+  // Build an animation descriptor for the just-played ability move. Uses the
+  // *previous* state to find the king for Flight (since the king moves) and
+  // the new state for Knight (king didn't move). Returns null for non-ability
+  // moves so callers can `setAbilityAnim(triggerAbilityAnim(...))` blindly.
+  const triggerAbilityAnim = (
+    prev: GameState,
+    next: GameState,
+    result: MoveResult,
+  ): AbilityAnim | null => {
+    if (!result.abilityUsed) return null;
+    const targetSq = result.uci.slice(2);
+    const moverColor = prev.turn;
+    let fromSq: Square | undefined;
+    if (result.abilityUsed === 'flight') {
+      fromSq = kingSquareOf(prev.board, moverColor) ?? undefined;
+    } else if (result.abilityUsed === 'knight') {
+      fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
+    }
+    return {
+      kind: result.abilityUsed,
+      fromSq,
+      toSq: targetSq,
+      color: moverColor,
+      key: `${prev.ply}-${result.uci}-${Date.now()}`,
+    };
+  };
+
   const commitMove = async (uci: string, beforeTurn: 'w' | 'b'): Promise<boolean> => {
     if (!game) return false;
     const res = applyMove(game, uci);
@@ -384,9 +424,11 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'knight') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
+    setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
 
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
@@ -450,7 +492,8 @@ export function HeroGame() {
       return;
     }
     if (!gameRef.current) return;
-    const res = applyMove(gameRef.current, move.uci);
+    const prev = gameRef.current;
+    const res = applyMove(prev, move.uci);
     if (!res) { console.warn('illegal remote move', move); return; }
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
@@ -459,9 +502,11 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'knight') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
+    setAbilityAnim(triggerAbilityAnim(prev, res.state, res.result));
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
     setStates((s) => [...s, res.state]);
@@ -571,11 +616,6 @@ export function HeroGame() {
   };
   const toggleSpeaker = () => setSpeakerOn((v) => !v);
 
-  useEffect(() => {
-    const maxed = myVolume >= 0.99 || oppVolume >= 0.99;
-    sfx.setStaticActive(maxed);
-  }, [myVolume, oppVolume]);
-  useEffect(() => () => sfx.setStaticActive(false), []);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -634,6 +674,7 @@ export function HeroGame() {
             else if (r.abilityUsed === 'knight') sfx.playSlice();
             else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
             else if (r.abilityUsed === 'flight') sfx.playFly();
+            else if (r.castled) sfx.playCastle();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
             if (r.check && !r.checkmate) sfx.playCheck();
@@ -641,6 +682,16 @@ export function HeroGame() {
             if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
             if (r.check) sfx.playCheckReversed();
           }
+        }
+      }
+      // Replay the ability animation when scrubbing *forward* into an
+      // ability move; backward scrubs don't get a special effect.
+      if (forward) {
+        const r = results[p];
+        const prevState = states[p];
+        const nextState = states[p + 1];
+        if (r && prevState && nextState) {
+          setAbilityAnim(triggerAbilityAnim(prevState, nextState, r));
         }
       }
       return next;
@@ -790,6 +841,7 @@ export function HeroGame() {
             myCooldownTurns={myCooldownTurns}
             oppCooldownTurns={oppCooldownTurns}
             myTurn={isMyTurn() && !end && atPresent}
+            hasTargets={!!game && atPresent && abilityTargets(game).length > 0}
             armed={abilityArmed}
             onArm={() => { setSelectedSquare(null); setAbilityArmed(true); }}
             onCancel={() => setAbilityArmed(false)}
@@ -823,6 +875,12 @@ export function HeroGame() {
             interactive={!end && isMyTurn() && atPresent}
             draggable={!end && isMyTurn() && atPresent && !abilityArmed}
             kingGlows={kingGlows}
+            frozenSquare={
+              viewedState && viewedState.frozen && viewedState.ply < viewedState.frozen.expiresAtPly
+                ? idxToSq(viewedState.frozen.idx)
+                : null
+            }
+            abilityAnim={abilityAnim}
           />
           {!bothPicked && (
             <div className="hero-picker-overlay">
@@ -923,39 +981,41 @@ export function HeroGame() {
 
         {end && (
           <div className="game-result-strip">
-            <div className="result-line">
-              <span className="title-group">
-                <ResultAvatar
-                  src={
-                    end.outcome === 'draw'
-                      ? avatar
-                      : end.outcome === myColor ? avatar : oppDisplayAvatar
-                  }
-                  handle={
-                    end.outcome === 'draw'
-                      ? me.handle
-                      : end.outcome === myColor ? me.handle : oppDisplayHandle
-                  }
-                />
-                <span className="title">
-                  {end.outcome === 'draw'
-                    ? 'Draw'
-                    : end.outcome === myColor ? 'You won' : 'You lost'}
+            <div className="game-result-info">
+              <div className="result-line">
+                <span className="title-group">
+                  <ResultAvatar
+                    src={
+                      end.outcome === 'draw'
+                        ? avatar
+                        : end.outcome === myColor ? avatar : oppDisplayAvatar
+                    }
+                    handle={
+                      end.outcome === 'draw'
+                        ? me.handle
+                        : end.outcome === myColor ? me.handle : oppDisplayHandle
+                    }
+                  />
+                  <span className="title">
+                    {end.outcome === 'draw'
+                      ? 'Draw'
+                      : end.outcome === myColor ? 'You won' : 'You lost'}
+                  </span>
                 </span>
-              </span>
-              <span className="reason">{labelFor(end.reason)}</span>
+                <span className="reason">{labelFor(end.reason)}</span>
+              </div>
+              <div className="rating-delta">
+                {end.outcome === 'draw'
+                  ? '½ – ½'
+                  : end.outcome === myColor
+                    ? '1 – 0'
+                    : '0 – 1'}
+                <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
+                  {myDelta >= 0 ? '+' : ''}{myDelta}
+                </span>
+              </div>
             </div>
-            <div className="rating-delta">
-              {end.outcome === 'draw'
-                ? '½ – ½'
-                : end.outcome === myColor
-                  ? '1 – 0'
-                  : '0 – 1'}
-              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
-                {myDelta >= 0 ? '+' : ''}{myDelta}
-              </span>
-            </div>
-            <div className="action-row">
+            <div className="game-result-buttons">
               {rematch.rematchOfferedByOpp ? (
                 <>
                   <button className="primary-btn" onClick={rematch.acceptRematch}>

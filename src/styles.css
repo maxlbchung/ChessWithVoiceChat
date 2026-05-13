@@ -785,19 +785,41 @@ a { color: inherit; text-decoration: none; }
   gap: 12px;
 }
 .game-result-strip {
+  /* Two columns: result-info (avatar + handle + result + score) on the left,
+     action buttons on the right. Buttons stack vertically in their column so
+     several can fit (e.g. Accept rematch + Decline + Back to lobby). */
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px 18px;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.95rem;
+  padding: 0.95rem 1.05rem;
   background: var(--glass);
   border: 1px solid var(--border);
   border-radius: 14px;
+}
+.game-result-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.game-result-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+.game-result-buttons .primary-btn,
+.game-result-buttons .secondary-btn {
+  white-space: nowrap;
 }
 .game-result-strip .result-line {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 14px;
+  gap: 0.85rem;
 }
 .game-result-strip .result-line .title {
   font-size: 18px;
@@ -1572,7 +1594,10 @@ a { color: inherit; text-decoration: none; }
   filter: drop-shadow(0 0 8px var(--hero-color));
   flex-shrink: 0;
 }
-.hero-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* flex: 1 stretches the text block to fill the remaining row width after
+   the king icon, so the right-aligned ability/cooldown text sits flush
+   against the right edge of the card box. */
+.hero-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .hero-card-row .hero-card-name { font-size: 14px; }
 .hero-card-name-row {
   display: flex;
@@ -1580,6 +1605,7 @@ a { color: inherit; text-decoration: none; }
   justify-content: space-between;
   gap: 0.5rem;
   min-width: 0;
+  width: 100%;
 }
 .hero-card-name-row .hero-card-name {
   overflow: hidden;
@@ -1591,6 +1617,9 @@ a { color: inherit; text-decoration: none; }
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  /* Anchor flush to the right edge of the name-row no matter what the parent
+     flex container does — belt-and-suspenders for justify-content. */
+  margin-left: auto;
 }
 .hero-action-row {
   display: flex;
@@ -1629,4 +1658,222 @@ a { color: inherit; text-decoration: none; }
 .hero-side-picker .free-play-select {
   /* Keep the select compact so it doesn't push past the box on long names. */
   max-width: 8.5rem;
+}
+
+/* Frost: encase a frozen piece in a translucent ice block with a soft cyan
+   tint, a sharp inset highlight on the square's edge, and a snowflake in
+   the centre. Lives above pieces (z-index 2) so the freeze reads clearly. */
+.frozen-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(135deg, rgba(180, 230, 255, 0.45), rgba(80, 160, 220, 0.30));
+  box-shadow:
+    inset 0 0 0 2px rgba(220, 240, 255, 0.75),
+    inset 0 0 12px rgba(140, 210, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: frozen-pulse 2.4s ease-in-out infinite;
+}
+.frozen-flake {
+  color: rgba(240, 250, 255, 0.95);
+  text-shadow:
+    0 0 6px rgba(140, 210, 255, 0.9),
+    0 0 12px rgba(80, 160, 220, 0.7);
+  font-weight: 700;
+  pointer-events: none;
+  user-select: none;
+}
+@keyframes frozen-pulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+/* ===========================================================
+   Hero ability animations. Each .ability-* root sits absolute
+   inside the merge-board container and uses CSS custom props
+   for per-event coords. Keyframes auto-play on mount and the
+   roots have pointer-events: none so they never block clicks.
+   =========================================================== */
+
+.ability-flight,
+.ability-necromancer,
+.ability-knight,
+.ability-frost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+
+/* --- Flight: king floats from --from to --to with two flapping wings --- */
+.ability-flight-body {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  /* Center the body on its current coord. */
+  margin-left: calc(var(--size) * -0.5);
+  margin-top: calc(var(--size) * -0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 0.4rem rgba(135, 206, 235, 0.95))
+    drop-shadow(0 0 1rem rgba(135, 206, 235, 0.7));
+  animation: ability-flight-fly 950ms cubic-bezier(0.45, 0, 0.55, 1) forwards;
+}
+@keyframes ability-flight-fly {
+  0%   { left: var(--from-x); top: var(--from-y); transform: scale(0.92); opacity: 0.4; }
+  18%  { transform: scale(1.05); opacity: 1; }
+  82%  { left: var(--to-x); top: var(--to-y); transform: scale(1.05); opacity: 1; }
+  100% { left: var(--to-x); top: var(--to-y); transform: scale(0.95); opacity: 0; }
+}
+.ability-flight-king {
+  position: relative;
+  display: inline-flex;
+  z-index: 1;
+}
+.ability-flight-wing {
+  position: absolute;
+  top: 12%;
+  width: 48%;
+  height: 76%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(180, 220, 255, 0.55) 60%,
+    rgba(135, 206, 235, 0.0) 100%
+  );
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
+  z-index: 0;
+}
+.ability-flight-wing.left {
+  left: -16%;
+  clip-path: polygon(100% 10%, 100% 90%, 30% 100%, 0 60%, 25% 25%);
+  transform-origin: 100% 50%;
+  animation: ability-flight-wing-l 220ms ease-in-out infinite;
+}
+.ability-flight-wing.right {
+  right: -16%;
+  clip-path: polygon(0 10%, 0 90%, 70% 100%, 100% 60%, 75% 25%);
+  transform-origin: 0% 50%;
+  animation: ability-flight-wing-r 220ms ease-in-out infinite;
+}
+@keyframes ability-flight-wing-l {
+  0%, 100% { transform: rotate(-8deg) scaleY(1); }
+  50%      { transform: rotate(-32deg) scaleY(0.85); }
+}
+@keyframes ability-flight-wing-r {
+  0%, 100% { transform: rotate(8deg) scaleY(1); }
+  50%      { transform: rotate(32deg) scaleY(0.85); }
+}
+
+/* --- Necromancer: purple flash + expanding ring at spawn square --- */
+.ability-necro-burst,
+.ability-necro-ring {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.ability-necro-burst {
+  width: var(--size);
+  height: var(--size);
+  margin-left: calc(var(--size) * -0.5);
+  margin-top: calc(var(--size) * -0.5);
+  background: radial-gradient(
+    circle,
+    rgba(196, 132, 232, 0.95) 0%,
+    rgba(155, 77, 202, 0.7) 35%,
+    rgba(120, 50, 170, 0.25) 65%,
+    transparent 85%
+  );
+  box-shadow:
+    0 0 1.4rem rgba(155, 77, 202, 0.9),
+    0 0 3rem rgba(155, 77, 202, 0.55);
+  animation: ability-necro-burst 950ms ease-out forwards;
+}
+.ability-necro-ring {
+  width: var(--size);
+  height: var(--size);
+  margin-left: calc(var(--size) * -0.5);
+  margin-top: calc(var(--size) * -0.5);
+  border: 3px solid rgba(196, 132, 232, 0.85);
+  box-shadow: 0 0 14px rgba(155, 77, 202, 0.9);
+  animation: ability-necro-ring 950ms ease-out forwards;
+}
+@keyframes ability-necro-burst {
+  0%   { transform: scale(0.2); opacity: 0; }
+  20%  { transform: scale(0.85); opacity: 1; }
+  60%  { transform: scale(1.25); opacity: 0.75; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+@keyframes ability-necro-ring {
+  0%   { transform: scale(0.3); opacity: 0; }
+  25%  { transform: scale(0.9); opacity: 1; }
+  100% { transform: scale(2);   opacity: 0; }
+}
+
+/* --- Knight: red flash + violent shake on the king's square --- */
+.ability-knight-shake {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: var(--size);
+  height: var(--size);
+  margin-left: calc(var(--size) * -0.5);
+  margin-top: calc(var(--size) * -0.5);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(196, 30, 30, 0.55) 0%,
+    rgba(196, 30, 30, 0.3) 45%,
+    transparent 75%
+  );
+  box-shadow:
+    0 0 1rem rgba(196, 30, 30, 0.8),
+    0 0 2.4rem rgba(196, 30, 30, 0.55);
+  animation: ability-knight-shake 600ms cubic-bezier(.36,.07,.19,.97) forwards;
+}
+@keyframes ability-knight-shake {
+  0%   { transform: translate(0, 0)   scale(0.9); opacity: 0; }
+  10%  { transform: translate(-6px, 1px) scale(1); opacity: 1; }
+  20%  { transform: translate(7px, -1px); }
+  30%  { transform: translate(-7px, 2px); }
+  40%  { transform: translate(6px, -2px); }
+  55%  { transform: translate(-5px, 1px); }
+  70%  { transform: translate(4px, -1px); }
+  85%  { transform: translate(-2px, 0); opacity: 0.8; }
+  100% { transform: translate(0, 0); opacity: 0; }
+}
+
+/* --- Frost: short cyan crystallise burst on the frozen square --- */
+.ability-frost-burst {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: var(--size);
+  height: var(--size);
+  margin-left: calc(var(--size) * -0.5);
+  margin-top: calc(var(--size) * -0.5);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(220, 240, 255, 0.95) 0%,
+    rgba(140, 210, 255, 0.7) 35%,
+    rgba(80, 160, 220, 0.25) 65%,
+    transparent 85%
+  );
+  box-shadow:
+    0 0 1rem rgba(140, 210, 255, 0.85),
+    0 0 2.4rem rgba(80, 160, 220, 0.6);
+  animation: ability-frost-burst 700ms ease-out forwards;
+}
+@keyframes ability-frost-burst {
+  0%   { transform: scale(0.3); opacity: 0; }
+  25%  { transform: scale(0.95); opacity: 1; }
+  100% { transform: scale(1.4); opacity: 0; }
 }

@@ -37,6 +37,7 @@ import {
 import {
   initialState as heroInitial,
   applyMove as heroApply,
+  kingSquareOf as heroKingSquareOf,
   legalMovesFrom as heroLegal,
   abilityTargets as heroAbilityTargets,
   abilityReady as heroAbilityReady,
@@ -52,6 +53,7 @@ import {
 } from '../lib/heroChess';
 import { HeroAbilities } from '../components/HeroAbilities';
 import type { Piece as MergePiece } from '../lib/mergeChess';
+import type { AbilityAnim } from '../components/MergeBoard';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
   TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
 );
@@ -104,6 +106,9 @@ export function Home() {
   const [heroStates, setHeroStates] = useState<HeroState[]>(() => [heroInitial('frost', 'knight')]);
   const [heroResults, setHeroResults] = useState<HeroResult[]>([]);
   const [heroAbilityArmed, setHeroAbilityArmed] = useState(false);
+  // Transient ability animation overlay (hero free play). Bumped to a fresh
+  // key each time it should re-fire.
+  const [heroAbilityAnim, setHeroAbilityAnim] = useState<AbilityAnim | null>(null);
 
   const navigate = useNavigate();
 
@@ -121,6 +126,10 @@ export function Home() {
     setHeroStates([heroInitial(heroW, heroB)]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
+    // Clear any stale hero ability animation — without this, switching away
+    // from hero and back would re-fire the last animation against a fresh
+    // board (e.g. a Knight shake on the king's *old* square).
+    setHeroAbilityAnim(null);
     setFreeViewPly(0);
     setFreeSelected(null);
     setFreeHighlights(new Set());
@@ -133,10 +142,20 @@ export function Home() {
     setHeroStates([heroInitial(heroW, heroB)]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
+    setHeroAbilityAnim(null);
     setFreeViewPly(0);
     setFreeSelected(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroW, heroB]);
+
+  // Belt-and-braces: clear the animation state shortly after it's set so a
+  // stale value can't outlive the visible effect (e.g. if the user navigates
+  // away mid-animation and back). 1.2s comfortably outlasts every ability.
+  useEffect(() => {
+    if (!heroAbilityAnim) return;
+    const t = window.setTimeout(() => setHeroAbilityAnim(null), 1200);
+    return () => clearTimeout(t);
+  }, [heroAbilityAnim]);
 
   // Chess instance reflecting the viewed position for the normal variant. At
   // present this is the mutable freeChess; in the past it's a freshly-replayed
@@ -402,10 +421,28 @@ export function Home() {
     else if (res.result.abilityUsed === 'knight') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.checkmate) sfx.playWin();
     else if (res.result.check) sfx.playCheck();
+    if (res.result.abilityUsed) {
+      const targetSq = res.result.uci.slice(2);
+      const moverColor = base.turn;
+      let fromSq: string | undefined;
+      if (res.result.abilityUsed === 'flight') {
+        fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
+      } else if (res.result.abilityUsed === 'knight') {
+        fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
+      }
+      setHeroAbilityAnim({
+        kind: res.result.abilityUsed,
+        fromSq,
+        toSq: targetSq,
+        color: moverColor,
+        key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+      });
+    }
     setHeroStates([...truncStates, res.state]);
     setHeroResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
@@ -694,6 +731,7 @@ export function Home() {
               else if (r.abilityUsed === 'knight') sfx.playSlice();
               else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
               else if (r.abilityUsed === 'flight') sfx.playFly();
+              else if (r.castled) sfx.playCastle();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
               if (r.check && !r.checkmate) sfx.playCheck();
@@ -702,6 +740,29 @@ export function Home() {
               if (r.check) sfx.playCheckReversed();
             }
           }
+        }
+      }
+      // Re-fire the hero ability animation when scrubbing forward into one.
+      if (forward && freeVariant === 'hero') {
+        const r = heroResults[p];
+        const prevState = heroStates[p];
+        const nextState = heroStates[p + 1];
+        if (r && r.abilityUsed && prevState && nextState) {
+          const targetSq = r.uci.slice(2);
+          const moverColor = prevState.turn;
+          let fromSq: string | undefined;
+          if (r.abilityUsed === 'flight') {
+            fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
+          } else if (r.abilityUsed === 'knight') {
+            fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
+          }
+          setHeroAbilityAnim({
+            kind: r.abilityUsed,
+            fromSq,
+            toSq: targetSq,
+            color: moverColor,
+            key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+          });
         }
       }
       return next;
@@ -1027,6 +1088,7 @@ export function Home() {
                 myCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn)}
                 oppCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn === 'w' ? 'b' : 'w')}
                 myTurn={freeViewPly === heroResults.length && heroAbilityReady(heroViewState, heroViewState.turn)}
+                hasTargets={freeViewPly === heroResults.length && heroAbilityTargets(heroViewState).length > 0}
                 armed={heroAbilityArmed}
                 onArm={() => { setFreeSelected(null); setHeroAbilityArmed(true); sfx.playSelect(); }}
                 onCancel={() => setHeroAbilityArmed(false)}
@@ -1139,6 +1201,12 @@ export function Home() {
                     w: HERO_INFO[heroViewState.heroes.w.hero].glowColor,
                     b: HERO_INFO[heroViewState.heroes.b.hero].glowColor,
                   }}
+                  frozenSquare={
+                    heroViewState.frozen && heroViewState.ply < heroViewState.frozen.expiresAtPly
+                      ? heroIdxToSq(heroViewState.frozen.idx)
+                      : null
+                  }
+                  abilityAnim={heroAbilityAnim}
                 />
               )}
               {freeEnd && (

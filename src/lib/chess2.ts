@@ -1,7 +1,7 @@
 // Chess 2.0 — back-rank pieces follow new rules:
 //   Q (queen)  → moves like a king (1 square any direction).
-//   B (bishop) → moves 1 to 3 squares in any of the 8 directions, blocked by
-//                pieces in the path (a short-range queen).
+//   B (bishop) → moves 1 or 2 squares diagonally, blocked by pieces in the
+//                path.
 //   N (knight) → jumps over an adjacent piece (any of the 8 directions) and
 //                lands directly on the square two away. The hopped piece, if
 //                enemy, is captured checkers-style; the landing square may be
@@ -11,8 +11,8 @@
 //   R (rook)   → moves 1 square orthogonally. Captures adjacent enemy
 //                pieces normally. If the destination holds an own piece, it
 //                PUSHES the chain one square in the same direction. Push
-//                fails if the chain reaches the board edge or contains
-//                another rook (own or enemy).
+//                fails only if the chain reaches the board edge — rooks can
+//                shove other rooks along.
 //   K (king)   → standard 1-square move (no castling in 2.0).
 //   P (pawn)   → standard pawn rules (incl. en passant, promotion).
 //
@@ -92,12 +92,42 @@ const EIGHT_DIRS: [number, number][] = [...ROOK_DIRS, ...BISHOP_DIRS];
 // ------------------------------------------------------------------
 export function initialState(): GameState {
   const board: (Piece | null)[] = new Array(64).fill(null);
-  const backRank = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'] as const;
-  for (let f = 0; f < 8; f++) {
-    board[idxFR(f, 7)] = { color: 'b', letter: backRank[f].toLowerCase() as PieceLetter };
+  // Guerrilla back rank: queen on d, king on e. Corner squares (a/h) are
+  // empty — the four rooks live next to the bishops instead (see below).
+  board[idxFR(3, 0)] = { color: 'w', letter: 'Q' };
+  board[idxFR(4, 0)] = { color: 'w', letter: 'K' };
+  board[idxFR(3, 7)] = { color: 'b', letter: 'q' };
+  board[idxFR(4, 7)] = { color: 'b', letter: 'k' };
+  // Bishops on c1/f1 (and mirror), tucked beside the royal couple.
+  board[idxFR(2, 0)] = { color: 'w', letter: 'B' };
+  board[idxFR(5, 0)] = { color: 'w', letter: 'B' };
+  board[idxFR(2, 7)] = { color: 'b', letter: 'b' };
+  board[idxFR(5, 7)] = { color: 'b', letter: 'b' };
+  // Four rooks per side — above the bishops (c2/f2) and beside them
+  // (b1/g1).
+  board[idxFR(2, 1)] = { color: 'w', letter: 'R' };
+  board[idxFR(5, 1)] = { color: 'w', letter: 'R' };
+  board[idxFR(1, 0)] = { color: 'w', letter: 'R' };
+  board[idxFR(6, 0)] = { color: 'w', letter: 'R' };
+  board[idxFR(2, 6)] = { color: 'b', letter: 'r' };
+  board[idxFR(5, 6)] = { color: 'b', letter: 'r' };
+  board[idxFR(1, 7)] = { color: 'b', letter: 'r' };
+  board[idxFR(6, 7)] = { color: 'b', letter: 'r' };
+  // Knights directly above the queen and king (d2/e2 and mirror).
+  board[idxFR(3, 1)] = { color: 'w', letter: 'N' };
+  board[idxFR(4, 1)] = { color: 'w', letter: 'N' };
+  board[idxFR(3, 6)] = { color: 'b', letter: 'n' };
+  board[idxFR(4, 6)] = { color: 'b', letter: 'n' };
+  // Guerrilla pawns: b- and g-file pawns sit on their usual rank; the four
+  // centre files (c, d, e, f) start one square pushed up. a- and h-files
+  // are empty.
+  for (const f of [1, 6]) {
     board[idxFR(f, 6)] = { color: 'b', letter: 'p' };
     board[idxFR(f, 1)] = { color: 'w', letter: 'P' };
-    board[idxFR(f, 0)] = { color: 'w', letter: backRank[f] };
+  }
+  for (const f of [2, 3, 4, 5]) {
+    board[idxFR(f, 5)] = { color: 'b', letter: 'p' };
+    board[idxFR(f, 2)] = { color: 'w', letter: 'P' };
   }
   const state: GameState = {
     board,
@@ -172,8 +202,8 @@ function pseudoQueen(
 function pseudoBishop(
   state: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[],
 ) {
-  for (const [df, dr] of EIGHT_DIRS) {
-    for (let step = 1; step <= 3; step++) {
+  for (const [df, dr] of BISHOP_DIRS) {
+    for (let step = 1; step <= 2; step++) {
       const f = ff + df * step, r = fr + dr * step;
       if (!onBoard(f, r)) break;
       const t = idxFR(f, r);
@@ -230,15 +260,14 @@ function pseudoRook(
 }
 
 // Walk the chain starting at startIdx in direction (df, dr). The chain is
-// valid (pushable) only if every occupied square in the chain is non-rook AND
-// the chain terminates at an empty square inside the board.
+// valid (pushable) only if it terminates at an empty square inside the
+// board. Rooks may be part of the chain — they shove each other along.
 function canPush(state: GameState, startIdx: number, df: number, dr: number): boolean {
   let idx = startIdx;
   let [f, r] = frOfIdx(idx);
   while (true) {
     const piece = state.board[idx];
     if (!piece) return true;
-    if (piece.letter.toUpperCase() === 'R') return false;
     f += df; r += dr;
     if (!onBoard(f, r)) return false;
     idx = idxFR(f, r);
@@ -249,8 +278,8 @@ function pseudoPawn(
   state: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[],
 ) {
   const dir = p.color === 'w' ? 1 : -1;
-  const startRank = p.color === 'w' ? 1 : 6;
   const promoRank = p.color === 'w' ? 7 : 0;
+  // Guerrilla has no double pawn move — pawns always advance one square.
 
   const oneR = fr + dir;
   if (onBoard(ff, oneR) && !state.board[idxFR(ff, oneR)]) {
@@ -260,10 +289,6 @@ function pseudoPawn(
       }
     } else {
       out.push({ from, to: idxFR(ff, oneR) });
-      const twoR = fr + 2 * dir;
-      if (fr === startRank && onBoard(ff, twoR) && !state.board[idxFR(ff, twoR)]) {
-        out.push({ from, to: idxFR(ff, twoR), doublePawn: true });
-      }
     }
   }
 
@@ -325,9 +350,9 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (p && p.color === byColor && p.letter.toUpperCase() === 'R') return true;
   }
 
-  // Bishop (1 to 3 sq, blocked by intervening pieces)
-  for (const [df, dr] of EIGHT_DIRS) {
-    for (let step = 1; step <= 3; step++) {
+  // Bishop (1 to 2 sq diagonally, blocked by intervening pieces)
+  for (const [df, dr] of BISHOP_DIRS) {
+    for (let step = 1; step <= 2; step++) {
       const f = tf - df * step, r = tr - dr * step;
       if (!onBoard(f, r)) break;
       const p = state.board[idxFR(f, r)];

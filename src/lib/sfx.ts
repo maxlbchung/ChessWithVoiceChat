@@ -508,8 +508,10 @@ export function playFreeze() {
 // a short bright tail "shiiing" as it clears the sheath.
 function buildSlice(dest: AudioNode, t: number) {
   const ac: BaseAudioContext = dest.context;
-  const dur = 0.32;
-  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  // Short, abrupt — no slow ramp. The scrape and metallic singing tone
+  // both start near full amplitude, sweep up briefly, and end on a bright tail.
+  const scrapeDur = 0.13;
+  const length = Math.max(1, Math.floor(scrapeDur * ac.sampleRate));
   const buf = ac.createBuffer(1, length, ac.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
@@ -518,44 +520,60 @@ function buildSlice(dest: AudioNode, t: number) {
   const bp = ac.createBiquadFilter();
   bp.type = 'bandpass';
   bp.Q.value = 6;
-  bp.frequency.setValueAtTime(800, t);
-  bp.frequency.exponentialRampToValueAtTime(5200, t + dur * 0.85);
+  bp.frequency.setValueAtTime(1400, t);
+  bp.frequency.exponentialRampToValueAtTime(5200, t + scrapeDur * 0.8);
   const g = ac.createGain();
   g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.34, t + 0.04);
-  g.gain.linearRampToValueAtTime(0.42, t + dur * 0.85);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.linearRampToValueAtTime(0.42, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + scrapeDur);
   src.connect(bp).connect(g).connect(dest);
   src.start(t);
-  src.stop(t + dur + 0.02);
-  // Metallic singing tone — sine glide matching the scrape, then a brief
-  // bright tail after the blade clears.
-  blip({ dest, startAt: t, freq: 900, freqEnd: 3200, durMs: dur * 1000, type: 'sine', peak: 0.16, attackMs: 25 });
-  blip({ dest, startAt: t + dur * 0.85, freq: 3400, durMs: 180, type: 'sine', peak: 0.18, attackMs: 1 });
-  blip({ dest, startAt: t + dur * 0.85, freq: 5100, durMs: 140, type: 'sine', peak: 0.08, attackMs: 1 });
+  src.stop(t + scrapeDur + 0.02);
+  blip({ dest, startAt: t, freq: 1600, freqEnd: 3400, durMs: scrapeDur * 1000 * 0.8, type: 'sine', peak: 0.18, attackMs: 2 });
+  blip({ dest, startAt: t + scrapeDur * 0.8, freq: 3600, durMs: 110, type: 'sine', peak: 0.2, attackMs: 1 });
+  blip({ dest, startAt: t + scrapeDur * 0.8, freq: 5400, durMs: 80, type: 'sine', peak: 0.09, attackMs: 1 });
 }
 export function playSlice() {
   buildSlice(ensureChessBus(), getCtx().currentTime);
 }
 
-// Spawn (hero: necromancer) — mystical summoning. A slow gain-swell on an
-// open triad rises out of silence, a brief shimmer arpeggio glints just
-// before, and a soft low thud lands as the piece materializes.
+// Spawn (hero: necromancer) — deep, ominous summoning drone. A sub-bass
+// foundation with detuned root sines, a slightly dissonant minor-third
+// colour above, and sawtooth fifth/octave voices for the harmonic growl,
+// all routed through a dark lowpass and crawling up out of silence.
 function buildSpawn(dest: AudioNode, t: number) {
   const ac: BaseAudioContext = dest.context;
-  const swellDur = 0.3;
-  const chord = [220, 330, 440];
-  for (const f of chord) {
+  const swellDur = 0.55;
+  const tailDur = 0.5;
+  const totalDur = swellDur + tailDur;
+
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 380;
+  lp.Q.value = 0.9;
+  lp.connect(dest);
+
+  const voices: Array<{ f: number; type: OscillatorType; peak: number }> = [
+    { f: 10.3,          type: 'sine',     peak: 0.5  }, // sub rumble (below hearing — felt)
+    { f: 13.75,         type: 'sine',     peak: 0.42 }, // root sub
+    { f: 13.75 * 1.006, type: 'sine',     peak: 0.32 }, // root detune — slow beat
+    { f: 13.75,         type: 'sawtooth', peak: 0.22 }, // root saw — bass body via harmonics
+    { f: 16.35,         type: 'triangle', peak: 0.26 }, // minor 3rd, warm body
+    { f: 20.6,          type: 'sawtooth', peak: 0.26 }, // fifth — primary bass voice
+    { f: 20.6 * 1.005,  type: 'sawtooth', peak: 0.2  }, // fifth detune
+    { f: 27.5,          type: 'sawtooth', peak: 0.16 }, // octave — growl
+  ];
+  for (const v of voices) {
     const osc = ac.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = f;
+    osc.type = v.type;
+    osc.frequency.value = v.f;
     const g = ac.createGain();
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.13, t + swellDur);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + swellDur + 0.18);
-    osc.connect(g).connect(dest);
+    g.gain.linearRampToValueAtTime(v.peak, t + swellDur);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + totalDur);
+    osc.connect(g).connect(lp);
     osc.start(t);
-    osc.stop(t + swellDur + 0.22);
+    osc.stop(t + totalDur + 0.05);
   }
 }
 export function playSpawn() {
@@ -696,58 +714,3 @@ export function playChat() {
   blip({ startAt: t, freq: 2400, durMs: 18, type: 'sine', peak: 0.12, attackMs: 0.5 });
 }
 
-// Volume-max — soft pulsing band-limited hiss. Faint, non-musical, just a
-// background "watch out" texture rather than a chaotic TV-static rip.
-let staticState: {
-  src: AudioBufferSourceNode;
-  gain: GainNode;
-  trem: OscillatorNode;
-} | null = null;
-const STATIC_PEAK = 0.045;
-
-export function setStaticActive(active: boolean) {
-  const ac = getCtx();
-  const now = ac.currentTime;
-  if (active && !staticState) {
-    // 1s white-noise loop, lowpassed so it's airy not abrasive.
-    const buf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-
-    const lp = ac.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 3200;
-    const hp = ac.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 800;
-
-    const gain = ac.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(STATIC_PEAK * 0.7, now + 0.15);
-
-    // Slow tremolo gives it that "we're in the red" pulse.
-    const trem = ac.createOscillator();
-    trem.type = 'sine';
-    trem.frequency.value = 3.5;
-    const tremDepth = ac.createGain();
-    tremDepth.gain.value = STATIC_PEAK * 0.4;
-    trem.connect(tremDepth).connect(gain.gain);
-
-    src.connect(hp).connect(lp).connect(gain).connect(bus());
-    src.start();
-    trem.start();
-    staticState = { src, gain, trem };
-  } else if (!active && staticState) {
-    const { src, gain, trem } = staticState;
-    gain.gain.cancelScheduledValues(now);
-    gain.gain.setValueAtTime(gain.gain.value, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-    const stopAt = now + 0.22;
-    try { src.stop(stopAt); } catch {}
-    try { trem.stop(stopAt); } catch {}
-    staticState = null;
-  }
-}

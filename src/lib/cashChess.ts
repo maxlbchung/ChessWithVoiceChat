@@ -100,19 +100,19 @@ const KNIGHT_OFFSETS: [number, number][] = [
 // ------------------------------------------------------------------
 // Initial position
 // Layout (white perspective):
-//   rank 2: pawns on c, d, e, f
-//   rank 1: pawn on b, Queen on d, King on e, pawn on g
+//   rank 2: pawns on b, c, d, e, f, g
+//   rank 1: Queen on d, King on e
 // Black mirrors.
 // ------------------------------------------------------------------
 export function initialState(): GameState {
   const board: (Piece | null)[] = new Array(64).fill(null);
   const white: Array<[number, number, PieceLetter]> = [
-    [1, 0, 'P'], [3, 0, 'Q'], [4, 0, 'K'], [6, 0, 'P'],
-    [2, 1, 'P'], [3, 1, 'P'], [4, 1, 'P'], [5, 1, 'P'],
+    [3, 0, 'Q'], [4, 0, 'K'],
+    [1, 1, 'P'], [2, 1, 'P'], [3, 1, 'P'], [4, 1, 'P'], [5, 1, 'P'], [6, 1, 'P'],
   ];
   const black: Array<[number, number, PieceLetter]> = [
-    [1, 7, 'p'], [3, 7, 'q'], [4, 7, 'k'], [6, 7, 'p'],
-    [2, 6, 'p'], [3, 6, 'p'], [4, 6, 'p'], [5, 6, 'p'],
+    [3, 7, 'q'], [4, 7, 'k'],
+    [1, 6, 'p'], [2, 6, 'p'], [3, 6, 'p'], [4, 6, 'p'], [5, 6, 'p'], [6, 6, 'p'],
   ];
   for (const [f, r, l] of white) board[idxFR(f, r)] = { color: 'w', letter: l };
   for (const [f, r, l] of black) board[idxFR(f, r)] = { color: 'b', letter: l };

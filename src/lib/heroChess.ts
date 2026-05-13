@@ -55,7 +55,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     kind: 'knight',
     name: 'Knight',
     blurb: 'Destroy an enemy piece adjacent to your king without moving.',
-    glowColor: '#c8ccd2',
+    glowColor: '#c41e1e',
     cooldownTurns: 10,
   },
   necromancer: {
@@ -85,6 +85,9 @@ export type AbilitySide = {
 export type GameState = {
   board: (Piece | null)[];
   turn: C2Color;
+  // Per-side castling rights. False once that side's king or that wing's
+  // rook has moved (or been captured).
+  castling: { wK: boolean; wQ: boolean; bK: boolean; bQ: boolean };
   enPassant: Square | null;
   halfmove: number;
   fullmove: number;
@@ -101,12 +104,25 @@ export type MoveResult = {
   uci: string;
   fenAfter: string;
   captured: boolean;
+  // True when the move was a castle (king + rook in one move).
+  castled: boolean;
   // Which ability was used, if any. null for normal moves.
   abilityUsed: HeroKind | null;
   check: boolean;
   checkmate: boolean;
   stalemate: boolean;
 };
+
+// Locate the king of `color` on a given board. Returns null if missing
+// (shouldn't happen during legal play but kept defensive). Used by ability
+// animations to know where the king is (Flight from-square, Knight pivot).
+export function kingSquareOf(board: (Piece | null)[], color: C2Color): Square | null {
+  for (let i = 0; i < 64; i++) {
+    const p = board[i];
+    if (p && p.color === color && p.letter.toUpperCase() === 'K') return idxToSq(i);
+  }
+  return null;
+}
 
 // ------------------------------------------------------------------
 // Square <-> index helpers
@@ -157,6 +173,7 @@ export function initialState(heroW: HeroKind, heroB: HeroKind): GameState {
   const state: GameState = {
     board,
     turn: 'w',
+    castling: { wK: true, wQ: true, bK: true, bQ: true },
     enPassant: null,
     halfmove: 0,
     fullmove: 1,
@@ -181,6 +198,9 @@ type PseudoMove = {
   promotion?: 'Q' | 'R' | 'B' | 'N';
   enPassantCapture?: boolean;
   doublePawn?: boolean;
+  // Castling side, when this move is a castle. The rook from the matching
+  // corner gets swung to the square the king crossed.
+  castle?: 'K' | 'Q';
 };
 
 function pseudoMoves(state: GameState, from: number): PseudoMove[] {
@@ -213,6 +233,42 @@ function pseudoKing(s: GameState, from: number, ff: number, fr: number, p: Piece
     const dest = s.board[t];
     if (dest && dest.color === p.color) continue;
     out.push({ from, to: t });
+  }
+  // Castling. Only emitted from the original king square (e1/e8), only with
+  // the appropriate right still standing, only when the squares between are
+  // empty AND none of the king's transit squares (start / pass-through /
+  // landing) are attacked. A frozen rook can't castle either.
+  const isWhite = p.color === 'w';
+  const homeKingIdx = isWhite ? 60 : 4;            // e1 or e8
+  if (from !== homeKingIdx) return;
+  const enemy: C2Color = isWhite ? 'b' : 'w';
+  const kRook = isWhite ? 63 : 7;                  // h1 or h8
+  const qRook = isWhite ? 56 : 0;                  // a1 or a8
+  const frozenIdx = s.frozen && s.ply < s.frozen.expiresAtPly ? s.frozen.idx : -1;
+  const kRight = isWhite ? s.castling.wK : s.castling.bK;
+  const qRight = isWhite ? s.castling.wQ : s.castling.bQ;
+
+  const tryCastle = (rookIdx: number, betweenIdxs: number[], transitIdxs: number[], landIdx: number, side: 'K' | 'Q') => {
+    if (frozenIdx === rookIdx) return;
+    const rook = s.board[rookIdx];
+    if (!rook || rook.color !== p.color || rook.letter.toUpperCase() !== 'R') return;
+    for (const idx of betweenIdxs) if (s.board[idx] != null) return;
+    if (isSquareAttacked(s, homeKingIdx, enemy)) return;
+    for (const idx of transitIdxs) if (isSquareAttacked(s, idx, enemy)) return;
+    out.push({ from: homeKingIdx, to: landIdx, castle: side });
+  };
+  if (kRight) {
+    // Kingside: between = f1/f8, g1/g8; king transit = f, g; land = g.
+    const fSq = isWhite ? 61 : 5;
+    const gSq = isWhite ? 62 : 6;
+    tryCastle(kRook, [fSq, gSq], [fSq, gSq], gSq, 'K');
+  }
+  if (qRight) {
+    // Queenside: between = d, c, b; king transit = d, c; land = c.
+    const dSq = isWhite ? 59 : 3;
+    const cSq = isWhite ? 58 : 2;
+    const bSq = isWhite ? 57 : 1;
+    tryCastle(qRook, [dSq, cSq, bSq], [dSq, cSq], cSq, 'Q');
   }
 }
 
@@ -439,6 +495,7 @@ function applyAbility(state: GameState, hero: HeroKind, targetIdx: number): Game
   const next: GameState = {
     board: state.board.slice(),
     turn: state.turn === 'w' ? 'b' : 'w',
+    castling: { ...state.castling },
     enPassant: null,
     halfmove: state.halfmove + 1,
     fullmove: state.turn === 'b' ? state.fullmove + 1 : state.fullmove,
@@ -470,6 +527,9 @@ function applyAbility(state: GameState, hero: HeroKind, targetIdx: number): Game
       next.board[k] = null;
     }
     next.heroes[color].flightUsed = true;
+    // The king moved — castling rights for this side are gone.
+    if (color === 'w') { next.castling.wK = false; next.castling.wQ = false; }
+    else { next.castling.bK = false; next.castling.bQ = false; }
   }
 
   // Expire any active freeze whose lifetime has now ended.
@@ -490,6 +550,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   const next: GameState = {
     board: state.board.slice(),
     turn: state.turn === 'w' ? 'b' : 'w',
+    castling: { ...state.castling },
     enPassant: null,
     halfmove: state.halfmove + 1,
     fullmove: state.turn === 'b' ? state.fullmove + 1 : state.fullmove,
@@ -529,6 +590,39 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     const epRank = mover.color === 'w' ? tr - 1 : tr + 1;
     next.enPassant = idxToSq(idxFR(tf, epRank));
   }
+
+  // Castling: swing the rook over the king onto the transit square.
+  if (mv.castle) {
+    const isWhite = mover.color === 'w';
+    if (mv.castle === 'K') {
+      const rookFrom = isWhite ? 63 : 7;
+      const rookTo = isWhite ? 61 : 5;
+      next.board[rookTo] = next.board[rookFrom];
+      next.board[rookFrom] = null;
+    } else {
+      const rookFrom = isWhite ? 56 : 0;
+      const rookTo = isWhite ? 59 : 3;
+      next.board[rookTo] = next.board[rookFrom];
+      next.board[rookFrom] = null;
+    }
+  }
+
+  // Castling rights: lose them when the king moves (board move or implicit
+  // via castle) and when a rook moves off / is captured on its home corner.
+  if (moverUp === 'K') {
+    if (mover.color === 'w') { next.castling.wK = false; next.castling.wQ = false; }
+    else { next.castling.bK = false; next.castling.bQ = false; }
+  }
+  // From-corner clears the right tied to that rook.
+  if (mv.from === 56) next.castling.wQ = false;
+  if (mv.from === 63) next.castling.wK = false;
+  if (mv.from === 0)  next.castling.bQ = false;
+  if (mv.from === 7)  next.castling.bK = false;
+  // Capture lands on a corner — that rook is gone.
+  if (mv.to === 56) next.castling.wQ = false;
+  if (mv.to === 63) next.castling.wK = false;
+  if (mv.to === 0)  next.castling.bQ = false;
+  if (mv.to === 7)  next.castling.bK = false;
 
   if (next.frozen && next.ply >= next.frozen.expiresAtPly) {
     next.frozen = null;
@@ -633,6 +727,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
         uci,
         fenAfter: toFen(next),
         captured: parsed.hero === 'knight',
+        castled: false,
         abilityUsed: parsed.hero,
         check,
         checkmate,
@@ -677,6 +772,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       uci,
       fenAfter: toFen(next),
       captured,
+      castled: !!chosen.castle,
       abilityUsed: null,
       check,
       checkmate,
@@ -709,7 +805,13 @@ export function toFen(state: GameState): string {
   const bH = state.heroes.b;
   const hero = `${wH.hero}:${wH.cooldownUntilPly}:${wH.flightUsed ? 1 : 0}|${bH.hero}:${bH.cooldownUntilPly}:${bH.flightUsed ? 1 : 0}`;
   const frozen = state.frozen ? `${state.frozen.idx}:${state.frozen.expiresAtPly}` : '-';
-  return `${board} ${state.turn} - ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen}`;
+  let cas = '';
+  if (state.castling.wK) cas += 'K';
+  if (state.castling.wQ) cas += 'Q';
+  if (state.castling.bK) cas += 'k';
+  if (state.castling.bQ) cas += 'q';
+  if (cas === '') cas = '-';
+  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen}`;
 }
 
 function positionKey(state: GameState): string {

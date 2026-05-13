@@ -550,11 +550,6 @@ export function CashGame() {
   };
   const toggleSpeaker = () => setSpeakerOn((v) => !v);
 
-  useEffect(() => {
-    const maxed = myVolume >= 0.99 || oppVolume >= 0.99;
-    sfx.setStaticActive(maxed);
-  }, [myVolume, oppVolume]);
-  useEffect(() => () => sfx.setStaticActive(false), []);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -887,39 +882,41 @@ export function CashGame() {
 
         {end && (
           <div className="game-result-strip">
-            <div className="result-line">
-              <span className="title-group">
-                <ResultAvatar
-                  src={
-                    end.outcome === 'draw'
-                      ? avatar
-                      : end.outcome === myColor ? avatar : oppDisplayAvatar
-                  }
-                  handle={
-                    end.outcome === 'draw'
-                      ? me.handle
-                      : end.outcome === myColor ? me.handle : oppDisplayHandle
-                  }
-                />
-                <span className="title">
-                  {end.outcome === 'draw'
-                    ? 'Draw'
-                    : end.outcome === myColor ? 'You won' : 'You lost'}
+            <div className="game-result-info">
+              <div className="result-line">
+                <span className="title-group">
+                  <ResultAvatar
+                    src={
+                      end.outcome === 'draw'
+                        ? avatar
+                        : end.outcome === myColor ? avatar : oppDisplayAvatar
+                    }
+                    handle={
+                      end.outcome === 'draw'
+                        ? me.handle
+                        : end.outcome === myColor ? me.handle : oppDisplayHandle
+                    }
+                  />
+                  <span className="title">
+                    {end.outcome === 'draw'
+                      ? 'Draw'
+                      : end.outcome === myColor ? 'You won' : 'You lost'}
+                  </span>
                 </span>
-              </span>
-              <span className="reason">{labelFor(end.reason)}</span>
+                <span className="reason">{labelFor(end.reason)}</span>
+              </div>
+              <div className="rating-delta">
+                {end.outcome === 'draw'
+                  ? '½ – ½'
+                  : end.outcome === myColor
+                    ? '1 – 0'
+                    : '0 – 1'}
+                <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
+                  {myDelta >= 0 ? '+' : ''}{myDelta}
+                </span>
+              </div>
             </div>
-            <div className="rating-delta">
-              {end.outcome === 'draw'
-                ? '½ – ½'
-                : end.outcome === myColor
-                  ? '1 – 0'
-                  : '0 – 1'}
-              <span className={`delta ${myDelta >= 0 ? 'pos' : 'neg'}`}>
-                {myDelta >= 0 ? '+' : ''}{myDelta}
-              </span>
-            </div>
-            <div className="action-row">
+            <div className="game-result-buttons">
               {rematch.rematchOfferedByOpp ? (
                 <>
                   <button className="primary-btn" onClick={rematch.acceptRematch}>
