@@ -392,15 +392,18 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
 
-  // If we landed on this page with the partnership already established AND
-  // moves already played (e.g. reconnecting mid-game — not currently possible
-  // but harmless if it ever is), skip the intro and start the clock.
+  // Also catches the race where the opponent's first move lands before our
+  // own StartOverlay onDone fires: the overlay's mount condition keys on
+  // chess.history().length === 0, so an incoming move unmounts the overlay
+  // mid-animation and its setTimeout never runs. Without `fen` in the deps,
+  // this effect wouldn't re-run after the remote move and gameStarted would
+  // be stuck false → board stays non-interactive forever.
   useEffect(() => {
     if (gameStarted) return;
     if (!partnerReady) return;
     if (chess.history().length > 0) setGameStarted(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partnerReady, gameStarted]);
+  }, [partnerReady, gameStarted, fen]);
 
   // Detect timeouts
   useEffect(() => {
@@ -740,6 +743,10 @@ export function Game() {
 
   // Flat 64-square board for MergeBoard: idx 0 = a8 ... idx 63 = h1, matching
   // chess.js's row-major `board()` traversal.
+  //
+  // `fen` is in deps because `viewedChess` reuses the mutable `chess` instance
+  // at the present ply — its reference never changes across moves, so React's
+  // Object.is dep check would otherwise skip recomputation after every move.
   const displayBoard = useMemo<(MergePiece | null)[]>(() => {
     const out: (MergePiece | null)[] = [];
     for (const row of viewedChess.board()) {
@@ -750,7 +757,8 @@ export function Game() {
       }
     }
     return out;
-  }, [viewedChess]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewedChess, fen]);
 
   // Legal targets in MergeBoard's shape — `isMerge` is unused for Normal play
   // (no merge / push interactions), so it's always false.

@@ -324,12 +324,15 @@ export function CashGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
 
+  // moves.length in the deps catches the race where the opponent's first
+  // move lands before our StartOverlay onDone fires — without it, the
+  // overlay unmounts mid-animation and gameStarted is stuck false forever.
   useEffect(() => {
     if (gameStarted) return;
     if (!partnerReady) return;
     if (movesCountRef.current > 0) setGameStarted(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partnerReady, gameStarted]);
+  }, [partnerReady, gameStarted, moves.length]);
 
   useEffect(() => {
     if (end) return;
