@@ -418,8 +418,6 @@ export function playBuy() {
 // to read as "summoned into being". Runs through the chess bus so scrub
 // cutoff applies.
 function buildPlace(dest: AudioNode, t: number) {
-  blip({ dest, startAt: t, freq: 220, freqEnd: 140, durMs: 130, type: 'triangle', peak: 0.4, lpHz: 1500 });
-  blip({ dest, startAt: t, freq: 440, freqEnd: 280, durMs: 80, type: 'sine', peak: 0.1, lpHz: 2800 });
   const shim = [880, 1320, 1760];
   for (let i = 0; i < shim.length; i++) {
     blip({ dest, startAt: t + 0.02 + i * 0.035, freq: shim[i], durMs: 100, type: 'sine', peak: 0.13 - i * 0.025, attackMs: 1 });

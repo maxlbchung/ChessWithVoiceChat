@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
-import { Chessboard } from 'react-chessboard';
 import { MergeBoard } from '../components/MergeBoard';
 import { CashShop } from '../components/CashShop';
 import { TimeModeSelector } from '../components/TimeModeSelector';
@@ -80,7 +79,6 @@ export function Home() {
   const [freeFen, setFreeFen] = useState(freeChess.fen());
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
-  const [freeHighlights, setFreeHighlights] = useState<Set<string>>(new Set());
   // Ply we're currently viewing. Equals the active engine's history length at
   // present. Free play lets you make moves while in the past — doing so
   // truncates truth back to viewPly and branches a new line.
@@ -132,7 +130,6 @@ export function Home() {
     setHeroAbilityAnim(null);
     setFreeViewPly(0);
     setFreeSelected(null);
-    setFreeHighlights(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeVariant]);
 
@@ -171,7 +168,18 @@ export function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeViewPly, freeFen]);
 
-  const freeDisplayFen = previewChess.fen();
+  // Flat 64-square board derived from previewChess (idx 0 = a8 ... 63 = h1).
+  const freeDisplayBoard = useMemo<(MergePiece | null)[]>(() => {
+    const out: (MergePiece | null)[] = [];
+    for (const row of previewChess.board()) {
+      for (const cell of row) {
+        if (cell == null) { out.push(null); continue; }
+        const letter = cell.color === 'w' ? cell.type.toUpperCase() : cell.type;
+        out.push({ color: cell.color, letter: letter as MergePiece['letter'] });
+      }
+    }
+    return out;
+  }, [previewChess]);
   const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
   const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
   const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
@@ -224,32 +232,15 @@ export function Home() {
     }
   }, [freeSelected, previewChess]);
 
-  const freeSquareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
-    const styles: Record<string, React.CSSProperties> = {};
-    // Right-click highlights underlay everything else.
-    for (const sq of freeHighlights) {
-      styles[sq] = { backgroundColor: 'rgba(255,170,0,0.45)' };
-    }
-    if (freeSelected) {
-      styles[freeSelected] = {
-        background:
-          'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
-      };
-      for (const t of freeLegalTargets) {
-        const isCapture = !!previewChess.get(t as any);
-        styles[t] = isCapture
-          ? {
-            background:
-              'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
-          }
-          : {
-            background:
-              'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
-          };
-      }
-    }
-    return styles;
-  }, [freeSelected, freeLegalTargets, previewChess, freeHighlights]);
+  // Legal targets reshaped for MergeBoard's `{ to, isCapture, isMerge }` API.
+  const normalLegalTargetsForBoard = useMemo(() => {
+    if (freeVariant !== 'normal' || !freeSelected) return [];
+    return freeLegalTargets.map((to) => ({
+      to,
+      isCapture: !!previewChess.get(to as any),
+      isMerge: false,
+    }));
+  }, [freeVariant, freeSelected, freeLegalTargets, previewChess]);
 
   // Merge / 2.0 legal-target sets, in the shape MergeBoard expects.
   const mergeLegalTargets = useMemo(() => {
@@ -485,9 +476,9 @@ export function Home() {
     return piece.letter.toUpperCase() === 'P' ? 'Q' : undefined;
   };
 
-  const handleFreeDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
-    const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
-    return applyFreeMove(sourceSquare, targetSquare, promotion);
+  const handleFreeDrop = (from: string, to: string): boolean => {
+    // Pawn promotion auto-defaults to queen (chess.js handles it internally).
+    return applyFreeMove(from, to);
   };
 
   const handleMergeDrop = (from: string, to: string): boolean => {
@@ -504,7 +495,6 @@ export function Home() {
   };
 
   const onFreeSquareClick = (square: string) => {
-    if (freeHighlights.size > 0) setFreeHighlights(new Set());
     if (freeSelected === square) {
       setFreeSelected(null);
       return;
@@ -597,6 +587,12 @@ export function Home() {
   // Set selection when dragging starts on the merge / 2.0 board so the
   // legal-target rings appear while dragging, matching MergeGame's behavior.
   const onFreeDragStart = (from: string) => {
+    if (freeVariant === 'normal') {
+      const piece = previewChess.get(from as any);
+      if (!piece || piece.color !== previewChess.turn()) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
     if (freeVariant === 'merge') {
       const piece = mergeViewState.board[mergeSqToIdx(from)];
       if (!piece || piece.color !== mergeViewState.turn) return;
@@ -624,14 +620,6 @@ export function Home() {
     }
   };
 
-  const onFreeSquareRightClick = (square: string) => {
-    setFreeHighlights((prev) => {
-      const next = new Set(prev);
-      if (next.has(square)) next.delete(square);
-      else next.add(square);
-      return next;
-    });
-  };
 
   const resetFreePlay = () => {
     sfx.playReset();
@@ -1147,16 +1135,14 @@ export function Home() {
           </div>
           <div className="free-play-board-wrap">
               {freeVariant === 'normal' ? (
-                <Chessboard
-                  position={freeDisplayFen}
-                  onPieceDrop={handleFreeDrop}
+                <MergeBoard
+                  board={freeDisplayBoard}
+                  orientation={freeOrientation}
+                  selectedSquare={freeSelected}
+                  legalTargets={normalLegalTargetsForBoard}
                   onSquareClick={onFreeSquareClick}
-                  onSquareRightClick={onFreeSquareRightClick}
-                  boardOrientation={freeOrientation}
-                  customBoardStyle={{ borderRadius: 8 }}
-                  customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
-                  customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
-                  customSquareStyles={freeSquareStyles}
+                  onPieceDrop={handleFreeDrop}
+                  onDragStartSquare={onFreeDragStart}
                 />
               ) : freeVariant === 'merge' ? (
                 <MergeBoard

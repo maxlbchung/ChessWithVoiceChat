@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
-import { Chessboard } from 'react-chessboard';
+import { MergeBoard } from '../components/MergeBoard';
+import type { Piece as MergePiece } from '../lib/mergeChess';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
@@ -662,12 +663,21 @@ export function Game() {
     return (chess.turn() === 'w') === (c === 'white');
   };
 
-  const onPieceDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
-    // react-chessboard expects sync return; fire-and-forget the async work.
-    const promotion = piece && piece.length === 2 ? piece[1].toLowerCase() : undefined;
-    void applyLocalMove(sourceSquare, targetSquare, promotion);
+  const onPieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
+    // MergeBoard returns boolean; the async apply runs fire-and-forget.
+    // Pawn promotion defaults to queen (matches the other variants).
+    void applyLocalMove(sourceSquare, targetSquare);
     setSelectedSquare(null);
     return true;
+  };
+
+  // Drag start mirrors a click — sets the selected square so the legal-target
+  // rings appear while dragging, just like the Merge/2.0/Cash boards do.
+  const onDragStartSquare = (from: string) => {
+    if (end || !gameStarted || !atPresent || !isMyTurn()) return;
+    const piece = chess.get(from as any);
+    if (!piece || piece.color !== myPieceColor) return;
+    if (selectedSquare !== from) setSelectedSquare(from);
   };
 
   const myPieceColor = handoff.iAmWhite ? 'w' : 'b';
@@ -713,40 +723,46 @@ export function Game() {
     setSelectedSquare(null);
   };
 
-  const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
-    const styles: Record<string, React.CSSProperties> = {};
-    if (selectedSquare) {
-      styles[selectedSquare] = {
-        background:
-          'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
-      };
-      for (const t of legalTargets) {
-        const isCapture = !!chess.get(t as any);
-        styles[t] = isCapture
-          ? {
-              background:
-                'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
-            }
-          : {
-              background:
-                'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
-            };
-      }
-    }
-    return styles;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, legalTargets, fen]);
-
   const atPresent = viewPly === chess.history().length;
 
-  const displayFen = useMemo(() => {
-    if (atPresent) return fen;
+  // The chess.js instance reflecting the position currently being viewed
+  // (live at the present, replayed for past plies). All board queries that
+  // power the UI — board snapshot, legal targets, capture detection —
+  // should read from this instead of the mutable `chess`.
+  const viewedChess = useMemo(() => {
+    if (atPresent) return chess;
     const tmp = new Chess();
     const all = chess.history();
     for (let i = 0; i < viewPly; i++) tmp.move(all[i]);
-    return tmp.fen();
+    return tmp;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewPly, fen, atPresent]);
+
+  // Flat 64-square board for MergeBoard: idx 0 = a8 ... idx 63 = h1, matching
+  // chess.js's row-major `board()` traversal.
+  const displayBoard = useMemo<(MergePiece | null)[]>(() => {
+    const out: (MergePiece | null)[] = [];
+    for (const row of viewedChess.board()) {
+      for (const cell of row) {
+        if (cell == null) { out.push(null); continue; }
+        const letter = cell.color === 'w' ? cell.type.toUpperCase() : cell.type;
+        out.push({ color: cell.color, letter: letter as MergePiece['letter'] });
+      }
+    }
+    return out;
+  }, [viewedChess]);
+
+  // Legal targets in MergeBoard's shape — `isMerge` is unused for Normal play
+  // (no merge / push interactions), so it's always false.
+  const legalTargetsForBoard = useMemo(() => {
+    if (!atPresent || !selectedSquare) return [];
+    return legalTargets.map((to) => ({
+      to,
+      isCapture: !!chess.get(to as any),
+      isMerge: false,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legalTargets, selectedSquare, atPresent, fen]);
 
   // Scrub one ply forward or backward. Plays piece SFX (forward or reversed)
   // when invoked from the keyboard; the Undo/Redo buttons pass playSfx=false
@@ -826,16 +842,16 @@ export function Game() {
       )}
       <div className="board-column">
         <div className={`board-wrap ${!atPresent ? 'viewing-history' : ''}`}>
-          <Chessboard
-            position={displayFen}
-            onPieceDrop={onPieceDrop}
+          <MergeBoard
+            board={displayBoard}
+            orientation={handoff.iAmWhite ? 'white' : 'black'}
+            selectedSquare={atPresent ? selectedSquare : null}
+            legalTargets={legalTargetsForBoard}
             onSquareClick={onSquareClick}
-            boardOrientation={handoff.iAmWhite ? 'white' : 'black'}
-            arePiecesDraggable={!end && gameStarted && isMyTurn() && atPresent}
-            customBoardStyle={{ borderRadius: 8 }}
-            customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
-            customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
-            customSquareStyles={atPresent ? squareStyles : {}}
+            onPieceDrop={onPieceDrop}
+            onDragStartSquare={onDragStartSquare}
+            interactive={!end && gameStarted && isMyTurn() && atPresent}
+            draggable={!end && gameStarted && isMyTurn() && atPresent}
           />
           {partnerReady && !gameStarted && chess.history().length === 0 && (
             <StartOverlay

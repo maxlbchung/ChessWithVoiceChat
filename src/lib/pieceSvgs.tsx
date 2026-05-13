@@ -1,7 +1,6 @@
 // Standard chess piece SVGs (Cburnett, CC BY-SA 3.0, via Wikimedia).
-// Same artwork react-chessboard uses by default, copied locally so MergeBoard
-// can compose merged-piece sprites from the same source images as the normal
-// board.
+// Bundled locally so MergeBoard can render and compose pieces (including
+// merged-piece sprites) without an external chessboard dependency.
 
 import type { ReactElement } from 'react';
 

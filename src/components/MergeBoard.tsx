@@ -47,7 +47,7 @@ export type AbilityAnim = {
 type Arrow = { from: Square; to: Square };
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-// Match react-chessboard's default arrow color so both boards feel the same.
+// Warm amber for the right-click annotation arrows and square highlights.
 const ARROW_COLOR = 'rgb(255,170,0)';
 const HIGHLIGHT_COLOR = 'rgba(255,170,0,0.45)';
 
