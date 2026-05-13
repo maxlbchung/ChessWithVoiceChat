@@ -73,6 +73,12 @@ export function HeroGame() {
   // hero — at that point we initialise the engine.
   const [myHero, setMyHero] = useState<HeroKind | null>(null);
   const [oppHero, setOppHero] = useState<HeroKind | null>(null);
+  // Ref-mirror of myHero so the once-mounted peer message handler can read
+  // the latest value without re-binding. Used to re-broadcast our pick when
+  // the partner signals 'ready' (covers the race where we pick before their
+  // HeroGame has its handler attached).
+  const myHeroRef = useRef<HeroKind | null>(null);
+  useEffect(() => { myHeroRef.current = myHero; }, [myHero]);
   const [game, setGame] = useState<GameState | null>(null);
   // History snapshots (initial + after each move).
   const [states, setStates] = useState<GameState[]>([]);
@@ -204,7 +210,15 @@ export function HeroGame() {
       cancelDisconnectCountdown();
       if (rematch.handleRematchMessage(msg)) return;
       if (msg.type === 'hello') return;
-      if (msg.type === 'ready') { setPartnerReady(true); return; }
+      if (msg.type === 'ready') {
+        setPartnerReady(true);
+        // Partner just attached their handlers — if we picked before that
+        // happened, re-broadcast so the pick isn't lost in the race.
+        if (myHeroRef.current != null) {
+          try { session.send({ type: 'hero-pick', hero: myHeroRef.current }); } catch {}
+        }
+        return;
+      }
       if (msg.type === 'hero-pick') { setOppHero(msg.hero); return; }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
@@ -257,6 +271,13 @@ export function HeroGame() {
       session.send({ type: 'voice-state', voiceActive, micOn });
       session.send({ type: 'ready' });
       setPartnerReady(true);
+      // (Re-)send our hero pick on every intro. If our pick was sent before
+      // the partner's handlers were ready, it would have been silently
+      // dropped — broadcasting again here is idempotent on the receiver
+      // (setOppHero with the same value is a no-op).
+      if (myHeroRef.current != null) {
+        try { session.send({ type: 'hero-pick', hero: myHeroRef.current }); } catch {}
+      }
     };
 
     session.setEvents({
@@ -359,10 +380,10 @@ export function HeroGame() {
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    if (res.result.abilityUsed === 'frost') sfx.playMerge();
-    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
-    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
-    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
+    if (res.result.abilityUsed === 'frost') sfx.playFreeze();
+    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
+    else if (res.result.abilityUsed === 'flight') sfx.playFly();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -434,10 +455,10 @@ export function HeroGame() {
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.abilityUsed === 'frost') sfx.playMerge();
-    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
-    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
-    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
+    if (res.result.abilityUsed === 'frost') sfx.playFreeze();
+    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
+    else if (res.result.abilityUsed === 'flight') sfx.playFly();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -609,10 +630,10 @@ export function HeroGame() {
         const r = results[forward ? p : next];
         if (r) {
           if (forward) {
-            if (r.abilityUsed === 'frost') sfx.playMerge();
-            else if (r.abilityUsed === 'knight') sfx.playCapture();
-            else if (r.abilityUsed === 'necromancer') sfx.playPlace();
-            else if (r.abilityUsed === 'flight') sfx.playFlip();
+            if (r.abilityUsed === 'frost') sfx.playFreeze();
+            else if (r.abilityUsed === 'knight') sfx.playSlice();
+            else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
+            else if (r.abilityUsed === 'flight') sfx.playFly();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
             if (r.check && !r.checkmate) sfx.playCheck();

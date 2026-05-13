@@ -398,10 +398,10 @@ export function Home() {
     const base = truncStates[truncStates.length - 1];
     const res = heroApply(base, uci);
     if (!res) return false;
-    if (res.result.abilityUsed === 'frost') sfx.playMerge();
-    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
-    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
-    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
+    if (res.result.abilityUsed === 'frost') sfx.playFreeze();
+    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
+    else if (res.result.abilityUsed === 'flight') sfx.playFly();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.checkmate) sfx.playWin();
@@ -690,10 +690,10 @@ export function Home() {
           const r = heroResults[forward ? p : next];
           if (r) {
             if (forward) {
-              if (r.abilityUsed === 'frost') sfx.playMerge();
-              else if (r.abilityUsed === 'knight') sfx.playCapture();
-              else if (r.abilityUsed === 'necromancer') sfx.playPlace();
-              else if (r.abilityUsed === 'flight') sfx.playFlip();
+              if (r.abilityUsed === 'frost') sfx.playFreeze();
+              else if (r.abilityUsed === 'knight') sfx.playSlice();
+              else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
+              else if (r.abilityUsed === 'flight') sfx.playFly();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
               if (r.check && !r.checkmate) sfx.playCheck();
@@ -979,7 +979,16 @@ export function Home() {
                   <span className="muted small">White</span>
                   <select
                     value={heroW}
-                    onChange={(e) => setHeroW(e.target.value as HeroKind)}
+                    onChange={(e) => {
+                      const next = e.target.value as HeroKind;
+                      if (next !== heroW) {
+                        if (next === 'frost') sfx.playFreeze();
+                        else if (next === 'knight') sfx.playSlice();
+                        else if (next === 'necromancer') sfx.playSpawn();
+                        else if (next === 'flight') sfx.playFly();
+                      }
+                      setHeroW(next);
+                    }}
                     className="free-play-select"
                     data-no-sfx
                   >
@@ -992,7 +1001,16 @@ export function Home() {
                   <span className="muted small">Black</span>
                   <select
                     value={heroB}
-                    onChange={(e) => setHeroB(e.target.value as HeroKind)}
+                    onChange={(e) => {
+                      const next = e.target.value as HeroKind;
+                      if (next !== heroB) {
+                        if (next === 'frost') sfx.playFreeze();
+                        else if (next === 'knight') sfx.playSlice();
+                        else if (next === 'necromancer') sfx.playSpawn();
+                        else if (next === 'flight') sfx.playFly();
+                      }
+                      setHeroB(next);
+                    }}
                     className="free-play-select"
                     data-no-sfx
                   >
@@ -1030,6 +1048,7 @@ export function Home() {
                     if (next === 'merge') sfx.playMerge();
                     else if (next === 'two') sfx.playPush();
                     else if (next === 'cash') sfx.playPlace();
+                    else if (next === 'hero') sfx.playFly();
                     else sfx.playMove();
                   }
                   setFreeVariant(next);

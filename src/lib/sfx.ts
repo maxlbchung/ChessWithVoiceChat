@@ -464,6 +464,135 @@ export function playCashIn() {
   buildCashIn(ensureChessBus(), getCtx().currentTime);
 }
 
+// Freeze (hero: frost) — crackling ice. A scatter of short HP-noise grains
+// spread irregularly over ~420ms gives the brittle "tick-snap" texture of
+// ice fracturing; roughly half of them get a tiny high-pitched sine ping
+// for the resonant icy ring on top.
+function buildFreeze(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const totalDur = 0.42;
+  const n = 11;
+  for (let i = 0; i < n; i++) {
+    const at = t + (i / n) * totalDur + (Math.random() - 0.5) * 0.05;
+    const gDur = 0.008 + Math.random() * 0.018;
+    const length = Math.max(1, Math.floor((gDur + 0.005) * ac.sampleRate));
+    const buf = ac.createBuffer(1, length, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < length; j++) data[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 3500 + Math.random() * 2500;
+    const g = ac.createGain();
+    const amp = 0.2 + Math.random() * 0.22;
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(amp, at + 0.0008);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + gDur);
+    src.connect(hp).connect(g).connect(dest);
+    src.start(at);
+    src.stop(at + gDur + 0.01);
+    if (Math.random() < 0.5) {
+      const f = 2800 + Math.random() * 3500;
+      blip({ dest, startAt: at, freq: f, durMs: 25 + Math.random() * 30, type: 'sine', peak: 0.06 + Math.random() * 0.05, attackMs: 0.5 });
+    }
+  }
+}
+export function playFreeze() {
+  buildFreeze(ensureChessBus(), getCtx().currentTime);
+}
+
+// Slice (hero: knight) — drawing a blade from a scabbard. A bandpassed
+// noise scrape sweeps low→high (steel sliding out), with a high-Q resonant
+// metallic tone that rises in pitch alongside it (the blade singing), and
+// a short bright tail "shiiing" as it clears the sheath.
+function buildSlice(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const dur = 0.32;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 6;
+  bp.frequency.setValueAtTime(800, t);
+  bp.frequency.exponentialRampToValueAtTime(5200, t + dur * 0.85);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.34, t + 0.04);
+  g.gain.linearRampToValueAtTime(0.42, t + dur * 0.85);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(bp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.02);
+  // Metallic singing tone — sine glide matching the scrape, then a brief
+  // bright tail after the blade clears.
+  blip({ dest, startAt: t, freq: 900, freqEnd: 3200, durMs: dur * 1000, type: 'sine', peak: 0.16, attackMs: 25 });
+  blip({ dest, startAt: t + dur * 0.85, freq: 3400, durMs: 180, type: 'sine', peak: 0.18, attackMs: 1 });
+  blip({ dest, startAt: t + dur * 0.85, freq: 5100, durMs: 140, type: 'sine', peak: 0.08, attackMs: 1 });
+}
+export function playSlice() {
+  buildSlice(ensureChessBus(), getCtx().currentTime);
+}
+
+// Spawn (hero: necromancer) — mystical summoning. A slow gain-swell on an
+// open triad rises out of silence, a brief shimmer arpeggio glints just
+// before, and a soft low thud lands as the piece materializes.
+function buildSpawn(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const swellDur = 0.3;
+  const chord = [220, 330, 440];
+  for (const f of chord) {
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = f;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.13, t + swellDur);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + swellDur + 0.18);
+    osc.connect(g).connect(dest);
+    osc.start(t);
+    osc.stop(t + swellDur + 0.22);
+  }
+}
+export function playSpawn() {
+  buildSpawn(ensureChessBus(), getCtx().currentTime);
+}
+
+// Fly (hero: flight) — soaring whoosh. A pair of sine sweeps low→high paired
+// with a band-passed noise sweep climbing in pitch, evoking a king lifting
+// off the board.
+function buildFly(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  blip({ dest, startAt: t, freq: 300, freqEnd: 1500, durMs: 280, type: 'sine', peak: 0.26, attackMs: 8 });
+  blip({ dest, startAt: t + 0.04, freq: 600, freqEnd: 3000, durMs: 240, type: 'sine', peak: 0.1, attackMs: 4 });
+  const dur = 0.28;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 2;
+  bp.frequency.setValueAtTime(600, t);
+  bp.frequency.exponentialRampToValueAtTime(4000, t + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.2, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(bp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.02);
+}
+export function playFly() {
+  buildFly(ensureChessBus(), getCtx().currentTime);
+}
+
 // Generic UI click — subtle, neutral tap played on every button by default
 // (see the document-level click handler in Layout). Quiet enough to layer
 // under other SFX without doubling up annoyingly.

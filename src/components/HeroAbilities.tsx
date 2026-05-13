@@ -44,7 +44,6 @@ export function HeroAbilities({
       <div className="hero-panel-title">Heroes</div>
 
       <HeroCard
-        title={compact ? (perspective === 'white' ? 'White' : 'Black') : 'You'}
         info={myInfo}
         colorLetter={myColorLetter}
         cooldownTurns={myCooldownTurns}
@@ -75,7 +74,6 @@ export function HeroAbilities({
       </div>
 
       <HeroCard
-        title={compact ? (perspective === 'white' ? 'Black' : 'White') : 'Opp'}
         info={oppInfo}
         colorLetter={oppColorLetter}
         cooldownTurns={oppCooldownTurns}
@@ -97,15 +95,19 @@ export function HeroAbilities({
 }
 
 function HeroCard({
-  title, info, colorLetter, cooldownTurns, highlight,
+  info, colorLetter, cooldownTurns, highlight,
 }: {
-  title: string;
   info: HeroInfo;
   colorLetter: 'w' | 'b';
   cooldownTurns: number;
   highlight?: boolean;
 }) {
   const isOneShot = info.cooldownTurns == null;
+  const cdText = isOneShot
+    ? (cooldownTurns === 0 ? 'Ready' : 'Used')
+    : cooldownTurns === 0
+      ? 'Ready'
+      : `${cooldownTurns}T`;
   return (
     <div
       className={`hero-card-row${highlight ? ' highlight' : ''}`}
@@ -115,14 +117,9 @@ function HeroCard({
         {renderPiece(`${colorLetter}K` as 'wK' | 'bK', 36)}
       </div>
       <div className="hero-card-text">
-        <div className="hero-card-row-label muted small">{title}</div>
-        <div className="hero-card-name">{info.name}</div>
-        <div className="hero-card-cd-line small">
-          {isOneShot
-            ? (cooldownTurns === 0 ? 'Ready (once per match)' : 'Used')
-            : cooldownTurns === 0
-              ? 'Ready'
-              : `${cooldownTurns}T`}
+        <div className="hero-card-name-row">
+          <span className="hero-card-name">{info.name}</span>
+          <span className="hero-card-cd-line small">{cdText}</span>
         </div>
       </div>
     </div>
