@@ -8,6 +8,7 @@ import { MergeBoard } from '../components/MergeBoard';
 import { HeroPicker } from '../components/HeroPicker';
 import { HeroAbilities } from '../components/HeroAbilities';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
+import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl } from '../lib/timeControls';
@@ -145,6 +146,7 @@ export function HeroGame() {
   const sessionRef = useRef<PeerSession>(handoff.session);
   const startedAtRef = useRef<number>(Date.now());
   const lastTickRef = useRef<number>(performance.now());
+  const rematch = useRematch(handoff, sessionRef.current);
   const gameRef = useRef<GameState | null>(game);
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
@@ -200,6 +202,7 @@ export function HeroGame() {
     const session = sessionRef.current;
     const handleMessage = async (msg: WireMessage) => {
       cancelDisconnectCountdown();
+      if (rematch.handleRematchMessage(msg)) return;
       if (msg.type === 'hello') return;
       if (msg.type === 'ready') { setPartnerReady(true); return; }
       if (msg.type === 'hero-pick') { setOppHero(msg.hero); return; }
@@ -300,8 +303,11 @@ export function HeroGame() {
         clearInterval(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
-      try { sessionRef.current.destroy(); } catch {}
-      stopStream(localStreamRef.current);
+      // Keep the session alive across rematch route changes.
+      if (!shouldKeepSessionForRematch()) {
+        try { sessionRef.current.destroy(); } catch {}
+        stopStream(localStreamRef.current);
+      }
     };
   }, []);
 
@@ -928,9 +934,29 @@ export function HeroGame() {
                 {myDelta >= 0 ? '+' : ''}{myDelta}
               </span>
             </div>
-            <button className="primary-btn" onClick={() => navigate('/')}>
-              Back to lobby
-            </button>
+            <div className="action-row">
+              {rematch.rematchOfferedByOpp ? (
+                <>
+                  <button className="primary-btn" onClick={rematch.acceptRematch}>
+                    Accept rematch
+                  </button>
+                  <button className="secondary-btn" onClick={rematch.declineRematch}>
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="primary-btn"
+                  onClick={rematch.offerRematch}
+                  disabled={rematch.rematchOfferedByMe}
+                >
+                  {rematch.rematchOfferedByMe ? 'Rematch offered…' : 'Rematch'}
+                </button>
+              )}
+              <button className="secondary-btn" onClick={() => navigate('/')}>
+                Back to lobby
+              </button>
+            </div>
           </div>
         )}
 

@@ -83,4 +83,10 @@ export type WireMessage =
   | { type: 'timeout-claim'; loserColor: Color }
   | { type: 'chat'; text: string }
   | { type: 'avatar'; dataUrl: string }
-  | { type: 'voice-state'; voiceActive: boolean; micOn: boolean };
+  | { type: 'voice-state'; voiceActive: boolean; micOn: boolean }
+  // Rematch handshake: offerer proposes a fresh gameId for the next game,
+  // colors swap from the previous game. Either side may decline; either may
+  // re-offer after declining.
+  | { type: 'rematch-offer'; gameId: string }
+  | { type: 'rematch-accept' }
+  | { type: 'rematch-decline' };

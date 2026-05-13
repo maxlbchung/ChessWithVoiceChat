@@ -9,9 +9,18 @@ const turnUrl = import.meta.env.VITE_TURN_URL;
 const turnUser = import.meta.env.VITE_TURN_USER;
 const turnPass = import.meta.env.VITE_TURN_PASS;
 
+// VITE_TURN_URL accepts either a single URL or a comma-separated list (the
+// format Metered's dashboard hands you). RTCIceServer's `urls` field rejects
+// a comma-joined string — it must be a single string OR an array of strings —
+// so we split here.
+const turnUrls = (turnUrl ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const customTurn =
-  turnUrl && turnUser && turnPass
-    ? [{ urls: turnUrl, username: turnUser, credential: turnPass }]
+  turnUrls.length && turnUser && turnPass
+    ? [{ urls: turnUrls, username: turnUser, credential: turnPass }]
     : [];
 
 export const ICE_SERVERS: RTCIceServer[] = [

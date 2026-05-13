@@ -8,6 +8,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
 import { CashShop } from '../components/CashShop';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
+import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl } from '../lib/timeControls';
@@ -146,6 +147,7 @@ export function CashGame() {
   const sessionRef = useRef<PeerSession>(handoff.session);
   const startedAtRef = useRef<number>(Date.now());
   const lastTickRef = useRef<number>(performance.now());
+  const rematch = useRematch(handoff, sessionRef.current);
   const gameRef = useRef<GameState>(game);
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
@@ -189,6 +191,7 @@ export function CashGame() {
 
     const handleMessage = async (msg: WireMessage) => {
       cancelDisconnectCountdown();
+      if (rematch.handleRematchMessage(msg)) return;
       if (msg.type === 'hello') return;
       if (msg.type === 'ready') { setPartnerReady(true); return; }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
@@ -292,8 +295,11 @@ export function CashGame() {
         clearInterval(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
-      try { sessionRef.current.destroy(); } catch {}
-      stopStream(localStreamRef.current);
+      // Keep the session alive across rematch route changes.
+      if (!shouldKeepSessionForRematch()) {
+        try { sessionRef.current.destroy(); } catch {}
+        stopStream(localStreamRef.current);
+      }
     };
   }, []);
 
@@ -736,7 +742,7 @@ export function CashGame() {
   const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
 
   return (
-    <div className="game-layout cash-game-layout">
+    <div className="game-layout">
       {disconnectMs != null && (
         <div className="disconnect-banner">
           Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
@@ -748,19 +754,18 @@ export function CashGame() {
         </div>
       )}
 
-      <div className="cash-shop-column">
-        <CashShop
-          whiteGold={viewedState.gold.w}
-          blackGold={viewedState.gold.b}
-          perspective={handoff.iAmWhite ? 'white' : 'black'}
-          canBuy={gameStarted && isMyTurn() && !end && atPresent}
-          selectedLetter={atPresent ? selectedShop : null}
-          affordable={affordableSet}
-          onSelect={handleSelectShop}
-        />
-      </div>
-
-      <div className="board-column">
+      <div className="board-column with-cash-shop">
+        <div className="cash-side-shop">
+          <CashShop
+            whiteGold={viewedState.gold.w}
+            blackGold={viewedState.gold.b}
+            perspective={handoff.iAmWhite ? 'white' : 'black'}
+            canBuy={gameStarted && isMyTurn() && !end && atPresent}
+            selectedLetter={atPresent ? selectedShop : null}
+            affordable={affordableSet}
+            onSelect={handleSelectShop}
+          />
+        </div>
         <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
             board={boardForRender}
@@ -914,9 +919,29 @@ export function CashGame() {
                 {myDelta >= 0 ? '+' : ''}{myDelta}
               </span>
             </div>
-            <button className="primary-btn" onClick={() => navigate('/')}>
-              Back to lobby
-            </button>
+            <div className="action-row">
+              {rematch.rematchOfferedByOpp ? (
+                <>
+                  <button className="primary-btn" onClick={rematch.acceptRematch}>
+                    Accept rematch
+                  </button>
+                  <button className="secondary-btn" onClick={rematch.declineRematch}>
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="primary-btn"
+                  onClick={rematch.offerRematch}
+                  disabled={rematch.rematchOfferedByMe}
+                >
+                  {rematch.rematchOfferedByMe ? 'Rematch offered…' : 'Rematch'}
+                </button>
+              )}
+              <button className="secondary-btn" onClick={() => navigate('/')}>
+                Back to lobby
+              </button>
+            </div>
           </div>
         )}
 
