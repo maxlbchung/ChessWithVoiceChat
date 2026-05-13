@@ -35,6 +35,7 @@ import {
   isInsufficientMaterial,
   isStalemate,
   isThreefoldRepetition,
+  kingOnlyOutcome,
   legalMovesFrom,
   toFen,
   type GameState,
@@ -439,6 +440,13 @@ export function TwoGame() {
       return;
     }
     if (isStalemate(s)) { finalize({ outcome: 'draw', reason: 'stalemate' }); return; }
+    // Guerrilla: losing every non-king piece is an instant loss.
+    const ko = kingOnlyOutcome(s);
+    if (ko) {
+      const outcome: GameOutcome = ko === 'w' ? 'white' : ko === 'b' ? 'black' : 'draw';
+      finalize({ outcome, reason: 'insufficient' });
+      return;
+    }
     if (isThreefoldRepetition(s)) { finalize({ outcome: 'draw', reason: 'threefold' }); return; }
     if (isInsufficientMaterial(s)) { finalize({ outcome: 'draw', reason: 'insufficient' }); return; }
     if (isFiftyMoveRule(s)) { finalize({ outcome: 'draw', reason: 'fifty-move' }); return; }

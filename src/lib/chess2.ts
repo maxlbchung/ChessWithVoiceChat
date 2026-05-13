@@ -666,3 +666,23 @@ export function isInsufficientMaterial(state: GameState): boolean {
   }
   return true;
 }
+
+// Bare-king loss: a side with no non-king pieces left loses outright. If
+// both sides are bare it's a draw (same as insufficient material).
+// Returns 'w' / 'b' when that colour WINS, 'draw', or null when the rule
+// doesn't apply.
+export function kingOnlyOutcome(state: GameState): 'w' | 'b' | 'draw' | null {
+  let wNonKing = 0, bNonKing = 0;
+  for (const p of state.board) {
+    if (!p) continue;
+    if (p.letter.toUpperCase() === 'K') continue;
+    if (p.color === 'w') wNonKing++;
+    else bNonKing++;
+  }
+  const wBare = wNonKing === 0;
+  const bBare = bNonKing === 0;
+  if (wBare && bBare) return 'draw';
+  if (wBare) return 'b';
+  if (bBare) return 'w';
+  return null;
+}

@@ -67,11 +67,11 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Guerrilla" open={open.two} onToggle={() => toggle('two')}>
         <div className="muted small time-mode-blurb">
-          Queen moves like a king. Bishops slide 1-3 squares in any direction.
+          Queen moves like a king. Bishops slide 1-2 squares in any direction.
           Knights jump over an adjacent piece and land directly behind it,
           capturing the hopped enemy checkers-style and any enemy on the
           landing square. Rooks move 1 square orthogonally and push own
-          peices. No castling.
+          peices. No castling. Lose all peices = checkmate.
         </div>
         {renderGrid(timeControlsForVariant('two'))}
       </Section>

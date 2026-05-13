@@ -1110,7 +1110,7 @@ export function Home() {
                     if (next === 'merge') sfx.playMerge();
                     else if (next === 'two') sfx.playPush();
                     else if (next === 'cash') sfx.playPlace();
-                    else if (next === 'hero') sfx.playFly();
+                    else if (next === 'hero') sfx.playSlice();
                     else sfx.playMove();
                   }
                   setFreeVariant(next);
