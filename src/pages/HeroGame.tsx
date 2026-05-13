@@ -3,9 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
-import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { HeroPicker } from '../components/HeroPicker';
+import { HeroAbilities } from '../components/HeroAbilities';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
@@ -26,7 +27,10 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import {
+  abilityTargets,
+  abilityUci,
   applyMove,
+  HERO_INFO,
   initialState,
   isCheckmate,
   isFiftyMoveRule,
@@ -36,16 +40,17 @@ import {
   isThreefoldRepetition,
   legalMovesFrom,
   toFen,
+  turnsUntilReady,
   type GameState,
+  type HeroKind,
   type MoveResult,
-  type Piece as C2Piece,
   type Square,
-} from '../lib/chess2';
+} from '../lib/heroChess';
 import type { Piece as MergePieceShape } from '../lib/mergeChess';
 
 type EndState = { outcome: GameOutcome; reason: GameEndReason };
 
-export function TwoGame() {
+export function HeroGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
   const { identity, rating, avatar, setRating } = useIdentityStore();
@@ -63,33 +68,34 @@ export function TwoGame() {
 
   const tc = getTimeControl(handoff.timeControlId)!;
 
-  const [game, setGame] = useState<GameState>(() => initialState());
-  // History snapshots aligned with the moves array — see MergeGame for the
-  // pattern; scrubbing through these powers Undo/Redo without rewriting the
-  // signed move record.
-  const [states, setStates] = useState<GameState[]>(() => [initialState()]);
+  // Hero picks. Local play can't start until BOTH sides have committed a
+  // hero — at that point we initialise the engine.
+  const [myHero, setMyHero] = useState<HeroKind | null>(null);
+  const [oppHero, setOppHero] = useState<HeroKind | null>(null);
+  const [game, setGame] = useState<GameState | null>(null);
+  // History snapshots (initial + after each move).
+  const [states, setStates] = useState<GameState[]>([]);
   const [results, setResults] = useState<MoveResult[]>([]);
   const [viewPly, setViewPly] = useState(0);
   const viewPlyRef = useRef(0);
   useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
+
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
   const [moves, setMoves] = useState<SignedMove[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
+  const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
   const [drawOfferedByMe, setDrawOfferedByMe] = useState(false);
   const [drawOfferedByOpp, setDrawOfferedByOpp] = useState(false);
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [partnerReady, setPartnerReady] = useState(false);
-  // Start animation gates real game time: clock doesn't tick and moves are
-  // blocked until the intro overlay fades out (~3.5s after both connect).
-  const [gameStarted, setGameStarted] = useState(false);
-  const gameStartedRef = useRef(false);
-  useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  // True when the ability is "armed" — next board click selects the target.
+  const [abilityArmed, setAbilityArmed] = useState(false);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -115,9 +121,7 @@ export function TwoGame() {
   const myVolume = useVolume(localStream);
   const oppVolume = useVolume(remoteStream);
 
-  useEffect(() => {
-    localStreamRef.current = localStream;
-  }, [localStream]);
+  useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
 
   const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
   const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
@@ -141,10 +145,23 @@ export function TwoGame() {
   const sessionRef = useRef<PeerSession>(handoff.session);
   const startedAtRef = useRef<number>(Date.now());
   const lastTickRef = useRef<number>(performance.now());
-  const gameRef = useRef<GameState>(game);
+  const gameRef = useRef<GameState | null>(game);
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
   useEffect(() => { movesCountRef.current = moves.length; }, [moves.length]);
+
+  // Initialise the engine once both heroes are known.
+  useEffect(() => {
+    if (game || myHero == null || oppHero == null) return;
+    const heroW = handoff.iAmWhite ? myHero : oppHero;
+    const heroB = handoff.iAmWhite ? oppHero : myHero;
+    const init = initialState(heroW, heroB);
+    setGame(init);
+    setStates([init]);
+    setResults([]);
+    setViewPly(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myHero, oppHero, game, handoff.iAmWhite]);
 
   const cancelDisconnectCountdown = () => {
     if (disconnectTimerRef.current != null) {
@@ -156,16 +173,17 @@ export function TwoGame() {
   };
 
   const startDisconnectCountdown = () => {
-    if (end) return;
+    if (endRef.current) return;
     if (disconnectDeadlineRef.current != null) return;
     const deadline = Date.now() + FORFEIT_DELAY_MS;
     disconnectDeadlineRef.current = deadline;
     setDisconnectMs(FORFEIT_DELAY_MS);
     const tick = () => {
+      if (endRef.current) { cancelDisconnectCountdown(); return; }
       const remaining = (disconnectDeadlineRef.current ?? 0) - Date.now();
       if (remaining <= 0) {
         cancelDisconnectCountdown();
-        if (!end) finalize({ outcome: myColor, reason: 'disconnect' });
+        if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
         return;
       }
       setDisconnectMs(remaining);
@@ -174,12 +192,17 @@ export function TwoGame() {
   };
 
   useEffect(() => {
-    const session = sessionRef.current;
+    endRef.current = end;
+    if (end) cancelDisconnectCountdown();
+  }, [end]);
 
+  useEffect(() => {
+    const session = sessionRef.current;
     const handleMessage = async (msg: WireMessage) => {
       cancelDisconnectCountdown();
       if (msg.type === 'hello') return;
       if (msg.type === 'ready') { setPartnerReady(true); return; }
+      if (msg.type === 'hero-pick') { setOppHero(msg.hero); return; }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
       if (msg.type === 'draw-offer') { setDrawOfferedByOpp(true); return; }
@@ -203,10 +226,7 @@ export function TwoGame() {
     const handleIncomingCall = async (call: any) => {
       try {
         let stream = localStreamRef.current;
-        if (!stream) {
-          stream = await getMicStream();
-          setLocalStream(stream);
-        }
+        if (!stream) { stream = await getMicStream(); setLocalStream(stream); }
         session.answerCall(call, stream);
         setVoiceActive(true);
         const id = setInterval(() => {
@@ -219,9 +239,7 @@ export function TwoGame() {
           setRemoteStream(null);
           setVoiceActive(false);
         });
-      } catch (e) {
-        console.warn('failed to accept voice', e);
-      }
+      } catch (e) { console.warn('failed to accept voice', e); }
     };
 
     const sendIntro = () => {
@@ -248,14 +266,14 @@ export function TwoGame() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        if (end) return;
-        const nextCount = disconnectCountRef.current + 1;
-        disconnectCountRef.current = nextCount;
-        setDisconnectCount(nextCount);
+        if (endRef.current) return;
+        const next = disconnectCountRef.current + 1;
+        disconnectCountRef.current = next;
+        setDisconnectCount(next);
         setConnState('connecting');
         setConnDetail('opponent disconnected');
-        if (nextCount > MAX_GRACE_DISCONNECTS) {
-          finalize({ outcome: myColor, reason: 'disconnect' });
+        if (next > MAX_GRACE_DISCONNECTS) {
+          if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
           return;
         }
         startDisconnectCountdown();
@@ -270,8 +288,6 @@ export function TwoGame() {
     } else {
       setConnDetail('waiting');
     }
-
-    return () => { /* teardown on unmount handled below */ };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -289,18 +305,17 @@ export function TwoGame() {
     };
   }, []);
 
+  // Clocks only run after the game has started (both heroes picked, engine inited).
   useEffect(() => {
-    if (end) return;
+    if (end || !game) return;
     let raf = 0;
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      // White's clock starts the moment the start animation finishes —
-      // before any move has been played.
-      if (gameStartedRef.current) {
-        const turn = gameRef.current.turn;
+      if (movesCountRef.current > 0) {
+        const turn = gameRef.current?.turn;
         if (turn === 'w') setWhiteMs((ms) => Math.max(0, ms - dt));
-        else setBlackMs((ms) => Math.max(0, ms - dt));
+        else if (turn === 'b') setBlackMs((ms) => Math.max(0, ms - dt));
       }
       forceTick((n) => n + 1);
       raf = requestAnimationFrame(loop);
@@ -308,14 +323,7 @@ export function TwoGame() {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [end]);
-
-  useEffect(() => {
-    if (gameStarted) return;
-    if (!partnerReady) return;
-    if (movesCountRef.current > 0) setGameStarted(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partnerReady, gameStarted]);
+  }, [end, game]);
 
   useEffect(() => {
     if (end) return;
@@ -332,22 +340,23 @@ export function TwoGame() {
   // ----------------------------------------------------------------
   // Move handling
   // ----------------------------------------------------------------
-  const isMyTurn = () => game.turn === myEngineColor;
+  const isMyTurn = () => !!game && game.turn === myEngineColor;
 
-  const applyLocalMove = async (
-    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
-  ): Promise<boolean> => {
-    if (end) return false;
-    if (!gameStarted) return false;
-    if (!isMyTurn()) return false;
-    if (viewPlyRef.current !== movesCountRef.current) return false;
-    const beforeTurn = game.turn;
-    let uci = from + to;
-    if (promotion) uci += promotion.toLowerCase();
+  const handlePickHero = (h: HeroKind) => {
+    if (myHero != null) return;
+    setMyHero(h);
+    sessionRef.current.send({ type: 'hero-pick', hero: h });
+  };
+
+  const commitMove = async (uci: string, beforeTurn: 'w' | 'b'): Promise<boolean> => {
+    if (!game) return false;
     const res = applyMove(game, uci);
     if (!res) return false;
 
-    if (res.result.pushed) sfx.playPush();
+    if (res.result.abilityUsed === 'frost') sfx.playMerge();
+    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
+    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -379,31 +388,50 @@ export function TwoGame() {
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
     setSelectedSquare(null);
+    setAbilityArmed(false);
 
     checkBoardEnd(res.state);
     return true;
   };
 
+  const applyLocalMove = async (
+    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
+  ): Promise<boolean> => {
+    if (!game || end) return false;
+    if (!isMyTurn()) return false;
+    if (viewPlyRef.current !== movesCountRef.current) return false;
+    const beforeTurn = game.turn;
+    let uci = from + to;
+    if (promotion) uci += promotion.toLowerCase();
+    return commitMove(uci, beforeTurn);
+  };
+
+  const applyLocalAbility = async (hero: HeroKind, to: Square): Promise<boolean> => {
+    if (!game || end) return false;
+    if (!isMyTurn()) return false;
+    if (viewPlyRef.current !== movesCountRef.current) return false;
+    const beforeTurn = game.turn;
+    return commitMove(abilityUci(hero, to), beforeTurn);
+  };
+
   const applyRemoteMove = async (move: SignedMove) => {
     if (end) return;
     const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) {
-      console.warn('signature failed for move', move);
-      return;
-    }
+    if (!ok) { console.warn('signature failed for move', move); return; }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
     }
+    if (!gameRef.current) return;
     const res = applyMove(gameRef.current, move.uci);
-    if (!res) {
-      console.warn('illegal remote move', move);
-      return;
-    }
+    if (!res) { console.warn('illegal remote move', move); return; }
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    if (res.result.pushed) sfx.playPush();
+    if (res.result.abilityUsed === 'frost') sfx.playMerge();
+    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
+    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
@@ -423,6 +451,7 @@ export function TwoGame() {
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
     setSelectedSquare(null);
+    setAbilityArmed(false);
     checkBoardEnd(res.state);
   };
 
@@ -443,7 +472,6 @@ export function TwoGame() {
     setEndHandled(true);
     setEnd(state);
     if (state.outcome === myColor) sfx.playWin();
-
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
     const summaries = await loadSummaries();
@@ -451,7 +479,6 @@ export function TwoGame() {
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
-
     const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
       gameId: gameId!,
       timeControlId: tc.id,
@@ -539,18 +566,32 @@ export function TwoGame() {
   // ----------------------------------------------------------------
   // Rendering
   // ----------------------------------------------------------------
-  const viewedState: GameState = states[viewPly] ?? states[0];
-  const atPresent = viewPly === moves.length;
+  const viewedState: GameState | null = game ? (states[viewPly] ?? states[0]) : null;
+  const atPresent = !!game && viewPly === moves.length;
+
+  const abilityTargetSet = useMemo<Set<Square>>(() => {
+    if (!game || !atPresent || !abilityArmed) return new Set();
+    return new Set(abilityTargets(game).map((idx) => {
+      const file = idx % 8;
+      const rankFromTop = Math.floor(idx / 8);
+      const rank = 7 - rankFromTop;
+      return String.fromCharCode(97 + file) + String.fromCharCode(49 + rank);
+    }));
+  }, [game, atPresent, abilityArmed]);
 
   const legalTargets = useMemo(() => {
-    if (!atPresent || !selectedSquare) return [];
-    // MergeBoard's isMerge flag controls the green "special interaction" ring.
-    // Reuse it here for rook pushes.
+    if (!game || !atPresent) return [];
+    if (abilityArmed) {
+      // Ability target rings (green "special") — every legal ability target.
+      return Array.from(abilityTargetSet).map((sq) => ({
+        to: sq, isCapture: false, isMerge: true,
+      }));
+    }
+    if (!selectedSquare) return [];
     return legalMovesFrom(game, selectedSquare).map((m) => ({
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, game, atPresent]);
+  }, [selectedSquare, game, abilityArmed, abilityTargetSet, atPresent]);
 
   const navigateGameView = (forward: boolean, playSfx = true) => {
     setViewPly((p) => {
@@ -562,7 +603,10 @@ export function TwoGame() {
         const r = results[forward ? p : next];
         if (r) {
           if (forward) {
-            if (r.pushed) sfx.playPush();
+            if (r.abilityUsed === 'frost') sfx.playMerge();
+            else if (r.abilityUsed === 'knight') sfx.playCapture();
+            else if (r.abilityUsed === 'necromancer') sfx.playPlace();
+            else if (r.abilityUsed === 'flight') sfx.playFlip();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
             if (r.check && !r.checkmate) sfx.playCheck();
@@ -593,16 +637,17 @@ export function TwoGame() {
   }, [results]);
 
   useEffect(() => {
-    if (!atPresent) setSelectedSquare(null);
+    if (!atPresent) { setSelectedSquare(null); setAbilityArmed(false); }
   }, [atPresent]);
 
   const isActiveSide = (c: Color): boolean => {
-    if (end) return false;
+    if (end || !game) return false;
     if (moves.length === 0) return false;
     return (game.turn === 'w') === (c === 'white');
   };
 
   const attemptMove = (from: Square, to: Square): boolean => {
+    if (!game) return false;
     const piece = game.board[sqIdx(from)];
     const isPawn = piece && piece.letter.toUpperCase() === 'P';
     const targetRank = parseInt(to[1], 10);
@@ -619,10 +664,18 @@ export function TwoGame() {
   };
 
   const onSquareClick = (square: Square) => {
-    if (end) return;
-    if (!gameStarted) return;
+    if (end || !game) return;
     if (!atPresent) return;
-    if (!isMyTurn()) { setSelectedSquare(null); return; }
+    if (!isMyTurn()) { setSelectedSquare(null); setAbilityArmed(false); return; }
+    if (abilityArmed) {
+      if (abilityTargetSet.has(square)) {
+        void applyLocalAbility(game.heroes[myEngineColor].hero, square);
+        return;
+      }
+      // Click on a non-target square cancels the ability arming.
+      setAbilityArmed(false);
+      return;
+    }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
@@ -638,20 +691,15 @@ export function TwoGame() {
   };
 
   const onDragStartSquare = (from: Square) => {
-    if (end) return;
-    if (!gameStarted) return;
-    if (!atPresent) return;
-    if (!isMyTurn()) return;
+    if (end || !game || !atPresent || !isMyTurn()) return;
+    if (abilityArmed) setAbilityArmed(false);
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return;
     if (selectedSquare !== from) setSelectedSquare(from);
   };
 
   const onPieceDrop = (from: Square, to: Square): boolean => {
-    if (end) return false;
-    if (!gameStarted) return false;
-    if (!atPresent) return false;
-    if (!isMyTurn()) return false;
+    if (end || !game || !atPresent || !isMyTurn()) return false;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
     const legal = legalMovesFrom(game, from).some((m) => m.to === to);
@@ -672,15 +720,29 @@ export function TwoGame() {
     ? eloDelta(rating, opp.rating, end.outcome === 'draw' ? 0.5 : end.outcome === myColor ? 1 : 0, 0)
     : 0;
 
-  const inCheck = !end && isInCheck(game, game.turn);
+  const inCheck = !end && !!game && isInCheck(game, game.turn);
 
-  // chess2.Piece has a narrower letter union than mergeChess.Piece; the latter
-  // is a structural superset, so passing through works at runtime but TS needs
-  // the explicit conversion.
-  const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
+  // King glows from the heroes picked.
+  const kingGlows = useMemo(() => {
+    if (!viewedState) return undefined;
+    return {
+      w: HERO_INFO[viewedState.heroes.w.hero].glowColor,
+      b: HERO_INFO[viewedState.heroes.b.hero].glowColor,
+    };
+  }, [viewedState]);
+
+  const boardForRender = viewedState
+    ? (viewedState.board as unknown as (MergePieceShape | null)[])
+    : (new Array(64).fill(null) as (MergePieceShape | null)[]);
+
+  // Cooldown turn counts (for the abilities panel).
+  const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
+  const oppCooldownTurns = game ? turnsUntilReady(game, myEngineColor === 'w' ? 'b' : 'w') : 0;
+
+  const bothPicked = myHero != null && oppHero != null;
 
   return (
-    <div className="game-layout">
+    <div className="game-layout hero-game-layout">
       {disconnectMs != null && (
         <div className="disconnect-banner">
           Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
@@ -691,7 +753,37 @@ export function TwoGame() {
           </span>
         </div>
       )}
+
+      <div className="hero-side-column">
+        {bothPicked && myHero && oppHero ? (
+          <HeroAbilities
+            perspective={handoff.iAmWhite ? 'white' : 'black'}
+            myHero={myHero}
+            oppHero={oppHero}
+            myCooldownTurns={myCooldownTurns}
+            oppCooldownTurns={oppCooldownTurns}
+            myTurn={isMyTurn() && !end && atPresent}
+            armed={abilityArmed}
+            onArm={() => { setSelectedSquare(null); setAbilityArmed(true); }}
+            onCancel={() => setAbilityArmed(false)}
+          />
+        ) : (
+          <div className="hero-side-placeholder muted small">
+            Pick your hero to begin.
+          </div>
+        )}
+      </div>
+
       <div className="board-column">
+        <PlayerCard
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
+          rating={opp.rating}
+          voiceState={oppVoiceState}
+          volume={oppVolume}
+          ms={oppColor === 'white' ? whiteMs : blackMs}
+          active={isActiveSide(oppColor)}
+        />
         <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
             board={boardForRender}
@@ -701,19 +793,19 @@ export function TwoGame() {
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && gameStarted && isMyTurn() && atPresent}
-            draggable={!end && gameStarted && isMyTurn() && atPresent}
+            interactive={!end && isMyTurn() && atPresent}
+            draggable={!end && isMyTurn() && atPresent && !abilityArmed}
+            kingGlows={kingGlows}
           />
-          {partnerReady && !gameStarted && movesCountRef.current === 0 && (
-            <StartOverlay
-              whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
-              whiteHandle={handoff.iAmWhite ? me.handle : oppDisplayHandle}
-              whiteRating={handoff.iAmWhite ? me.rating : opp.rating}
-              blackAvatar={handoff.iAmWhite ? oppDisplayAvatar : avatar}
-              blackHandle={handoff.iAmWhite ? oppDisplayHandle : me.handle}
-              blackRating={handoff.iAmWhite ? opp.rating : me.rating}
-              onDone={() => setGameStarted(true)}
-            />
+          {!bothPicked && (
+            <div className="hero-picker-overlay">
+              <HeroPicker
+                side={handoff.iAmWhite ? 'white' : 'black'}
+                myPick={myHero}
+                oppPick={oppHero}
+                onPick={handlePickHero}
+              />
+            </div>
           )}
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
@@ -739,18 +831,6 @@ export function TwoGame() {
             </div>
           )}
         </div>
-      </div>
-
-      <aside className="side-panel">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          active={isActiveSide(oppColor)}
-        />
         <PlayerCard
           avatarDataUrl={avatar}
           handle={`${me.handle} (you)`}
@@ -760,8 +840,11 @@ export function TwoGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
         />
+      </div>
+
+      <aside className="side-panel">
         <div className="game-meta">
-          <div className="game-meta-title">Guerrilla · {tc.label}</div>
+          <div className="game-meta-title">Hero · {tc.label}</div>
           <div className="muted small">
             peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}
             {' · '}
@@ -851,7 +934,7 @@ export function TwoGame() {
           </div>
         )}
 
-        {!end && (
+        {!end && bothPicked && (
           <div className="action-row">
             <button
               className="secondary-btn"
@@ -931,7 +1014,7 @@ export function TwoGame() {
         )}
       </aside>
 
-      <span style={{ display: 'none' }}>{toFen(game)}</span>
+      {game && <span style={{ display: 'none' }}>{toFen(game)}</span>}
     </div>
   );
 }
@@ -941,8 +1024,6 @@ function sqIdx(sq: Square): number {
   const rank = sq.charCodeAt(1) - 49;
   return (7 - rank) * 8 + file;
 }
-
-void ({} as C2Piece);  // keep type import alive in build
 
 function labelFor(reason: GameEndReason): string {
   switch (reason) {

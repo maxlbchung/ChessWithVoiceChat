@@ -582,8 +582,10 @@ a { color: inherit; text-decoration: none; }
 /* Game layout */
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 640px) minmax(280px, 360px);
-  gap: clamp(12px, 1.8vw, 24px);
+  /* Board column flexes; right column has to be wide enough to fit the player
+     cards (avatar + handle + voice indicator + clock all on one row). */
+  grid-template-columns: minmax(280px, 1fr) minmax(380px, 440px);
+  gap: 1.4rem;
   align-items: start;
   position: relative;
 }
@@ -606,13 +608,12 @@ a { color: inherit; text-decoration: none; }
 .board-column {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0.85rem;
   min-width: 0;
-  /* Board is square. Cap by available viewport height so two PlayerCards +
-     topbar/footer/padding don't push past the window. ~440px is the vertical
-     chrome around the board in the game view (two 88px PlayerCards + gaps +
-     topbar + footer + main padding + safety buffer). */
-  --max-board: max(280px, min(720px, calc(100dvh - 440px)));
+  /* Board is the only thing in this column now (player cards moved to the
+     right side panel). Chrome is just topbar + footer + main padding +
+     safety buffer (~12rem), so the board can grow much taller than before. */
+  --max-board: max(17rem, min(56rem, calc(100dvh - 12rem)));
 }
 .board-wrap {
   position: relative;
@@ -633,6 +634,85 @@ a { color: inherit; text-decoration: none; }
   65%  { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* Start-of-game intro overlay — fades in, holds, fades out. The component
+   wires onAnimationEnd to start the white clock once this completes. */
+@keyframes board-start-fade {
+  0%   { opacity: 0; transform: scale(0.94); }
+  18%  { opacity: 1; transform: scale(1); }
+  72%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+.board-start-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 24, 0.78);
+  color: #f5f7ff;
+  border-radius: 8px;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  animation: board-start-fade 3.5s ease-in-out forwards;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+  z-index: 6;
+}
+.start-vs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.8rem, 4vw, 2.4rem);
+  padding: 0 1rem;
+}
+.start-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.start-divider {
+  font-size: clamp(1.1rem, 2.6vw, 1.9rem);
+  font-weight: 800;
+  opacity: 0.55;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.start-handle {
+  font-size: clamp(0.95rem, 2vw, 1.35rem);
+  font-weight: 700;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.start-rating {
+  font-size: clamp(0.7rem, 1.4vw, 0.95rem);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.start-color-banner {
+  margin-top: 0.35rem;
+  font-size: clamp(0.65rem, 1.3vw, 0.85rem);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.start-color-banner.white-banner {
+  background: rgba(255, 255, 255, 0.88);
+  color: #102025;
+  border-color: rgba(255, 255, 255, 0.7);
+}
+.start-color-banner.black-banner {
+  background: rgba(16, 32, 37, 0.92);
+  color: #f5f7ff;
+}
+
 .board-finish-overlay {
   position: absolute;
   inset: 0;
@@ -825,9 +905,11 @@ a { color: inherit; text-decoration: none; }
   transition: background 150ms, color 150ms, opacity 150ms;
 }
 .voice-indicator.state-off {
-  color: var(--muted);
-  opacity: 0.45;
-  background: transparent;
+  /* Pre-activation reads visually like muted (slash + red), just dimmer to
+     hint that voice hasn't been started yet. */
+  color: var(--bad);
+  background: rgba(214, 139, 139, 0.07);
+  opacity: 0.65;
 }
 .voice-indicator.state-muted {
   color: var(--bad);
@@ -882,8 +964,7 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   flex-shrink: 0;
 }
-.voice-indicator.state-muted .volume-track,
-.voice-indicator.state-off .volume-track {
+.voice-indicator.state-muted .volume-track {
   opacity: 0.5;
 }
 .volume-fill {
@@ -963,8 +1044,9 @@ a { color: inherit; text-decoration: none; }
   border-radius: 12px;
   padding: 0.82rem 1.05rem;
   /* Shrink with viewport so the side-panel column never overflows the
-     window. Offset in rem so it scales with the rest of the UI. */
-  max-height: min(12rem, max(6rem, calc(100dvh - 38rem)));
+     window. Offset bumped because the panel now also holds two player cards
+     (~10rem of extra static content). */
+  max-height: min(11rem, max(6rem, calc(100dvh - 50rem)));
   overflow-y: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.85rem;
@@ -990,8 +1072,9 @@ a { color: inherit; text-decoration: none; }
 }
 .chat-log {
   /* Shrinks aggressively with viewport so chat doesn't push the side panel
-     past the window when both moves-panel and chat are visible. */
-  max-height: min(11rem, max(3.5rem, calc(100dvh - 47rem)));
+     past the window when both moves-panel and chat are visible. Offset
+     bumped to make room for the player cards now in the side panel. */
+  max-height: min(10rem, max(3.5rem, calc(100dvh - 60rem)));
   overflow-y: auto;
   font-size: 0.85rem;
   display: flex;
@@ -1171,13 +1254,15 @@ a { color: inherit; text-decoration: none; }
    Cash Money: shop + game layout
    =========================================================== */
 
-/* Online game layout grows a third (left) column for the shop. */
+/* Online game layout grows a third (left) column for the shop. The side
+   panel (right) needs to stay wide enough for the player cards now living
+   there. */
 .game-layout.cash-game-layout {
-  grid-template-columns: minmax(200px, 240px) minmax(320px, 640px) minmax(260px, 340px);
+  grid-template-columns: minmax(200px, 240px) minmax(280px, 1fr) minmax(380px, 440px);
 }
 @media (max-width: 1180px) {
   .game-layout.cash-game-layout {
-    grid-template-columns: minmax(320px, 640px) minmax(260px, 340px);
+    grid-template-columns: minmax(280px, 1fr) minmax(380px, 440px);
   }
   .game-layout.cash-game-layout .cash-shop-column {
     grid-column: 1 / -1;
@@ -1339,4 +1424,192 @@ a { color: inherit; text-decoration: none; }
 .cash-shop-hint {
   min-height: 1.65rem;
   line-height: 1.3;
+}
+
+/* ===========================================================
+   Hero: picker, abilities panel, king glow.
+   =========================================================== */
+.game-layout.hero-game-layout {
+  grid-template-columns: minmax(200px, 240px) minmax(320px, 640px) minmax(260px, 340px);
+}
+@media (max-width: 1180px) {
+  .game-layout.hero-game-layout {
+    grid-template-columns: minmax(320px, 640px) minmax(260px, 340px);
+  }
+  .game-layout.hero-game-layout .hero-side-column {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+}
+@media (max-width: 980px) {
+  .game-layout.hero-game-layout { grid-template-columns: 1fr; }
+}
+.hero-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.hero-side-placeholder {
+  padding: 12px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  text-align: center;
+}
+
+/* Hero picker overlay (online game) */
+.hero-picker-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 12, 24, 0.86);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 6;
+  padding: 16px;
+}
+.hero-picker {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hero-picker.inline {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+.hero-picker-title {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--accent);
+  text-align: center;
+}
+.hero-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.hero-card {
+  --hero-color: var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 10px;
+  background: var(--glass-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms, transform 80ms;
+}
+.hero-card:hover {
+  background: var(--glass-strong);
+  border-color: var(--hero-color);
+}
+.hero-card.selected {
+  background: color-mix(in srgb, var(--hero-color) 20%, transparent);
+  border-color: var(--hero-color);
+  box-shadow: 0 0 0 1px var(--hero-color) inset, 0 0 18px color-mix(in srgb, var(--hero-color) 50%, transparent);
+}
+.hero-card-king {
+  filter: drop-shadow(0 0 10px var(--hero-color));
+}
+.hero-card-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+.hero-card-blurb {
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.3;
+}
+.hero-card-cd {
+  font-size: 11.5px;
+  color: var(--hero-color);
+  font-weight: 600;
+}
+.hero-picker-status {
+  text-align: center;
+}
+
+/* Hero abilities side panel */
+.hero-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.hero-panel.compact { padding: 10px; gap: 8px; }
+.hero-panel-title {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.hero-card-row {
+  --hero-color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: var(--glass-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.hero-card-row.highlight {
+  background: color-mix(in srgb, var(--hero-color) 15%, transparent);
+  border-color: var(--hero-color);
+}
+.hero-card-row .hero-card-king.small {
+  filter: drop-shadow(0 0 8px var(--hero-color));
+  flex-shrink: 0;
+}
+.hero-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hero-card-row-label { line-height: 1; }
+.hero-card-row .hero-card-name { font-size: 14px; }
+.hero-card-cd-line {
+  color: var(--hero-color);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hero-action-row {
+  display: flex;
+  justify-content: center;
+}
+.hero-action-row .primary-btn,
+.hero-action-row .secondary-btn {
+  width: 100%;
+  padding: 8px 14px;
+}
+.hero-panel-hint {
+  min-height: 1.65rem;
+  line-height: 1.3;
+}
+
+/* Free-play hero side dropdowns */
+.hero-side-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.hero-side-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }

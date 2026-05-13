@@ -3,8 +3,14 @@ import { Game } from './Game';
 import { MergeGame } from './MergeGame';
 import { TwoGame } from './TwoGame';
 import { CashGame } from './CashGame';
+import { HeroGame } from './HeroGame';
 import { peekLobbyHandoff } from '../store/lobbyHandoff';
-import { isCashTimeControl, isMergeTimeControl, isTwoTimeControl } from '../lib/timeControls';
+import {
+  isCashTimeControl,
+  isHeroTimeControl,
+  isMergeTimeControl,
+  isTwoTimeControl,
+} from '../lib/timeControls';
 
 // Tiny dispatcher: peeks at the pending handoff (without consuming it) to
 // decide which game component to mount, then that component takes the handoff
@@ -20,6 +26,9 @@ export function GameRoute() {
   }
   if (handoff && isCashTimeControl(handoff.timeControlId)) {
     return <CashGame />;
+  }
+  if (handoff && isHeroTimeControl(handoff.timeControlId)) {
+    return <HeroGame />;
   }
   return <Game />;
 }

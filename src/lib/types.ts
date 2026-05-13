@@ -64,6 +64,7 @@ export type LocalGameSummary = {
 
 export type WireMessage =
   | { type: 'hello'; publicKeyHex: string; handle: string; rating: number }
+  | { type: 'hero-pick'; hero: 'frost' | 'knight' | 'necromancer' | 'flight' }
   | {
       type: 'lobby-confirm';
       gameId: string;

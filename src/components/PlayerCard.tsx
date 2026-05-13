@@ -45,6 +45,10 @@ export function PlayerCard({
 function VoiceIndicator({ state, volume }: { state: VoiceState; volume: number }) {
   const vol = state === 'active' ? Math.max(0, Math.min(1, volume)) : 0;
   const vibrating = state === 'active' && vol > 0.85;
+  // Pre-activation ('off') reads visually the same as muted: slashed icon, no
+  // volume track. Once voice is started, the track appears and tracks input.
+  const showSlash = state !== 'active';
+  const showTrack = state !== 'off';
   return (
     <div
       className={`voice-indicator state-${state} ${vibrating ? 'vibrating' : ''}`}
@@ -56,17 +60,19 @@ function VoiceIndicator({ state, volume }: { state: VoiceState; volume: number }
           <path d="M3 9v6h4l5 5V4L7 9H3z" />
           <path d="M14.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
         </svg>
-        {state === 'muted' && <div className="voice-slash" />}
+        {showSlash && <div className="voice-slash" />}
       </div>
-      <div className="volume-track">
-        <div
-          className="volume-fill"
-          style={{
-            ['--vol' as any]: vol,
-            ['--vol-color' as any]: volumeColor(vol),
-          }}
-        />
-      </div>
+      {showTrack && (
+        <div className="volume-track">
+          <div
+            className="volume-fill"
+            style={{
+              ['--vol' as any]: vol,
+              ['--vol-color' as any]: volumeColor(vol),
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

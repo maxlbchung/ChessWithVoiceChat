@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
+import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
@@ -36,6 +37,7 @@ import {
   legalMovesFrom,
   toFen,
   type GameState,
+  type MoveResult,
   type Square,
 } from '../lib/mergeChess';
 
@@ -60,6 +62,17 @@ export function MergeGame() {
   const tc = getTimeControl(handoff.timeControlId)!;
 
   const [game, setGame] = useState<GameState>(() => initialState());
+  // History snapshots aligned with the moves array: states[0] is the start
+  // position; after N played moves, states[N] is the current position.
+  // Replayable past positions live in here so the user can scrub without
+  // re-running the engine.
+  const [states, setStates] = useState<GameState[]>(() => [initialState()]);
+  const [results, setResults] = useState<MoveResult[]>([]);
+  // viewPly indexes into states / results. When viewPly === moves.length we
+  // are "at the present" — only then is input allowed.
+  const [viewPly, setViewPly] = useState(0);
+  const viewPlyRef = useRef(0);
+  useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
   const [moves, setMoves] = useState<SignedMove[]>([]);
@@ -71,6 +84,11 @@ export function MergeGame() {
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [partnerReady, setPartnerReady] = useState(false);
+  // Start animation gates real game time: clock doesn't tick and moves are
+  // blocked until the intro overlay fades out (~3.5s after both connect).
+  const [gameStarted, setGameStarted] = useState(false);
+  const gameStartedRef = useRef(false);
+  useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
@@ -296,8 +314,9 @@ export function MergeGame() {
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      // Tick only after a move has been played
-      if (movesCountRef.current > 0) {
+      // Tick once the start animation has finished. White's clock starts
+      // automatically at this point even before the first move is made.
+      if (gameStartedRef.current) {
         const turn = gameRef.current.turn;
         if (turn === 'w') setWhiteMs((ms) => Math.max(0, ms - dt));
         else setBlackMs((ms) => Math.max(0, ms - dt));
@@ -309,6 +328,13 @@ export function MergeGame() {
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
+
+  useEffect(() => {
+    if (gameStarted) return;
+    if (!partnerReady) return;
+    if (movesCountRef.current > 0) setGameStarted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partnerReady, gameStarted]);
 
   useEffect(() => {
     if (end) return;
@@ -329,7 +355,10 @@ export function MergeGame() {
 
   const applyLocalMove = async (from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N'): Promise<boolean> => {
     if (end) return false;
+    if (!gameStarted) return false;
     if (!isMyTurn()) return false;
+    // Can only move at the present; scrubbing back disables input.
+    if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
     let uci = from + to;
     if (promotion) uci += promotion.toLowerCase();
@@ -363,6 +392,9 @@ export function MergeGame() {
     const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
     setMoves((m) => [...m, signed]);
     setGame(res.state);
+    setStates((s) => [...s, res.state]);
+    setResults((r) => [...r, res.result]);
+    setViewPly((p) => p + 1);
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -397,8 +429,14 @@ export function MergeGame() {
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
+    const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
+    setStates((s) => [...s, res.state]);
+    setResults((r) => [...r, res.result]);
     setMoves((m) => [...m, move]);
+    // Auto-advance the viewer only if they were watching the live position;
+    // otherwise leave them where they were so they can keep reviewing.
+    if (wasAtPresent) setViewPly((p) => p + 1);
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
       setBlackMs(tc.perMoveMs);
@@ -525,13 +563,67 @@ export function MergeGame() {
   // --------------------------------------------------------------------
   // Rendering
   // --------------------------------------------------------------------
+  const viewedState: GameState = states[viewPly] ?? states[0];
+  const atPresent = viewPly === moves.length;
+
   const legalTargets = useMemo(() => {
+    if (!atPresent) return [];
     if (!selectedSquare) return [];
     return legalMovesFrom(game, selectedSquare).map((m) => ({
       to: m.to, isCapture: m.isCapture, isMerge: m.isMerge,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, game]);
+  }, [selectedSquare, game, atPresent]);
+
+  // Scrub one ply. Plays the move's normal SFX going forward, reversed going
+  // back. The Undo/Redo buttons pass playSfx=false so they rely on the global
+  // button-click SFX instead.
+  const navigateGameView = (forward: boolean, playSfx = true) => {
+    setViewPly((p) => {
+      const total = results.length;
+      const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+      if (next === p) return p;
+      if (playSfx) {
+        sfx.cutoffChessSfx();
+        const r = results[forward ? p : next];
+        if (r) {
+          if (forward) {
+            if (r.castled) sfx.playCastle();
+            else if (r.merged) sfx.playMerge();
+            else if (r.captured) sfx.playCapture();
+            else sfx.playMove();
+            if (r.check && !r.checkmate) sfx.playCheck();
+          } else {
+            if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+            if (r.check) sfx.playCheckReversed();
+          }
+        }
+      }
+      return next;
+    });
+  };
+
+  const canUndoView = viewPly > 0;
+  const canRedoView = viewPly < results.length;
+
+  // Arrow keys scrub through played positions. Skipped while typing in chat.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      navigateGameView(e.key === 'ArrowRight');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
+
+  // Leaving the present clears any stale piece selection.
+  useEffect(() => {
+    if (!atPresent) setSelectedSquare(null);
+  }, [atPresent]);
 
   const isActiveSide = (c: Color): boolean => {
     if (end) return false;
@@ -559,6 +651,8 @@ export function MergeGame() {
 
   const onSquareClick = (square: Square) => {
     if (end) return;
+    if (!gameStarted) return;
+    if (!atPresent) return;
     if (!isMyTurn()) { setSelectedSquare(null); return; }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
@@ -578,6 +672,8 @@ export function MergeGame() {
   // target rings show up while the user drags.
   const onDragStartSquare = (from: Square) => {
     if (end) return;
+    if (!gameStarted) return;
+    if (!atPresent) return;
     if (!isMyTurn()) return;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return;
@@ -588,6 +684,8 @@ export function MergeGame() {
   // the user can still click-to-move.
   const onPieceDrop = (from: Square, to: Square): boolean => {
     if (end) return false;
+    if (!gameStarted) return false;
+    if (!atPresent) return false;
     if (!isMyTurn()) return false;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
@@ -624,28 +722,29 @@ export function MergeGame() {
         </div>
       )}
       <div className="board-column">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          active={isActiveSide(oppColor)}
-        />
-        <div className="board-wrap">
+        <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
-            board={game.board}
+            board={viewedState.board}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={selectedSquare}
-            legalTargets={legalTargets}
+            selectedSquare={atPresent ? selectedSquare : null}
+            legalTargets={atPresent ? legalTargets : []}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && isMyTurn()}
-            draggable={!end && isMyTurn()}
-            boardWidth={480}
+            interactive={!end && gameStarted && isMyTurn() && atPresent}
+            draggable={!end && gameStarted && isMyTurn() && atPresent}
           />
+          {partnerReady && !gameStarted && movesCountRef.current === 0 && (
+            <StartOverlay
+              whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
+              whiteHandle={handoff.iAmWhite ? me.handle : oppDisplayHandle}
+              whiteRating={handoff.iAmWhite ? me.rating : opp.rating}
+              blackAvatar={handoff.iAmWhite ? oppDisplayAvatar : avatar}
+              blackHandle={handoff.iAmWhite ? oppDisplayHandle : me.handle}
+              blackRating={handoff.iAmWhite ? opp.rating : me.rating}
+              onDone={() => setGameStarted(true)}
+            />
+          )}
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
               <div className="finish-avatars">
@@ -670,6 +769,18 @@ export function MergeGame() {
             </div>
           )}
         </div>
+      </div>
+
+      <aside className="side-panel">
+        <PlayerCard
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
+          rating={opp.rating}
+          voiceState={oppVoiceState}
+          volume={oppVolume}
+          ms={oppColor === 'white' ? whiteMs : blackMs}
+          active={isActiveSide(oppColor)}
+        />
         <PlayerCard
           avatarDataUrl={avatar}
           handle={`${me.handle} (you)`}
@@ -679,9 +790,6 @@ export function MergeGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
         />
-      </div>
-
-      <aside className="side-panel">
         <div className="game-meta">
           <div className="game-meta-title">Merge · {tc.label}</div>
           <div className="muted small">
@@ -703,6 +811,25 @@ export function MergeGame() {
           onStartVoice={startVoice}
           voiceActive={voiceActive}
         />
+
+        <div className="history-nav-row">
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(false, false)}
+            type="button"
+            disabled={!canUndoView}
+          >
+            Undo
+          </button>
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(true, false)}
+            type="button"
+            disabled={!canRedoView}
+          >
+            Redo
+          </button>
+        </div>
 
         <div className="moves-panel">
           {movesDisplay.length === 0 ? (

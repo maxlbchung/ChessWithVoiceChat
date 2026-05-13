@@ -5,6 +5,7 @@ import { Chessboard } from 'react-chessboard';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
+import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import type { PeerSession } from '../lib/peer';
@@ -65,6 +66,11 @@ export function Game() {
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [partnerReady, setPartnerReady] = useState(false);
+  // Start animation gates real game time: clock doesn't tick and moves are
+  // blocked until the intro overlay fades out (~3.5s after both sides connect).
+  const [gameStarted, setGameStarted] = useState(false);
+  const gameStartedRef = useRef(false);
+  useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
@@ -359,9 +365,9 @@ export function Game() {
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      // Only tick after first move has been made (chess.history > 0)
-      // and tick the side to move
-      if (chess.history().length > 0) {
+      // Tick once the start animation has finished. White's clock starts
+      // automatically at this point even before the first move is made.
+      if (gameStartedRef.current) {
         if (chess.turn() === 'w') {
           setWhiteMs((ms) => Math.max(0, ms - dt));
         } else {
@@ -375,6 +381,16 @@ export function Game() {
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
+
+  // If we landed on this page with the partnership already established AND
+  // moves already played (e.g. reconnecting mid-game — not currently possible
+  // but harmless if it ever is), skip the intro and start the clock.
+  useEffect(() => {
+    if (gameStarted) return;
+    if (!partnerReady) return;
+    if (chess.history().length > 0) setGameStarted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partnerReady, gameStarted]);
 
   // Detect timeouts
   useEffect(() => {
@@ -396,6 +412,7 @@ export function Game() {
 
   const applyLocalMove = async (from: string, to: string, promotion?: string): Promise<boolean> => {
     if (end) return false;
+    if (!gameStarted) return false;
     if (!isMyTurn()) return false;
     if (viewPlyRef.current !== chess.history().length) return false;
     const beforeTurn = chess.turn();
@@ -667,6 +684,7 @@ export function Game() {
 
   const onSquareClick = (square: string) => {
     if (end) return;
+    if (!gameStarted) return;
     if (!atPresent) return;
     if (!isMyTurn()) {
       setSelectedSquare(null);
@@ -805,27 +823,29 @@ export function Game() {
         </div>
       )}
       <div className="board-column">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          active={isActiveSide(oppColor)}
-        />
         <div className={`board-wrap ${!atPresent ? 'viewing-history' : ''}`}>
           <Chessboard
             position={displayFen}
             onPieceDrop={onPieceDrop}
             onSquareClick={onSquareClick}
             boardOrientation={handoff.iAmWhite ? 'white' : 'black'}
-            arePiecesDraggable={!end && isMyTurn() && atPresent}
+            arePiecesDraggable={!end && gameStarted && isMyTurn() && atPresent}
             customBoardStyle={{ borderRadius: 8 }}
             customDarkSquareStyle={{ backgroundColor: '#5d6c89' }}
             customLightSquareStyle={{ backgroundColor: '#dfe5f0' }}
             customSquareStyles={atPresent ? squareStyles : {}}
           />
+          {partnerReady && !gameStarted && chess.history().length === 0 && (
+            <StartOverlay
+              whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
+              whiteHandle={handoff.iAmWhite ? me.handle : oppDisplayHandle}
+              whiteRating={handoff.iAmWhite ? me.rating : opp.rating}
+              blackAvatar={handoff.iAmWhite ? oppDisplayAvatar : avatar}
+              blackHandle={handoff.iAmWhite ? oppDisplayHandle : me.handle}
+              blackRating={handoff.iAmWhite ? opp.rating : me.rating}
+              onDone={() => setGameStarted(true)}
+            />
+          )}
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
               <div className="finish-avatars">
@@ -850,6 +870,18 @@ export function Game() {
             </div>
           )}
         </div>
+      </div>
+
+      <aside className="side-panel">
+        <PlayerCard
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
+          rating={opp.rating}
+          voiceState={oppVoiceState}
+          volume={oppVolume}
+          ms={oppColor === 'white' ? whiteMs : blackMs}
+          active={isActiveSide(oppColor)}
+        />
         <PlayerCard
           avatarDataUrl={avatar}
           handle={`${me.handle} (you)`}
@@ -859,9 +891,6 @@ export function Game() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
         />
-      </div>
-
-      <aside className="side-panel">
         <div className="game-meta">
           <div className="game-meta-title">{tc.label}</div>
           <div className="muted small">

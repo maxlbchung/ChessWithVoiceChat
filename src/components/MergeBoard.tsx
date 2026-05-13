@@ -18,6 +18,9 @@ type Props = {
   // its container width (1:1 aspect ratio) and measures itself so pieces and
   // arrows scale to the actual rendered size.
   boardWidth?: number;
+  // Optional coloured glow around each side's king square, e.g. for Hero
+  // mode where each king has a hero-specific aura. CSS colour per side.
+  kingGlows?: { w?: string; b?: string };
 };
 
 type Arrow = { from: Square; to: Square };
@@ -38,6 +41,7 @@ export function MergeBoard({
   interactive = true,
   draggable = true,
   boardWidth,
+  kingGlows,
 }: Props) {
   // Measure the container when boardWidth isn't fixed, so pieces and arrows
   // can scale to whatever the parent gives us.
@@ -228,6 +232,10 @@ export function MergeBoard({
           const target = targetMap.get(sq);
           const isDragOver = dragOver === sq;
           const isHighlighted = highlights.has(sq);
+          // Hero-mode king glow: colour ring drawn behind the king SVG.
+          const kingGlowColor = piece && piece.letter.toUpperCase() === 'K'
+            ? (piece.color === 'w' ? kingGlows?.w : kingGlows?.b)
+            : undefined;
 
           const style: CSSProperties = {
             background: isLight ? '#dfe5f0' : '#5d6c89',
@@ -285,6 +293,19 @@ export function MergeBoard({
                     inset: 0,
                     background: HIGHLIGHT_COLOR,
                     pointerEvents: 'none',
+                  }}
+                />
+              )}
+              {kingGlowColor && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: '8%',
+                    borderRadius: '50%',
+                    background: `radial-gradient(circle, ${kingGlowColor}66 0%, ${kingGlowColor}33 45%, transparent 70%)`,
+                    boxShadow: `0 0 ${squarePx * 0.25}px ${kingGlowColor}`,
+                    pointerEvents: 'none',
+                    zIndex: 0,
                   }}
                 />
               )}

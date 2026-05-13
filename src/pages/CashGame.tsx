@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
+import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
 import { CashShop } from '../components/CashShop';
@@ -40,6 +41,7 @@ import {
   legalMovesFrom,
   toFen,
   type GameState,
+  type MoveResult,
   type ShopLetter,
   type Square,
 } from '../lib/cashChess';
@@ -66,6 +68,13 @@ export function CashGame() {
   const tc = getTimeControl(handoff.timeControlId)!;
 
   const [game, setGame] = useState<GameState>(() => initialState());
+  // History snapshots aligned with the moves array; powers Undo/Redo without
+  // rewriting the signed move record.
+  const [states, setStates] = useState<GameState[]>(() => [initialState()]);
+  const [results, setResults] = useState<MoveResult[]>([]);
+  const [viewPly, setViewPly] = useState(0);
+  const viewPlyRef = useRef(0);
+  useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
   const [moves, setMoves] = useState<SignedMove[]>([]);
@@ -77,6 +86,11 @@ export function CashGame() {
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [partnerReady, setPartnerReady] = useState(false);
+  // Start animation gates real game time: clock doesn't tick and moves are
+  // blocked until the intro overlay fades out (~3.5s after both connect).
+  const [gameStarted, setGameStarted] = useState(false);
+  const gameStartedRef = useRef(false);
+  useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
@@ -289,7 +303,9 @@ export function CashGame() {
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      if (movesCountRef.current > 0) {
+      // White's clock starts the moment the start animation finishes —
+      // before any move has been played.
+      if (gameStartedRef.current) {
         const turn = gameRef.current.turn;
         if (turn === 'w') setWhiteMs((ms) => Math.max(0, ms - dt));
         else setBlackMs((ms) => Math.max(0, ms - dt));
@@ -301,6 +317,13 @@ export function CashGame() {
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
+
+  useEffect(() => {
+    if (gameStarted) return;
+    if (!partnerReady) return;
+    if (movesCountRef.current > 0) setGameStarted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partnerReady, gameStarted]);
 
   useEffect(() => {
     if (end) return;
@@ -349,6 +372,9 @@ export function CashGame() {
     const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
     setMoves((m) => [...m, signed]);
     setGame(res.state);
+    setStates((s) => [...s, res.state]);
+    setResults((r) => [...r, res.result]);
+    setViewPly((p) => p + 1);
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -363,7 +389,9 @@ export function CashGame() {
     from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
   ): Promise<boolean> => {
     if (end) return false;
+    if (!gameStarted) return false;
     if (!isMyTurn()) return false;
+    if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
     let uci = from + to;
     if (promotion) uci += promotion.toLowerCase();
@@ -372,7 +400,9 @@ export function CashGame() {
 
   const applyLocalBuy = async (letter: ShopLetter, to: Square): Promise<boolean> => {
     if (end) return false;
+    if (!gameStarted) return false;
     if (!isMyTurn()) return false;
+    if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
     return commitMove(buyUci(letter, to), beforeTurn);
   };
@@ -395,8 +425,12 @@ export function CashGame() {
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
+    const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
+    setStates((s) => [...s, res.state]);
+    setResults((r) => [...r, res.result]);
     setMoves((m) => [...m, move]);
+    if (wasAtPresent) setViewPly((p) => p + 1);
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
       setBlackMs(tc.perMoveMs);
@@ -532,12 +566,16 @@ export function CashGame() {
   // ----------------------------------------------------------------
   // Rendering
   // ----------------------------------------------------------------
+  const viewedState: GameState = states[viewPly] ?? states[0];
+  const atPresent = viewPly === moves.length;
+
   const buyTargetSquares = useMemo<Set<Square>>(() => {
-    if (!selectedShop) return new Set();
+    if (!atPresent || !selectedShop) return new Set();
     return new Set(legalBuyTargets(game, selectedShop));
-  }, [selectedShop, game]);
+  }, [selectedShop, game, atPresent]);
 
   const legalTargets = useMemo(() => {
+    if (!atPresent) return [];
     // When a shop piece is selected, board-piece moves are suppressed; only
     // placement targets are shown (as green "special" rings).
     if (selectedShop) {
@@ -550,10 +588,10 @@ export function CashGame() {
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, selectedShop, game, buyTargetSquares]);
+  }, [selectedSquare, selectedShop, game, buyTargetSquares, atPresent]);
 
   const affordableSet = useMemo<Set<ShopLetter>>(() => {
-    if (!isMyTurn() || end) return new Set();
+    if (!isMyTurn() || end || !atPresent) return new Set();
     // Filter to letters that actually have at least one legal placement square.
     const out = new Set<ShopLetter>();
     for (const L of affordableLetters(game)) {
@@ -561,7 +599,52 @@ export function CashGame() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game, end]);
+  }, [game, end, atPresent]);
+
+  const navigateGameView = (forward: boolean, playSfx = true) => {
+    setViewPly((p) => {
+      const total = results.length;
+      const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
+      if (next === p) return p;
+      if (playSfx) {
+        sfx.cutoffChessSfx();
+        const r = results[forward ? p : next];
+        if (r) {
+          if (forward) {
+            if (r.cashedIn) sfx.playCashIn();
+            else if (r.bought) sfx.playPlace();
+            else if (r.captured) sfx.playCapture();
+            else sfx.playMove();
+            if (r.check && !r.checkmate) sfx.playCheck();
+          } else {
+            if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+            if (r.check) sfx.playCheckReversed();
+          }
+        }
+      }
+      return next;
+    });
+  };
+
+  const canUndoView = viewPly > 0;
+  const canRedoView = viewPly < results.length;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      navigateGameView(e.key === 'ArrowRight');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
+
+  useEffect(() => {
+    if (!atPresent) { setSelectedSquare(null); setSelectedShop(null); }
+  }, [atPresent]);
 
   const isActiveSide = (c: Color): boolean => {
     if (end) return false;
@@ -584,6 +667,8 @@ export function CashGame() {
 
   const onSquareClick = (square: Square) => {
     if (end) return;
+    if (!gameStarted) return;
+    if (!atPresent) return;
     if (!isMyTurn()) { setSelectedSquare(null); setSelectedShop(null); return; }
     if (selectedShop) {
       if (buyTargetSquares.has(square)) {
@@ -610,6 +695,8 @@ export function CashGame() {
 
   const onDragStartSquare = (from: Square) => {
     if (end) return;
+    if (!gameStarted) return;
+    if (!atPresent) return;
     if (!isMyTurn()) return;
     if (selectedShop) setSelectedShop(null);
     const piece = game.board[sqIdx(from)];
@@ -619,6 +706,8 @@ export function CashGame() {
 
   const onPieceDrop = (from: Square, to: Square): boolean => {
     if (end) return false;
+    if (!gameStarted) return false;
+    if (!atPresent) return false;
     if (!isMyTurn()) return false;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
@@ -644,7 +733,7 @@ export function CashGame() {
 
   // cashChess.Piece has the same shape as mergeChess.Piece structurally; the
   // letter unions overlap but TS still needs the cast.
-  const boardForRender = game.board as unknown as (MergePieceShape | null)[];
+  const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
 
   return (
     <div className="game-layout cash-game-layout">
@@ -661,39 +750,40 @@ export function CashGame() {
 
       <div className="cash-shop-column">
         <CashShop
-          whiteGold={game.gold.w}
-          blackGold={game.gold.b}
+          whiteGold={viewedState.gold.w}
+          blackGold={viewedState.gold.b}
           perspective={handoff.iAmWhite ? 'white' : 'black'}
-          canBuy={isMyTurn() && !end}
-          selectedLetter={selectedShop}
+          canBuy={gameStarted && isMyTurn() && !end && atPresent}
+          selectedLetter={atPresent ? selectedShop : null}
           affordable={affordableSet}
           onSelect={handleSelectShop}
         />
       </div>
 
       <div className="board-column">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          active={isActiveSide(oppColor)}
-        />
-        <div className="board-wrap">
+        <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
             board={boardForRender}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={selectedSquare}
-            legalTargets={legalTargets}
+            selectedSquare={atPresent ? selectedSquare : null}
+            legalTargets={atPresent ? legalTargets : []}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && isMyTurn()}
-            draggable={!end && isMyTurn()}
-            boardWidth={480}
+            interactive={!end && gameStarted && isMyTurn() && atPresent}
+            draggable={!end && gameStarted && isMyTurn() && atPresent}
           />
+          {partnerReady && !gameStarted && movesCountRef.current === 0 && (
+            <StartOverlay
+              whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
+              whiteHandle={handoff.iAmWhite ? me.handle : oppDisplayHandle}
+              whiteRating={handoff.iAmWhite ? me.rating : opp.rating}
+              blackAvatar={handoff.iAmWhite ? oppDisplayAvatar : avatar}
+              blackHandle={handoff.iAmWhite ? oppDisplayHandle : me.handle}
+              blackRating={handoff.iAmWhite ? opp.rating : me.rating}
+              onDone={() => setGameStarted(true)}
+            />
+          )}
           {end && (
             <div className="board-finish-overlay" key={`${end.outcome}-${end.reason}`}>
               <div className="finish-avatars">
@@ -718,6 +808,18 @@ export function CashGame() {
             </div>
           )}
         </div>
+      </div>
+
+      <aside className="side-panel">
+        <PlayerCard
+          avatarDataUrl={oppDisplayAvatar}
+          handle={oppDisplayHandle}
+          rating={opp.rating}
+          voiceState={oppVoiceState}
+          volume={oppVolume}
+          ms={oppColor === 'white' ? whiteMs : blackMs}
+          active={isActiveSide(oppColor)}
+        />
         <PlayerCard
           avatarDataUrl={avatar}
           handle={`${me.handle} (you)`}
@@ -727,9 +829,6 @@ export function CashGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           active={isActiveSide(myColor)}
         />
-      </div>
-
-      <aside className="side-panel">
         <div className="game-meta">
           <div className="game-meta-title">Cash Money · {tc.label}</div>
           <div className="muted small">
@@ -751,6 +850,25 @@ export function CashGame() {
           onStartVoice={startVoice}
           voiceActive={voiceActive}
         />
+
+        <div className="history-nav-row">
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(false, false)}
+            type="button"
+            disabled={!canUndoView}
+          >
+            Undo
+          </button>
+          <button
+            className="free-play-btn"
+            onClick={() => navigateGameView(true, false)}
+            type="button"
+            disabled={!canRedoView}
+          >
+            Redo
+          </button>
+        </div>
 
         <div className="moves-panel">
           {movesDisplay.length === 0 ? (

@@ -34,6 +34,23 @@ import {
   type MoveResult as CashResult,
   type ShopLetter,
 } from '../lib/cashChess';
+import {
+  initialState as heroInitial,
+  applyMove as heroApply,
+  legalMovesFrom as heroLegal,
+  abilityTargets as heroAbilityTargets,
+  abilityReady as heroAbilityReady,
+  abilityUci as heroAbilityUci,
+  turnsUntilReady as heroTurnsUntilReady,
+  sqToIdx as heroSqToIdx,
+  idxToSq as heroIdxToSq,
+  HERO_INFO,
+  HERO_KINDS,
+  type GameState as HeroState,
+  type MoveResult as HeroResult,
+  type HeroKind,
+} from '../lib/heroChess';
+import { HeroAbilities } from '../components/HeroAbilities';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
   TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
@@ -44,7 +61,7 @@ import { PeerSession, makePeerId } from '../lib/peer';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
-type FreeVariant = 'normal' | 'merge' | 'two' | 'cash';
+type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
 
 type Mode = 'idle' | 'searching' | 'hosting';
 
@@ -80,6 +97,14 @@ export function Home() {
   // bought piece on a legal target square.
   const [cashShopLetter, setCashShopLetter] = useState<ShopLetter | null>(null);
 
+  // Hero state — picks default to Frost (W) / Knight (B); changing either
+  // resets the engine. abilityArmed signals "next click is a target".
+  const [heroW, setHeroW] = useState<HeroKind>('frost');
+  const [heroB, setHeroB] = useState<HeroKind>('knight');
+  const [heroStates, setHeroStates] = useState<HeroState[]>(() => [heroInitial('frost', 'knight')]);
+  const [heroResults, setHeroResults] = useState<HeroResult[]>([]);
+  const [heroAbilityArmed, setHeroAbilityArmed] = useState(false);
+
   const navigate = useNavigate();
 
   // Switching variants resets the board so each mode starts fresh.
@@ -93,11 +118,25 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
+    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroResults([]);
+    setHeroAbilityArmed(false);
     setFreeViewPly(0);
     setFreeSelected(null);
     setFreeHighlights(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeVariant]);
+
+  // Changing a hero pick re-inits the hero engine from scratch.
+  useEffect(() => {
+    if (freeVariant !== 'hero') return;
+    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroResults([]);
+    setHeroAbilityArmed(false);
+    setFreeViewPly(0);
+    setFreeSelected(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroW, heroB]);
 
   // Chess instance reflecting the viewed position for the normal variant. At
   // present this is the mutable freeChess; in the past it's a freshly-replayed
@@ -117,16 +156,19 @@ export function Home() {
   const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
   const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
   const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
+  const heroViewState: HeroState = heroStates[freeViewPly] ?? heroStates[0];
   const totalFreePly =
     freeVariant === 'normal' ? freeChess.history().length :
     freeVariant === 'merge' ? mergeResults.length :
     freeVariant === 'two' ? twoResults.length :
-    cashResults.length;
+    freeVariant === 'cash' ? cashResults.length :
+    heroResults.length;
   const freeTurn: 'w' | 'b' =
     freeVariant === 'normal' ? previewChess.turn() :
     freeVariant === 'merge' ? mergeViewState.turn :
     freeVariant === 'two' ? twoViewState.turn :
-    cashViewState.turn;
+    freeVariant === 'cash' ? cashViewState.turn :
+    heroViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
   // Detect checkmate at the currently-viewed position so the fade-in overlay
@@ -240,6 +282,26 @@ export function Home() {
     return out;
   }, [freeVariant, cashViewState, freeViewPly, cashResults.length]);
 
+  // Hero ability target squares when the ability is armed.
+  const heroAbilityTargetSet = useMemo<Set<string>>(() => {
+    if (freeVariant !== 'hero' || !heroAbilityArmed) return new Set();
+    if (freeViewPly !== heroResults.length) return new Set();
+    return new Set(heroAbilityTargets(heroViewState).map((idx) => heroIdxToSq(idx)));
+  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length]);
+
+  const heroLegalTargets = useMemo(() => {
+    if (freeVariant !== 'hero') return [];
+    if (heroAbilityArmed) {
+      return Array.from(heroAbilityTargetSet).map((to) => ({
+        to, isCapture: false, isMerge: true,
+      }));
+    }
+    if (!freeSelected) return [];
+    return heroLegal(heroViewState, freeSelected).map((m) => ({
+      to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
+    }));
+  }, [freeVariant, freeSelected, heroViewState, heroAbilityArmed, heroAbilityTargetSet]);
+
   const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
     let m;
@@ -330,19 +392,58 @@ export function Home() {
     return commitCashMove(cashBuyUci(letter, to));
   };
 
+  const commitHeroMove = (uci: string): boolean => {
+    const truncStates = heroStates.slice(0, freeViewPly + 1);
+    const truncResults = heroResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    const res = heroApply(base, uci);
+    if (!res) return false;
+    if (res.result.abilityUsed === 'frost') sfx.playMerge();
+    else if (res.result.abilityUsed === 'knight') sfx.playCapture();
+    else if (res.result.abilityUsed === 'necromancer') sfx.playPlace();
+    else if (res.result.abilityUsed === 'flight') sfx.playFlip();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setHeroStates([...truncStates, res.state]);
+    setHeroResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    setHeroAbilityArmed(false);
+    return true;
+  };
+
+  const applyHeroMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    return commitHeroMove(uci);
+  };
+
+  const applyHeroAbility = (to: string): boolean => {
+    const hero = heroViewState.heroes[heroViewState.turn].hero;
+    return commitHeroMove(heroAbilityUci(hero, to));
+  };
+
   // Pawn promotions in free play default to queen — no prompt mid-board to
   // keep the practice flow snappy. (chess.js handles 'q' via its own arg.)
   // Cash has no promotion: pawns reaching the back rank cash in for gold.
+  // Hero auto-promotes pawns to queen.
   const promotionFor = (
-    variant: 'merge' | 'two' | 'cash',
+    variant: 'merge' | 'two' | 'cash' | 'hero',
     from: string,
     to: string,
   ): 'Q' | undefined => {
     if (variant === 'cash') return undefined;
     const rank = parseInt(to[1], 10);
     if (rank !== 1 && rank !== 8) return undefined;
-    const idx = variant === 'merge' ? mergeSqToIdx(from) : twoSqToIdx(from);
-    const piece = variant === 'merge' ? mergeViewState.board[idx] : twoViewState.board[idx];
+    const idx =
+      variant === 'merge' ? mergeSqToIdx(from) :
+      variant === 'two' ? twoSqToIdx(from) :
+      heroSqToIdx(from);
+    const piece =
+      variant === 'merge' ? mergeViewState.board[idx] :
+      variant === 'two' ? twoViewState.board[idx] :
+      heroViewState.board[idx];
     if (!piece) return undefined;
     return piece.letter.toUpperCase() === 'P' ? 'Q' : undefined;
   };
@@ -360,6 +461,9 @@ export function Home() {
   };
   const handleCashDrop = (from: string, to: string): boolean => {
     return applyCashMove(from, to, promotionFor('cash', from, to));
+  };
+  const handleHeroDrop = (from: string, to: string): boolean => {
+    return applyHeroMove(from, to, promotionFor('hero', from, to));
   };
 
   const onFreeSquareClick = (square: string) => {
@@ -409,23 +513,44 @@ export function Home() {
       setFreeSelected(null);
       return;
     }
-    // cash
-    if (cashShopLetter) {
-      if (cashBuyTargets.has(square)) {
-        applyCashBuy(cashShopLetter, square);
+    if (freeVariant === 'cash') {
+      if (cashShopLetter) {
+        if (cashBuyTargets.has(square)) {
+          applyCashBuy(cashShopLetter, square);
+          return;
+        }
+        // Click on a non-target square cancels the shop selection.
+        setCashShopLetter(null);
         return;
       }
-      // Click on a non-target square cancels the shop selection.
-      setCashShopLetter(null);
+      const cashTargets = cashLegalTargets;
+      if (freeSelected && cashTargets.some((t) => t.to === square)) {
+        applyCashMove(freeSelected, square, promotionFor('cash', freeSelected, square));
+        return;
+      }
+      const cashPiece = cashViewState.board[cashSqToIdx(square)];
+      if (cashPiece && cashPiece.color === cashViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
       return;
     }
-    const cashTargets = cashLegalTargets;
-    if (freeSelected && cashTargets.some((t) => t.to === square)) {
-      applyCashMove(freeSelected, square, promotionFor('cash', freeSelected, square));
+    // hero
+    if (heroAbilityArmed) {
+      if (heroAbilityTargetSet.has(square)) {
+        applyHeroAbility(square);
+        return;
+      }
+      setHeroAbilityArmed(false);
       return;
     }
-    const cashPiece = cashViewState.board[cashSqToIdx(square)];
-    if (cashPiece && cashPiece.color === cashViewState.turn) {
+    if (freeSelected && heroLegalTargets.some((t) => t.to === square)) {
+      applyHeroMove(freeSelected, square, promotionFor('hero', freeSelected, square));
+      return;
+    }
+    const heroPiece = heroViewState.board[heroSqToIdx(square)];
+    if (heroPiece && heroPiece.color === heroViewState.turn) {
       setFreeSelected(square);
       return;
     }
@@ -452,6 +577,13 @@ export function Home() {
       const piece = cashViewState.board[cashSqToIdx(from)];
       if (!piece || piece.color !== cashViewState.turn) return;
       if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
+    if (freeVariant === 'hero') {
+      if (heroAbilityArmed) setHeroAbilityArmed(false);
+      const piece = heroViewState.board[heroSqToIdx(from)];
+      if (!piece || piece.color !== heroViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
     }
   };
 
@@ -475,8 +607,12 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
+    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroResults([]);
+    setHeroAbilityArmed(false);
     setFreeViewPly(0);
     setFreeSelected(null);
+    return;
   };
 
   const undoFreePlay = () => navigateFreeView(false, false);
@@ -536,12 +672,28 @@ export function Home() {
               if (r.check) sfx.playCheckReversed();
             }
           }
-        } else {
+        } else if (freeVariant === 'cash') {
           const r = cashResults[forward ? p : next];
           if (r) {
             if (forward) {
               if (r.cashedIn) sfx.playCashIn();
               else if (r.bought) sfx.playPlace();
+              else if (r.captured) sfx.playCapture();
+              else sfx.playMove();
+              if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
+        } else {
+          const r = heroResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.abilityUsed === 'frost') sfx.playMerge();
+              else if (r.abilityUsed === 'knight') sfx.playCapture();
+              else if (r.abilityUsed === 'necromancer') sfx.playPlace();
+              else if (r.abilityUsed === 'flight') sfx.playFlip();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
               if (r.check && !r.checkmate) sfx.playCheck();
@@ -581,6 +733,7 @@ export function Home() {
   useEffect(() => {
     setFreeSelected(null);
     setCashShopLetter(null);
+    setHeroAbilityArmed(false);
   }, [freeViewPly]);
 
   // Poll queue stats so the home page shows how many people are searching per mode.
@@ -798,7 +951,7 @@ export function Home() {
       </div>
 
       <div className="home-play-area">
-        <div className={`free-play-board${freeVariant === 'cash' ? ' with-shop' : ''}`}>
+        <div className={`free-play-board${freeVariant === 'cash' || freeVariant === 'hero' ? ' with-shop' : ''}`}>
           {freeVariant === 'cash' && (
             <div className="free-play-shop-col">
               <CashShop
@@ -815,6 +968,50 @@ export function Home() {
                   setCashShopLetter(L);
                   if (L) sfx.playBuy();
                 }}
+                compact
+              />
+            </div>
+          )}
+          {freeVariant === 'hero' && (
+            <div className="free-play-shop-col">
+              <div className="hero-side-pickers">
+                <label className="hero-side-picker">
+                  <span className="muted small">White</span>
+                  <select
+                    value={heroW}
+                    onChange={(e) => setHeroW(e.target.value as HeroKind)}
+                    className="free-play-select"
+                    data-no-sfx
+                  >
+                    {HERO_KINDS.map((h) => (
+                      <option key={h} value={h}>{HERO_INFO[h].name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="hero-side-picker">
+                  <span className="muted small">Black</span>
+                  <select
+                    value={heroB}
+                    onChange={(e) => setHeroB(e.target.value as HeroKind)}
+                    className="free-play-select"
+                    data-no-sfx
+                  >
+                    {HERO_KINDS.map((h) => (
+                      <option key={h} value={h}>{HERO_INFO[h].name}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <HeroAbilities
+                perspective={heroViewState.turn === 'w' ? 'white' : 'black'}
+                myHero={heroViewState.heroes[heroViewState.turn].hero}
+                oppHero={heroViewState.heroes[heroViewState.turn === 'w' ? 'b' : 'w'].hero}
+                myCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn)}
+                oppCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn === 'w' ? 'b' : 'w')}
+                myTurn={freeViewPly === heroResults.length && heroAbilityReady(heroViewState, heroViewState.turn)}
+                armed={heroAbilityArmed}
+                onArm={() => { setFreeSelected(null); setHeroAbilityArmed(true); sfx.playSelect(); }}
+                onCancel={() => setHeroAbilityArmed(false)}
                 compact
               />
             </div>
@@ -843,6 +1040,7 @@ export function Home() {
                 <option value="merge">Merge</option>
                 <option value="two">Guerrilla</option>
                 <option value="cash">Cash Money</option>
+                <option value="hero">Hero</option>
               </select>
             </div>
             <div className="free-play-header-actions">
@@ -899,7 +1097,7 @@ export function Home() {
                   onPieceDrop={handleTwoDrop}
                   onDragStartSquare={onFreeDragStart}
                 />
-              ) : (
+              ) : freeVariant === 'cash' ? (
                 <MergeBoard
                   board={cashViewState.board as unknown as (MergePiece | null)[]}
                   orientation={freeOrientation}
@@ -908,6 +1106,20 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleCashDrop}
                   onDragStartSquare={onFreeDragStart}
+                />
+              ) : (
+                <MergeBoard
+                  board={heroViewState.board as unknown as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={heroAbilityArmed ? null : freeSelected}
+                  legalTargets={heroLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleHeroDrop}
+                  onDragStartSquare={onFreeDragStart}
+                  kingGlows={{
+                    w: HERO_INFO[heroViewState.heroes.w.hero].glowColor,
+                    b: HERO_INFO[heroViewState.heroes.b.hero].glowColor,
+                  }}
                 />
               )}
               {freeEnd && (

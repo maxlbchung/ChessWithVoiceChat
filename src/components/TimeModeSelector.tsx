@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'chaos';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'chaos';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -18,6 +18,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     merge: false,
     two: false,
     cash: false,
+    hero: false,
     chaos: false,
   });
   const toggle = (k: SectionKey) => {
@@ -81,6 +82,15 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           Upgrading uses your turn. One queen per side at a time.
         </div>
         {renderGrid(timeControlsForVariant('cash'))}
+      </Section>
+
+      <Section title="Hero" open={open.hero} onToggle={() => toggle('hero')}>
+        <div className="muted small time-mode-blurb">
+          Pick a hero king with a unique ability — Frost freezes, Knight
+          destroys adjacent, Necromancer spawns pawns, Flight teleports once.
+          Using an ability takes your turn.
+        </div>
+        {renderGrid(timeControlsForVariant('hero'))}
       </Section>
 
       <Section title="Chaos" open={open.chaos} onToggle={() => toggle('chaos')}>
