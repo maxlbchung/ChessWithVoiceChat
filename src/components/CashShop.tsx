@@ -14,8 +14,8 @@ type Props = {
   // The currently selected shop piece, or null. Selecting a piece highlights
   // legal placement squares on the board.
   selectedLetter: ShopLetter | null;
-  // Per-letter availability (afforable + queen-uniqueness + at least one legal
-  // placement square). Letters not in this set render as disabled.
+  // Per-letter availability (affordable + at least one legal placement
+  // square). Letters not in this set render as disabled.
   affordable: Set<ShopLetter>;
   onSelect: (letter: ShopLetter | null) => void;
   // Compact mode for free-play (tighter layout, no opponent column).

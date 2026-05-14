@@ -1,9 +1,9 @@
-// Cash Money — both sides start with K+Q + 6 pawns. Whenever it becomes a
-// player's turn, that player gains 1 gold. Gold can be spent on the shop:
+// Cash Money — both sides start with K + a full row of 8 pawns. Whenever it
+// becomes a player's turn, that player gains 1 gold. Gold can be spent on the
+// shop:
 //   N = 3, B = 3, R = 5, Q = 9
-// Buying counts as a turn. The bought piece is placed on a square adjacent to
-// your own king. Only one queen per side may exist on the board at a time. No
-// castling, no pawn purchases.
+// Buying upgrades one of your own pawns into the bought piece and counts as a
+// turn. Multiple queens per side are allowed. No castling, no pawn purchases.
 //
 // State is similar to chess2 but adds `gold: { w, b }`. Buys are encoded as
 // pseudo-UCI strings of the form `+<letter><square>` (e.g. `+Ne2`) so the
@@ -100,19 +100,21 @@ const KNIGHT_OFFSETS: [number, number][] = [
 // ------------------------------------------------------------------
 // Initial position
 // Layout (white perspective):
-//   rank 2: pawns on b, c, d, e, f, g
-//   rank 1: Queen on d, King on e
+//   rank 2: pawns on a..h (full row of 8)
+//   rank 1: King on e
 // Black mirrors.
 // ------------------------------------------------------------------
 export function initialState(): GameState {
   const board: (Piece | null)[] = new Array(64).fill(null);
   const white: Array<[number, number, PieceLetter]> = [
-    [3, 0, 'Q'], [4, 0, 'K'],
-    [1, 1, 'P'], [2, 1, 'P'], [3, 1, 'P'], [4, 1, 'P'], [5, 1, 'P'], [6, 1, 'P'],
+    [4, 0, 'K'],
+    [0, 1, 'P'], [1, 1, 'P'], [2, 1, 'P'], [3, 1, 'P'],
+    [4, 1, 'P'], [5, 1, 'P'], [6, 1, 'P'], [7, 1, 'P'],
   ];
   const black: Array<[number, number, PieceLetter]> = [
-    [3, 7, 'q'], [4, 7, 'k'],
-    [1, 6, 'p'], [2, 6, 'p'], [3, 6, 'p'], [4, 6, 'p'], [5, 6, 'p'], [6, 6, 'p'],
+    [4, 7, 'k'],
+    [0, 6, 'p'], [1, 6, 'p'], [2, 6, 'p'], [3, 6, 'p'],
+    [4, 6, 'p'], [5, 6, 'p'], [6, 6, 'p'], [7, 6, 'p'],
   ];
   for (const [f, r, l] of white) board[idxFR(f, r)] = { color: 'w', letter: l };
   for (const [f, r, l] of black) board[idxFR(f, r)] = { color: 'b', letter: l };
@@ -310,13 +312,6 @@ export function isInCheck(state: GameState, color: C2Color): boolean {
   return isSquareAttacked(state, k, color === 'w' ? 'b' : 'w');
 }
 
-function hasQueen(state: GameState, color: C2Color): boolean {
-  for (const p of state.board) {
-    if (p && p.color === color && p.letter.toUpperCase() === 'Q') return true;
-  }
-  return false;
-}
-
 // Board indices of the active player's own pawns — these are the squares a
 // buy can target, since buys upgrade an existing pawn into the bought piece.
 export function ownPawnSquares(state: GameState, color: C2Color): number[] {
@@ -463,15 +458,14 @@ export function allLegalBoardMoves(state: GameState): { from: Square; to: Square
   return out;
 }
 
-// Letters the active player can legally buy *some* placement for, given gold
-// and queen-uniqueness. (Doesn't account for self-check from the placement —
-// individual squares get filtered by legalBuyTargets.)
+// Letters the active player can legally buy *some* placement for, given gold.
+// (Doesn't account for self-check from the placement — individual squares get
+// filtered by legalBuyTargets.)
 export function affordableLetters(state: GameState): ShopLetter[] {
   const out: ShopLetter[] = [];
   const goldAvail = state.gold[state.turn];
   for (const L of SHOP_LETTERS) {
     if (SHOP_PRICES[L] > goldAvail) continue;
-    if (L === 'Q' && hasQueen(state, state.turn)) continue;
     out.push(L);
   }
   return out;
@@ -482,7 +476,6 @@ export function affordableLetters(state: GameState): ShopLetter[] {
 // pawns rather than spawning a new piece.)
 export function legalBuyTargets(state: GameState, letter: ShopLetter): Square[] {
   if (SHOP_PRICES[letter] > state.gold[state.turn]) return [];
-  if (letter === 'Q' && hasQueen(state, state.turn)) return [];
   const candidates = ownPawnSquares(state, state.turn);
   const out: Square[] = [];
   const moverColor = state.turn;

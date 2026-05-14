@@ -78,8 +78,8 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Cash Money" open={open.cash} onToggle={() => toggle('cash')}>
         <div className="muted small time-mode-blurb">
-          Spend gold in the shop to upgrade your pawns into pieces (N/B/R/Q).
-          Upgrading uses your turn. One queen per side at a time.
+          Spend gold in the shop to upgrade your pawns into pieces.
+          Upgrading uses your turn. Pawns promote into 10 coins.
         </div>
         {renderGrid(timeControlsForVariant('cash'))}
       </Section>

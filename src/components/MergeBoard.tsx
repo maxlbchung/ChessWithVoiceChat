@@ -320,7 +320,7 @@ export function MergeBoard({
                   style={{
                     position: 'absolute',
                     inset: 0,
-                    background: 'rgba(0,0,0,0.22)',
+                    background: 'rgba(140,220,150,0.45)',
                     pointerEvents: 'none',
                   }}
                 />
