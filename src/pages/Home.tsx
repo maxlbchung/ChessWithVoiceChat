@@ -170,6 +170,9 @@ export function Home() {
   }, [freeViewPly, freeFen]);
 
   // Flat 64-square board derived from previewChess (idx 0 = a8 ... 63 = h1).
+  // `freeFen` is in deps because previewChess reuses the mutable freeChess at
+  // the present ply — its reference never changes across moves, so React's
+  // Object.is dep check would otherwise skip recomputation after every move.
   const freeDisplayBoard = useMemo<(MergePiece | null)[]>(() => {
     const out: (MergePiece | null)[] = [];
     for (const row of previewChess.board()) {
@@ -180,7 +183,8 @@ export function Home() {
       }
     }
     return out;
-  }, [previewChess]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewChess, freeFen]);
   const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
   const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
   const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
