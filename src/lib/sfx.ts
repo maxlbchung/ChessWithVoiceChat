@@ -703,6 +703,47 @@ export function playQueue() {
   }
 }
 
+// Clock tick (low time) — short dry "tock" that fires once per second when a
+// player is running low. Pitched lower than playClick so it reads as a wall
+// clock rather than a UI tap, with a tiny HF noise transient for the wood-on-wood
+// snap. Routed through the chess bus so the volume slider attenuates it and the
+// scrub cutoff silences it on history navigation.
+function buildTick(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  blip({ dest, startAt: t, freq: 1400, freqEnd: 900, durMs: 28, type: 'square', peak: 0.18, attackMs: 0.4, lpHz: 3200 });
+  const dur = 0.012;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 2200;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.12, t + 0.0006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(hp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+export function playTick() {
+  buildTick(ensureChessBus(), getCtx().currentTime);
+}
+
+// Low-time warning — fired exactly once when the active player's clock first
+// crosses the low threshold. Three ticks at ~150ms intervals read as a brief
+// "you're in trouble" alert rather than a continuous countdown.
+export function playLowTimeWarning() {
+  const dest = ensureChessBus();
+  const t0 = getCtx().currentTime;
+  buildTick(dest, t0);
+  buildTick(dest, t0 + 0.15);
+  buildTick(dest, t0 + 0.30);
+}
+
 // Chat pop — quick sine sweep, short and bright.
 export function playChat() {
   const ac = getCtx();

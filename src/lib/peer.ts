@@ -1,5 +1,4 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs';
-import { ICE_SERVERS } from './iceConfig';
 import type { WireMessage } from './types';
 
 export type PeerEvents = {
@@ -22,10 +21,10 @@ export class PeerSession {
     this.events = events;
   }
 
-  constructor(peerId: string | undefined, events: PeerEvents) {
+  constructor(peerId: string | undefined, events: PeerEvents, iceServers: RTCIceServer[]) {
     this.events = events;
     this.peer = new Peer(peerId ?? makePeerId(), {
-      config: { iceServers: ICE_SERVERS },
+      config: { iceServers },
       debug: 1,
     });
     // Always read through this.events so setEvents() (used when handing the

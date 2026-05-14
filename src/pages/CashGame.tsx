@@ -11,7 +11,7 @@ import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
-import { getTimeControl } from '../lib/timeControls';
+import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
 import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
@@ -27,6 +27,7 @@ import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
+import { renderChatText } from '../lib/linkify';
 import {
   affordableLetters,
   applyMove,
@@ -67,6 +68,7 @@ export function CashGame() {
   }
 
   const tc = getTimeControl(handoff.timeControlId)!;
+  const lowMs = lowTimeThresholdMs(tc);
 
   const [game, setGame] = useState<GameState>(() => initialState());
   // History snapshots aligned with the moves array; powers Undo/Redo without
@@ -86,6 +88,11 @@ export function CashGame() {
   const [drawOfferedByOpp, setDrawOfferedByOpp] = useState(false);
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatLog]);
   const [partnerReady, setPartnerReady] = useState(false);
   // Start animation gates real game time: clock doesn't tick and moves are
   // blocked until the intro overlay fades out (~3.5s after both connect).
@@ -259,14 +266,14 @@ export function CashGame() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
+        setConnState('connecting');
+        setConnDetail('opponent disconnected');
         if (endRef.current) return;
         const next = disconnectCountRef.current + 1;
         disconnectCountRef.current = next;
         setDisconnectCount(next);
-        setConnState('connecting');
-        setConnDetail('opponent disconnected');
         if (next > MAX_GRACE_DISCONNECTS) {
-          if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
+          finalize({ outcome: myColor, reason: 'disconnect' });
           return;
         }
         startDisconnectCountdown();
@@ -313,8 +320,19 @@ export function CashGame() {
       // before any move has been played.
       if (gameStartedRef.current) {
         const turn = gameRef.current.turn;
-        if (turn === 'w') setWhiteMs((ms) => Math.max(0, ms - dt));
-        else setBlackMs((ms) => Math.max(0, ms - dt));
+        if (turn === 'w') {
+          setWhiteMs((ms) => {
+            const next = Math.max(0, ms - dt);
+            if (ms >= lowMs && next < lowMs && next > 0) sfx.playLowTimeWarning();
+            return next;
+          });
+        } else {
+          setBlackMs((ms) => {
+            const next = Math.max(0, ms - dt);
+            if (ms >= lowMs && next < lowMs && next > 0) sfx.playLowTimeWarning();
+            return next;
+          });
+        }
       }
       forceTick((n) => n + 1);
       raf = requestAnimationFrame(loop);
@@ -594,6 +612,13 @@ export function CashGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSquare, selectedShop, game, buyTargetSquares, atPresent]);
 
+  const lastMove = useMemo(() => {
+    if (viewPly <= 0) return null;
+    const uci = moves[viewPly - 1]?.uci;
+    if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    return { from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square };
+  }, [viewPly, moves]);
+
   const affordableSet = useMemo<Set<ShopLetter>>(() => {
     if (!isMyTurn() || end || !atPresent) return new Set();
     // Filter to letters that actually have at least one legal placement square.
@@ -775,6 +800,7 @@ export function CashGame() {
             onDragStartSquare={onDragStartSquare}
             interactive={!end && gameStarted && isMyTurn() && atPresent}
             draggable={!end && gameStarted && isMyTurn() && atPresent}
+            lastMove={lastMove}
           />
           {partnerReady && !gameStarted && movesCountRef.current === 0 && (
             <StartOverlay
@@ -821,6 +847,7 @@ export function CashGame() {
           voiceState={oppVoiceState}
           volume={oppVolume}
           ms={oppColor === 'white' ? whiteMs : blackMs}
+          lowMs={lowMs}
           active={isActiveSide(oppColor)}
         />
         <PlayerCard
@@ -830,6 +857,7 @@ export function CashGame() {
           voiceState={myVoiceState}
           volume={myVolume}
           ms={myColor === 'white' ? whiteMs : blackMs}
+          lowMs={lowMs}
           active={isActiveSide(myColor)}
         />
         <div className="game-meta">
@@ -842,17 +870,17 @@ export function CashGame() {
             {connState === 'failed' && <span className="neg">failed: {connDetail}</span>}
           </div>
           {inCheck && <div className="small neg">Check.</div>}
+          <VoiceControls
+            inline
+            remoteStream={remoteStream}
+            micOn={micOn}
+            speakerOn={speakerOn}
+            onToggleMic={toggleMic}
+            onToggleSpeaker={toggleSpeaker}
+            onStartVoice={startVoice}
+            voiceActive={voiceActive}
+          />
         </div>
-
-        <VoiceControls
-          remoteStream={remoteStream}
-          micOn={micOn}
-          speakerOn={speakerOn}
-          onToggleMic={toggleMic}
-          onToggleSpeaker={toggleSpeaker}
-          onStartVoice={startVoice}
-          voiceActive={voiceActive}
-        />
 
         <div className="history-nav-row">
           <button
@@ -871,6 +899,52 @@ export function CashGame() {
           >
             Redo
           </button>
+          {!end && (
+            <>
+              <button
+                className="secondary-btn"
+                onClick={() => {
+                  sessionRef.current.send({ type: 'resign' });
+                  finalize({ outcome: oppColor, reason: 'resignation' });
+                }}
+              >
+                Resign
+              </button>
+              {drawOfferedByOpp ? (
+                <>
+                  <button
+                    className="primary-btn"
+                    onClick={() => {
+                      sessionRef.current.send({ type: 'draw-accept' });
+                      finalize({ outcome: 'draw', reason: 'draw-agreed' });
+                    }}
+                  >
+                    Accept draw
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    onClick={() => {
+                      sessionRef.current.send({ type: 'draw-decline' });
+                      setDrawOfferedByOpp(false);
+                    }}
+                  >
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="secondary-btn"
+                  disabled={drawOfferedByMe}
+                  onClick={() => {
+                    sessionRef.current.send({ type: 'draw-offer' });
+                    setDrawOfferedByMe(true);
+                  }}
+                >
+                  {drawOfferedByMe ? 'Draw offered…' : 'Offer draw'}
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         <div className="moves-panel">
@@ -945,59 +1019,12 @@ export function CashGame() {
           </div>
         )}
 
-        {!end && (
-          <div className="action-row">
-            <button
-              className="secondary-btn"
-              onClick={() => {
-                sessionRef.current.send({ type: 'resign' });
-                finalize({ outcome: oppColor, reason: 'resignation' });
-              }}
-            >
-              Resign
-            </button>
-            {drawOfferedByOpp ? (
-              <>
-                <button
-                  className="primary-btn"
-                  onClick={() => {
-                    sessionRef.current.send({ type: 'draw-accept' });
-                    finalize({ outcome: 'draw', reason: 'draw-agreed' });
-                  }}
-                >
-                  Accept draw
-                </button>
-                <button
-                  className="secondary-btn"
-                  onClick={() => {
-                    sessionRef.current.send({ type: 'draw-decline' });
-                    setDrawOfferedByOpp(false);
-                  }}
-                >
-                  Decline
-                </button>
-              </>
-            ) : (
-              <button
-                className="secondary-btn"
-                disabled={drawOfferedByMe}
-                onClick={() => {
-                  sessionRef.current.send({ type: 'draw-offer' });
-                  setDrawOfferedByMe(true);
-                }}
-              >
-                {drawOfferedByMe ? 'Draw offered…' : 'Offer draw'}
-              </button>
-            )}
-          </div>
-        )}
-
         {chatEnabled && (
           <div className="chat-panel">
-            <div className="chat-log">
+            <div className="chat-log" ref={chatLogRef}>
               {chatLog.map((m, i) => (
                 <div key={i} className={`chat-msg ${m.from}`}>
-                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {m.text}
+                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {renderChatText(m.text)}
                 </div>
               ))}
             </div>

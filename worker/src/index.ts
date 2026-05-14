@@ -10,6 +10,11 @@
 
 interface Env {
   DB: D1Database;
+  // Cloudflare Realtime TURN credentials. Set with `wrangler secret put`:
+  //   npx wrangler secret put TURN_KEY_ID
+  //   npx wrangler secret put TURN_KEY_API_TOKEN
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -27,9 +32,6 @@ export default {
     if (request.method !== 'POST') {
       return withCors(new Response('method not allowed', { status: 405 }));
     }
-    if (!env.DB) {
-      return withCors(json({ error: 'DB binding missing — check wrangler.toml d1_databases binding' }, 500));
-    }
 
     let body: any;
     try {
@@ -40,6 +42,12 @@ export default {
 
     try {
       const action = body.action;
+      // The turn action doesn't need DB — handle it before the DB-binding check
+      // so a misconfigured DB doesn't block voice/WebRTC.
+      if (action === 'turn') return withCors(await handleTurn(env, body));
+      if (!env.DB) {
+        return withCors(json({ error: 'DB binding missing — check wrangler.toml d1_databases binding' }, 500));
+      }
       if (action === 'join') return withCors(await handleJoin(env.DB, body));
       if (action === 'poll') return withCors(await handlePoll(env.DB, body));
       if (action === 'cancel') return withCors(await handleCancel(env.DB, body));
@@ -50,6 +58,44 @@ export default {
     }
   },
 };
+
+// Per-isolate cache so we don't hit the Cloudflare TURN API on every page load.
+// Isolates are recycled freely, so this is best-effort — worst case is more API
+// calls, not staleness.
+let turnCache: { iceServers: unknown; expiresAt: number } | null = null;
+const TURN_TTL_SECONDS = 24 * 60 * 60; // 24h — clients refresh well before then
+const TURN_CACHE_SAFETY_MARGIN_MS = 60 * 60_000; // re-mint with 1h to spare
+
+async function handleTurn(env: Env, _body: any): Promise<Response> {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+    return json({ error: 'TURN credentials not configured' }, 503);
+  }
+  const now = Date.now();
+  if (turnCache && turnCache.expiresAt - TURN_CACHE_SAFETY_MARGIN_MS > now) {
+    return json({ iceServers: turnCache.iceServers, expiresAt: turnCache.expiresAt });
+  }
+  const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return json({ error: 'turn api failed', status: res.status, detail }, 502);
+  }
+  const data: any = await res.json();
+  const iceServers = data?.iceServers;
+  if (!iceServers) {
+    return json({ error: 'turn api returned no iceServers', data }, 502);
+  }
+  const expiresAt = now + TURN_TTL_SECONDS * 1000;
+  turnCache = { iceServers, expiresAt };
+  return json({ iceServers, expiresAt });
+}
 
 function withCors(res: Response): Response {
   const headers = new Headers(res.headers);

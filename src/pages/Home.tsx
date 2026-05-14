@@ -59,6 +59,7 @@ const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
 import { useIdentityStore } from '../store/identityStore';
 import { Matchmaker, fetchQueueStats } from '../lib/matchmaking';
 import { PeerSession, makePeerId } from '../lib/peer';
+import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
@@ -311,6 +312,24 @@ export function Home() {
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
   }, [freeVariant, freeSelected, heroViewState, heroAbilityArmed, heroAbilityTargetSet]);
+
+  // Subtle dark tint on the previous move's from/to squares. We skip ability
+  // (`!`) and buy (`+`) UCIs since those don't have a meaningful "from".
+  const freeLastMove = useMemo(() => {
+    if (freeViewPly <= 0) return null;
+    let uci: string | undefined;
+    if (freeVariant === 'normal') {
+      const v = freeChess.history({ verbose: true }) as Array<{ from: string; to: string }>;
+      const m = v[freeViewPly - 1];
+      return m ? { from: m.from, to: m.to } : null;
+    } else if (freeVariant === 'merge') uci = mergeResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'two') uci = twoResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'cash') uci = cashResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'hero') uci = heroResults[freeViewPly - 1]?.uci;
+    if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults]);
 
   const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
@@ -823,42 +842,46 @@ export function Home() {
     const myPeerId = makePeerId();
     setStatusMsg(`Looking for ${selected.label}…`);
 
-    session = new PeerSession(myPeerId, {
-      onOpen: async () => {
-        if (cancelled) return;
-        const result = await matcher.start({
-          identity,
-          peerId: myPeerId,
-          rating,
-          timeControlId: selected.id,
-        });
-        if (cancelled) return;
-        if (result.status !== 'matched') {
+    (async () => {
+      const iceServers = await getIceServers();
+      if (cancelled) return;
+      session = new PeerSession(myPeerId, {
+        onOpen: async () => {
+          if (cancelled) return;
+          const result = await matcher.start({
+            identity,
+            peerId: myPeerId,
+            rating,
+            timeControlId: selected.id,
+          });
+          if (cancelled) return;
+          if (result.status !== 'matched') {
+            setMode('idle');
+            setStatusMsg('Search cancelled.');
+            return;
+          }
+          handedOff = true;
+          setLobbyHandoff({
+            gameId: result.gameId,
+            session: session!,
+            myPeerId,
+            partnerPeerId: result.partnerPeerId,
+            partnerPubKey: result.partnerPubKey,
+            partnerHandle: result.partnerHandle,
+            partnerRating: result.partnerRating,
+            iAmWhite: result.iAmWhite,
+            timeControlId: selected.id,
+          });
+          navigate(`/play/${result.gameId}`);
+        },
+        onError: (err) => {
+          console.error('peer error', err);
+          if (cancelled) return;
+          setStatusMsg(`Connection error: ${err.message}`);
           setMode('idle');
-          setStatusMsg('Search cancelled.');
-          return;
-        }
-        handedOff = true;
-        setLobbyHandoff({
-          gameId: result.gameId,
-          session: session!,
-          myPeerId,
-          partnerPeerId: result.partnerPeerId,
-          partnerPubKey: result.partnerPubKey,
-          partnerHandle: result.partnerHandle,
-          partnerRating: result.partnerRating,
-          iAmWhite: result.iAmWhite,
-          timeControlId: selected.id,
-        });
-        navigate(`/play/${result.gameId}`);
-      },
-      onError: (err) => {
-        console.error('peer error', err);
-        if (cancelled) return;
-        setStatusMsg(`Connection error: ${err.message}`);
-        setMode('idle');
-      },
-    });
+        },
+      }, iceServers);
+    })();
 
     return () => {
       cancelled = true;
@@ -877,62 +900,67 @@ export function Home() {
     let cancelled = false;
     let handedOff = false;
     let joinerPeerId: string | null = null;
+    let session: PeerSession | null = null;
     const myPeerId = makePeerId();
 
     setShareUrl('');
     setStatusMsg('Creating lobby…');
 
-    const session: PeerSession = new PeerSession(myPeerId, {
-      onOpen: (id) => {
-        if (cancelled) return;
-        setShareUrl(`${location.origin}${location.pathname}#/join/${id}`);
-        setStatusMsg('Share the link with your opponent.');
-      },
-      onConnect: (conn) => {
-        if (cancelled) return;
-        joinerPeerId = conn.peer;
-        setStatusMsg('Opponent connected, syncing…');
-      },
-      onMessage: (msg) => {
-        if (cancelled) return;
-        if (msg.type !== 'hello') return;
-        if (!joinerPeerId) return;
-        const gameId = randomGameId();
-        const hostIsWhite = Math.random() < 0.5;
-        session.send({
-          type: 'lobby-confirm',
-          gameId,
-          iAmWhite: !hostIsWhite,
-          timeControlId: selected.id,
-          hostPubKey: identity.publicKeyHex,
-          hostHandle: identity.handle,
-          hostRating: rating,
-        });
-        handedOff = true;
-        setLobbyHandoff({
-          gameId,
-          session,
-          myPeerId,
-          partnerPeerId: joinerPeerId,
-          partnerPubKey: msg.publicKeyHex,
-          partnerHandle: msg.handle,
-          partnerRating: msg.rating,
-          iAmWhite: hostIsWhite,
-          timeControlId: selected.id,
-        });
-        navigate(`/play/${gameId}`);
-      },
-      onError: (err) => {
-        if (cancelled) return;
-        setStatusMsg(`Connection error: ${err.message}`);
-        setMode('idle');
-      },
-    });
+    (async () => {
+      const iceServers = await getIceServers();
+      if (cancelled) return;
+      session = new PeerSession(myPeerId, {
+        onOpen: (id) => {
+          if (cancelled) return;
+          setShareUrl(`${location.origin}${location.pathname}#/join/${id}`);
+          setStatusMsg('Share the link with your opponent.');
+        },
+        onConnect: (conn) => {
+          if (cancelled) return;
+          joinerPeerId = conn.peer;
+          setStatusMsg('Opponent connected, syncing…');
+        },
+        onMessage: (msg) => {
+          if (cancelled) return;
+          if (msg.type !== 'hello') return;
+          if (!joinerPeerId) return;
+          const gameId = randomGameId();
+          const hostIsWhite = Math.random() < 0.5;
+          session!.send({
+            type: 'lobby-confirm',
+            gameId,
+            iAmWhite: !hostIsWhite,
+            timeControlId: selected.id,
+            hostPubKey: identity.publicKeyHex,
+            hostHandle: identity.handle,
+            hostRating: rating,
+          });
+          handedOff = true;
+          setLobbyHandoff({
+            gameId,
+            session: session!,
+            myPeerId,
+            partnerPeerId: joinerPeerId,
+            partnerPubKey: msg.publicKeyHex,
+            partnerHandle: msg.handle,
+            partnerRating: msg.rating,
+            iAmWhite: hostIsWhite,
+            timeControlId: selected.id,
+          });
+          navigate(`/play/${gameId}`);
+        },
+        onError: (err) => {
+          if (cancelled) return;
+          setStatusMsg(`Connection error: ${err.message}`);
+          setMode('idle');
+        },
+      }, iceServers);
+    })();
 
     return () => {
       cancelled = true;
       if (!handedOff) {
-        try { session.destroy(); } catch { }
+        try { session?.destroy(); } catch { }
       }
     };
   }, [mode, identity, selected, rating, navigate]);
@@ -1143,6 +1171,7 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleFreeDrop}
                   onDragStartSquare={onFreeDragStart}
+                  lastMove={freeLastMove}
                 />
               ) : freeVariant === 'merge' ? (
                 <MergeBoard
@@ -1153,6 +1182,7 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleMergeDrop}
                   onDragStartSquare={onFreeDragStart}
+                  lastMove={freeLastMove}
                 />
               ) : freeVariant === 'two' ? (
                 <MergeBoard
@@ -1163,6 +1193,7 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleTwoDrop}
                   onDragStartSquare={onFreeDragStart}
+                  lastMove={freeLastMove}
                 />
               ) : freeVariant === 'cash' ? (
                 <MergeBoard
@@ -1173,6 +1204,7 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleCashDrop}
                   onDragStartSquare={onFreeDragStart}
+                  lastMove={freeLastMove}
                 />
               ) : (
                 <MergeBoard
@@ -1193,6 +1225,7 @@ export function Home() {
                       : null
                   }
                   abilityAnim={heroAbilityAnim}
+                  lastMove={freeLastMove}
                 />
               )}
               {freeEnd && (

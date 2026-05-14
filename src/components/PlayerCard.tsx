@@ -9,6 +9,7 @@ type Props = {
   voiceState: VoiceState;
   volume: number;
   ms: number;
+  lowMs: number;
   active: boolean;
 };
 
@@ -19,9 +20,10 @@ export function PlayerCard({
   voiceState,
   volume,
   ms,
+  lowMs,
   active,
 }: Props) {
-  const low = ms < 30_000;
+  const low = ms < lowMs;
   const initial = (handle?.[0] ?? '?').toUpperCase();
   return (
     <div className={`player-card ${active ? 'active' : ''} ${low && active ? 'low' : ''}`}>

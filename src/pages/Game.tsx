@@ -12,7 +12,7 @@ import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
-import { getTimeControl } from '../lib/timeControls';
+import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
 import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
@@ -28,6 +28,7 @@ import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
+import { renderChatText } from '../lib/linkify';
 
 type EndState = {
   outcome: GameOutcome;
@@ -54,6 +55,7 @@ export function Game() {
   }
 
   const tc = getTimeControl(handoff.timeControlId)!;
+  const lowMs = lowTimeThresholdMs(tc);
 
   const [chess] = useState(() => new Chess());
   const [fen, setFen] = useState(chess.fen());
@@ -67,6 +69,11 @@ export function Game() {
   const [drawOfferedByOpp, setDrawOfferedByOpp] = useState(false);
   const [chatLog, setChatLog] = useState<{ from: 'me' | 'opp'; text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatLog]);
   const [partnerReady, setPartnerReady] = useState(false);
   // Start animation gates real game time: clock doesn't tick and moves are
   // blocked until the intro overlay fades out (~3.5s after both sides connect).
@@ -300,16 +307,19 @@ export function Game() {
         setConnDetail(err.message || String(err));
       },
       onClose: () => {
-        if (endRef.current) return;
+        setConnState('connecting');
+        setConnDetail('opponent disconnected');
+        if (endRef.current) {
+          console.warn('[game] peer/conn closed after game end');
+          return;
+        }
         const next = disconnectCountRef.current + 1;
         disconnectCountRef.current = next;
         setDisconnectCount(next);
         console.warn(`[game] peer/conn closed (disconnect #${next})`);
-        setConnState('connecting');
-        setConnDetail('opponent disconnected');
         if (next > MAX_GRACE_DISCONNECTS) {
           // No grace period — forfeit immediately on the 3rd+ disconnect.
-          if (!endRef.current) finalize({ outcome: myColor, reason: 'disconnect' });
+          finalize({ outcome: myColor, reason: 'disconnect' });
           return;
         }
         startDisconnectCountdown();
@@ -379,9 +389,17 @@ export function Game() {
       // automatically at this point even before the first move is made.
       if (gameStartedRef.current) {
         if (chess.turn() === 'w') {
-          setWhiteMs((ms) => Math.max(0, ms - dt));
+          setWhiteMs((ms) => {
+            const next = Math.max(0, ms - dt);
+            if (ms >= lowMs && next < lowMs && next > 0) sfx.playLowTimeWarning();
+            return next;
+          });
         } else {
-          setBlackMs((ms) => Math.max(0, ms - dt));
+          setBlackMs((ms) => {
+            const next = Math.max(0, ms - dt);
+            if (ms >= lowMs && next < lowMs && next > 0) sfx.playLowTimeWarning();
+            return next;
+          });
         }
       }
       forceTick((n) => n + 1);
@@ -823,6 +841,15 @@ export function Game() {
     if (!atPresent) setSelectedSquare(null);
   }, [atPresent]);
 
+  const lastMove = useMemo(() => {
+    if (viewPly <= 0) return null;
+    const v = chess.history({ verbose: true }) as Array<{ from: string; to: string }>;
+    const m = v[viewPly - 1];
+    if (!m) return null;
+    return { from: m.from, to: m.to };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewPly, fen]);
+
   const movesPgn = useMemo(() => {
     return chess.history().reduce<string[]>((acc, mv, i) => {
       if (i % 2 === 0) acc.push(`${i / 2 + 1}. ${mv}`);
@@ -860,6 +887,7 @@ export function Game() {
             onDragStartSquare={onDragStartSquare}
             interactive={!end && gameStarted && isMyTurn() && atPresent}
             draggable={!end && gameStarted && isMyTurn() && atPresent}
+            lastMove={lastMove}
           />
           {partnerReady && !gameStarted && chess.history().length === 0 && (
             <StartOverlay
@@ -906,6 +934,7 @@ export function Game() {
           voiceState={oppVoiceState}
           volume={oppVolume}
           ms={oppColor === 'white' ? whiteMs : blackMs}
+          lowMs={lowMs}
           active={isActiveSide(oppColor)}
         />
         <PlayerCard
@@ -915,6 +944,7 @@ export function Game() {
           voiceState={myVoiceState}
           volume={myVolume}
           ms={myColor === 'white' ? whiteMs : blackMs}
+          lowMs={lowMs}
           active={isActiveSide(myColor)}
         />
         <div className="game-meta">
@@ -926,17 +956,17 @@ export function Game() {
             {connState === 'connecting' && <span>connecting{connDetail ? ` (${connDetail})` : '…'}</span>}
             {connState === 'failed' && <span className="neg">failed: {connDetail}</span>}
           </div>
+          <VoiceControls
+            inline
+            remoteStream={remoteStream}
+            micOn={micOn}
+            speakerOn={speakerOn}
+            onToggleMic={toggleMic}
+            onToggleSpeaker={toggleSpeaker}
+            onStartVoice={startVoice}
+            voiceActive={voiceActive}
+          />
         </div>
-
-        <VoiceControls
-          remoteStream={remoteStream}
-          micOn={micOn}
-          speakerOn={speakerOn}
-          onToggleMic={toggleMic}
-          onToggleSpeaker={toggleSpeaker}
-          onStartVoice={startVoice}
-          voiceActive={voiceActive}
-        />
 
         <div className="history-nav-row">
           <button
@@ -955,6 +985,52 @@ export function Game() {
           >
             Redo
           </button>
+          {!end && (
+            <>
+              <button
+                className="secondary-btn"
+                onClick={() => {
+                  sessionRef.current.send({ type: 'resign' });
+                  finalize({ outcome: oppColor, reason: 'resignation' });
+                }}
+              >
+                Resign
+              </button>
+              {drawOfferedByOpp ? (
+                <>
+                  <button
+                    className="primary-btn"
+                    onClick={() => {
+                      sessionRef.current.send({ type: 'draw-accept' });
+                      finalize({ outcome: 'draw', reason: 'draw-agreed' });
+                    }}
+                  >
+                    Accept draw
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    onClick={() => {
+                      sessionRef.current.send({ type: 'draw-decline' });
+                      setDrawOfferedByOpp(false);
+                    }}
+                  >
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="secondary-btn"
+                  disabled={drawOfferedByMe}
+                  onClick={() => {
+                    sessionRef.current.send({ type: 'draw-offer' });
+                    setDrawOfferedByMe(true);
+                  }}
+                >
+                  {drawOfferedByMe ? 'Draw offered…' : 'Offer draw'}
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         <div className="moves-panel">
@@ -1029,59 +1105,12 @@ export function Game() {
           </div>
         )}
 
-        {!end && (
-          <div className="action-row">
-            <button
-              className="secondary-btn"
-              onClick={() => {
-                sessionRef.current.send({ type: 'resign' });
-                finalize({ outcome: oppColor, reason: 'resignation' });
-              }}
-            >
-              Resign
-            </button>
-            {drawOfferedByOpp ? (
-              <>
-                <button
-                  className="primary-btn"
-                  onClick={() => {
-                    sessionRef.current.send({ type: 'draw-accept' });
-                    finalize({ outcome: 'draw', reason: 'draw-agreed' });
-                  }}
-                >
-                  Accept draw
-                </button>
-                <button
-                  className="secondary-btn"
-                  onClick={() => {
-                    sessionRef.current.send({ type: 'draw-decline' });
-                    setDrawOfferedByOpp(false);
-                  }}
-                >
-                  Decline
-                </button>
-              </>
-            ) : (
-              <button
-                className="secondary-btn"
-                disabled={drawOfferedByMe}
-                onClick={() => {
-                  sessionRef.current.send({ type: 'draw-offer' });
-                  setDrawOfferedByMe(true);
-                }}
-              >
-                {drawOfferedByMe ? 'Draw offered…' : 'Offer draw'}
-              </button>
-            )}
-          </div>
-        )}
-
         {chatEnabled && (
           <div className="chat-panel">
-            <div className="chat-log">
+            <div className="chat-log" ref={chatLogRef}>
               {chatLog.map((m, i) => (
                 <div key={i} className={`chat-msg ${m.from}`}>
-                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {m.text}
+                  <span className="chat-from">{m.from === 'me' ? me.handle : oppDisplayHandle}:</span> {renderChatText(m.text)}
                 </div>
               ))}
             </div>

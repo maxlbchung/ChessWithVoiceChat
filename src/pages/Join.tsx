@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useIdentityStore } from '../store/identityStore';
 import { PeerSession, makePeerId } from '../lib/peer';
+import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import { getTimeControl } from '../lib/timeControls';
 
@@ -21,63 +22,68 @@ export function Join() {
 
     let cancelled = false;
     let handedOff = false;
+    let session: PeerSession | null = null;
     const myPeerId = makePeerId();
 
-    const session: PeerSession = new PeerSession(myPeerId, {
-      onOpen: () => {
-        if (cancelled) return;
-        setStatusMsg('Reaching host…');
-        session.connectTo(hostPeerId);
-      },
-      onConnect: () => {
-        if (cancelled) return;
-        setStatusMsg('Identifying…');
-        session.send({
-          type: 'hello',
-          publicKeyHex: identity.publicKeyHex,
-          handle: identity.handle,
-          rating,
-        });
-      },
-      onMessage: (msg) => {
-        if (cancelled) return;
-        if (msg.type !== 'lobby-confirm') return;
-        const tc = getTimeControl(msg.timeControlId);
-        if (!tc) {
-          setStatusMsg(`Unknown time control: ${msg.timeControlId}`);
+    (async () => {
+      const iceServers = await getIceServers();
+      if (cancelled) return;
+      session = new PeerSession(myPeerId, {
+        onOpen: () => {
+          if (cancelled) return;
+          setStatusMsg('Reaching host…');
+          session!.connectTo(hostPeerId);
+        },
+        onConnect: () => {
+          if (cancelled) return;
+          setStatusMsg('Identifying…');
+          session!.send({
+            type: 'hello',
+            publicKeyHex: identity.publicKeyHex,
+            handle: identity.handle,
+            rating,
+          });
+        },
+        onMessage: (msg) => {
+          if (cancelled) return;
+          if (msg.type !== 'lobby-confirm') return;
+          const tc = getTimeControl(msg.timeControlId);
+          if (!tc) {
+            setStatusMsg(`Unknown time control: ${msg.timeControlId}`);
+            setErrored(true);
+            return;
+          }
+          handedOff = true;
+          setLobbyHandoff({
+            gameId: msg.gameId,
+            session: session!,
+            myPeerId,
+            partnerPeerId: hostPeerId,
+            partnerPubKey: msg.hostPubKey,
+            partnerHandle: msg.hostHandle,
+            partnerRating: msg.hostRating,
+            iAmWhite: msg.iAmWhite,
+            timeControlId: msg.timeControlId,
+          });
+          navigate(`/play/${msg.gameId}`);
+        },
+        onError: (err) => {
+          if (cancelled) return;
+          setStatusMsg(`Could not reach host: ${err.message}`);
           setErrored(true);
-          return;
-        }
-        handedOff = true;
-        setLobbyHandoff({
-          gameId: msg.gameId,
-          session,
-          myPeerId,
-          partnerPeerId: hostPeerId,
-          partnerPubKey: msg.hostPubKey,
-          partnerHandle: msg.hostHandle,
-          partnerRating: msg.hostRating,
-          iAmWhite: msg.iAmWhite,
-          timeControlId: msg.timeControlId,
-        });
-        navigate(`/play/${msg.gameId}`);
-      },
-      onError: (err) => {
-        if (cancelled) return;
-        setStatusMsg(`Could not reach host: ${err.message}`);
-        setErrored(true);
-      },
-      onClose: () => {
-        if (cancelled || handedOff) return;
-        setStatusMsg('Host closed the connection.');
-        setErrored(true);
-      },
-    });
+        },
+        onClose: () => {
+          if (cancelled || handedOff) return;
+          setStatusMsg('Host closed the connection.');
+          setErrored(true);
+        },
+      }, iceServers);
+    })();
 
     return () => {
       cancelled = true;
       if (!handedOff) {
-        try { session.destroy(); } catch {}
+        try { session?.destroy(); } catch {}
       }
     };
   }, [loaded, identity, rating, hostPeerId, navigate]);

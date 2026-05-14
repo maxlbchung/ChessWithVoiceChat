@@ -50,9 +50,28 @@ wrangler deploy --name decentralized-chess
 # (binding for the DO is created via wrangler.toml's [[migrations]] block)
 ```
 
-### Custom TURN
+### TURN (cross-NAT relay)
 
-Free public TURN (Open Relay Project) is used by default. Most of the time it works; under strict NATs it can be flaky. To swap in your own:
+Production uses **Cloudflare Realtime TURN**. The matchmaker Worker mints short-lived (24h) ICE credentials via the CF TURN API; the browser fetches them at session start. No long-lived TURN secret ships in the client bundle.
+
+Set up once:
+
+```
+# 1. Create a TURN token in the Cloudflare dashboard:
+#    Cloudflare Realtime → TURN → Create TURN Token
+#    Copy the Token ID and the API token.
+
+# 2. Bind them as Worker secrets:
+npx wrangler secret put TURN_KEY_ID --config worker/wrangler.toml
+npx wrangler secret put TURN_KEY_API_TOKEN --config worker/wrangler.toml
+
+# 3. Redeploy the worker:
+npm run deploy:worker
+```
+
+### Self-host coturn (optional fallback)
+
+If you'd rather not use Cloudflare TURN, you can ship static credentials in the bundle:
 
 ```
 VITE_TURN_URL="turn:your-turn.example.com:3478"
@@ -60,11 +79,9 @@ VITE_TURN_USER="user"
 VITE_TURN_PASS="pass"
 ```
 
-Set these as Cloudflare Pages environment variables (or in a `.env` for local dev) and rebuild.
+Set these as Cloudflare Pages env vars (or in `.env` for local dev). They're used only when the worker's `turn` endpoint isn't available.
 
-### Self-host coturn
-
-If you'd rather not rely on the Open Relay public credentials:
+Example coturn deployment:
 
 ```yaml
 # docker-compose.yml

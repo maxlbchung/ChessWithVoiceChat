@@ -8,6 +8,7 @@ type Props = {
   onToggleSpeaker: () => void;
   onStartVoice: () => void;
   voiceActive: boolean;
+  inline?: boolean;
 };
 
 export function VoiceControls({
@@ -18,6 +19,7 @@ export function VoiceControls({
   onToggleSpeaker,
   onStartVoice,
   voiceActive,
+  inline,
 }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -30,7 +32,7 @@ export function VoiceControls({
   }, [remoteStream, speakerOn]);
 
   return (
-    <div className="voice-controls">
+    <div className={`voice-controls${inline ? ' inline' : ''}`}>
       <audio ref={audioRef} autoPlay playsInline />
       {!voiceActive ? (
         <button className="voice-btn primary" onClick={onStartVoice}>

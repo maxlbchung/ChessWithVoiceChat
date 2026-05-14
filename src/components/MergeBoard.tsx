@@ -27,6 +27,9 @@ type Props = {
   // Transient ability animation. Mounted with a fresh `key` each time the
   // parent wants the animation to play; CSS keyframes do the rest.
   abilityAnim?: AbilityAnim | null;
+  // Squares involved in the most recent move (from + to). Rendered as a
+  // subtle dark tint so the eye can quickly find the last play.
+  lastMove?: { from: Square; to: Square } | null;
 };
 
 export type AbilityAnim = {
@@ -65,6 +68,7 @@ export function MergeBoard({
   kingGlows,
   frozenSquare,
   abilityAnim,
+  lastMove,
 }: Props) {
   // Measure the container when boardWidth isn't fixed, so pieces and arrows
   // can scale to whatever the parent gives us.
@@ -255,6 +259,7 @@ export function MergeBoard({
           const target = targetMap.get(sq);
           const isDragOver = dragOver === sq;
           const isHighlighted = highlights.has(sq);
+          const isLastMove = !!lastMove && (lastMove.from === sq || lastMove.to === sq);
           // Hero-mode king glow: colour ring drawn behind the king SVG.
           const kingGlowColor = piece && piece.letter.toUpperCase() === 'K'
             ? (piece.color === 'w' ? kingGlows?.w : kingGlows?.b)
@@ -310,6 +315,16 @@ export function MergeBoard({
               onDrop={(e) => handleDrop(e, sq)}
               style={style}
             >
+              {isLastMove && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.22)',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
               {isHighlighted && (
                 <div
                   style={{

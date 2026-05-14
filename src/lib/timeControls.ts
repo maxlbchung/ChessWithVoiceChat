@@ -56,6 +56,19 @@ export function timeControlsForVariant(variant: GameVariant): TimeControl[] {
   return TIME_CONTROLS.filter((tc) => tc.variant === variant);
 }
 
+// Threshold below which the clock is considered "low" — drives the urgent
+// red styling on PlayerCard and the per-second ticking SFX. Scales with the
+// time control so a 60s per-move game doesn't sit in the red zone for half
+// of every turn.
+export function lowTimeThresholdMs(tc: TimeControl): number {
+  if (tc.perMoveMs != null) {
+    // Last 20% of the move budget — 12s for a 60s/move control.
+    return Math.max(5_000, Math.round(tc.perMoveMs * 0.2));
+  }
+  // Last 10% of the initial budget, clamped 10–60s — 30s for 5min, 60s for 10min.
+  return Math.min(60_000, Math.max(10_000, Math.round(tc.initialMs * 0.1)));
+}
+
 export function formatClock(ms: number): string {
   const safe = Math.max(0, ms);
   const totalSeconds = Math.floor(safe / 1000);
