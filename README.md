@@ -1,4 +1,4 @@
-# VCC
+# Voice Chat Chess
 
 Five flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the only piece of central infrastructure is a tiny Cloudflare-hosted matchmaker that pairs two peers and then steps out of the way.
 
@@ -10,7 +10,7 @@ VCC ships with five variants. Each one is playable solo in free-play (with full 
 | --- | --- |
 | **Normal** | Standard chess. chess.js for rules. |
 | **Merge** | Capture your own R/B/N/Q to fuse — combined pieces inherit both movement patterns. Kings and pawns can't merge. |
-| **Two** | A back-rank rethink: Queen moves 1 square like a king, Bishop slides 1–2 squares diagonally, Knight jumps over an adjacent piece, Rook can push a friendly chain orthogonally. Pawn/King are standard. No castling. |
+| **Guerilla** | A back-rank rethink: Queen moves 1 square like a king, Bishop slides 1–2 squares diagonally, Knight jumps over an adjacent piece, Rook can push a friendly chain orthogonally. Pawn/King are standard. No castling. |
 | **Cash Money** | Start with 8 pawns + a king (no queen). Earn 1 gold per turn and buy upgrades — Knight 3g, Bishop 3g, Rook 5g, Queen 9g. Multi-queen is legal. No castling. |
 | **Hero** | Standard chess plus your king has an ability. Pick one of four at game start: **Frost** (freeze any enemy piece, 5-turn cooldown) · **Knight** (destroy an adjacent enemy, 10-turn cooldown) · **Necromancer** (spawn a pawn adjacent, 10-turn cooldown) · **Flight** (one-shot teleport). |
 
