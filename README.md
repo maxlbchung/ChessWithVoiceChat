@@ -1,6 +1,6 @@
 # Voice Chat Chess
 
-Five flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the only piece of central infrastructure is a tiny Cloudflare-hosted matchmaker that pairs two peers and then steps out of the way.
+Five flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the central infrastructure is kept minimal: a small Cloudflare Worker that pairs peers in a queue, a TURN relay for cross-NAT voice, and the public PeerJS broker for WebRTC signaling. None of those services see your moves.
 
 ## Game modes
 
@@ -9,10 +9,10 @@ VCC ships with five variants. Each one is playable solo in free-play (with full 
 | Mode | What's different |
 | --- | --- |
 | **Normal** | Standard chess. chess.js for rules. |
-| **Merge** | Capture your own R/B/N/Q to fuse — combined pieces inherit both movement patterns. Kings and pawns can't merge. |
-| **Guerilla** | A back-rank rethink: Queen moves 1 square like a king, Bishop slides 1–2 squares diagonally, Knight jumps over an adjacent piece, Rook can push a friendly chain orthogonally. Pawn/King are standard. No castling. |
-| **Cash Money** | Start with 8 pawns + a king (no queen). Earn 1 gold per turn and buy upgrades — Knight 3g, Bishop 3g, Rook 5g, Queen 9g. Multi-queen is legal. No castling. |
-| **Hero** | Standard chess plus your king has an ability. Pick one of four at game start: **Frost** (freeze any enemy piece, 5-turn cooldown) · **Knight** (destroy an adjacent enemy, 10-turn cooldown) · **Necromancer** (spawn a pawn adjacent, 10-turn cooldown) · **Flight** (one-shot teleport). |
+| **Merge** | Capture your own R/B/N/Q to fuse — combined pieces inherit both movement patterns (chancellor = R+N, archbishop = B+N, amazon = R+B+N). Kings and pawns can't merge. |
+| **Guerilla** | A back-rank rethink: Queen moves 1 square like a king · Bishop slides 1–2 squares diagonally · Knight jumps over any adjacent piece checkers-style (captures both the hopped piece and the landed-on piece) · Rook moves 1 square orthogonally and can push a friendly chain. Pawn/King are standard. No castling. |
+| **Cash Money** | Start with 8 pawns + a king — no other pieces. Gain 1 gold every turn; pushing a pawn to the opposing back rank cashes it in for **+10 gold**. Buy upgrades at the shop (Knight 3g, Bishop 3g, Rook 5g, Queen 9g) — each buy replaces one of your pawns and uses your turn. Multi-queen is legal. No castling. |
+| **Hero** | Standard chess plus your king has an ability. Pick one of four at game start: **Frost** (freeze any non-king enemy piece for one turn, 5-turn cooldown) · **Knight** (destroy an enemy piece adjacent to your king, 10-turn cooldown) · **Necromancer** (spawn a pawn on an empty square next to your king, 10-turn cooldown) · **Flight** (teleport your king to any safe, unoccupied square — once per match). No castling. |
 
 ## What's decentralized here
 
@@ -20,10 +20,11 @@ VCC ships with five variants. Each one is playable solo in free-play (with full 
 | --- | --- |
 | **Identity** | Ed25519 keypair generated in your browser, stored in IndexedDB. Exportable as a string. No accounts, no email, no password. |
 | **Move transport** | Direct WebRTC data channel between the two players. No server sees the moves. |
-| **Voice chat** | WebRTC audio track on the same peer connection. No server sees the audio. |
-| **Game records** | Each move is signed by the mover. Final game records are signed by both players. Stored locally. |
+| **Voice chat** | WebRTC audio between the two peers (separate from the move channel, same PeerJS session). No server sees the audio — TURN, when used, only relays encrypted DTLS-SRTP. |
+| **Game records** | Every move is signed by the mover and verified by the opponent on receipt. At game end each side independently saves the record signed with *its own* key only — there's no mutual sign-off exchange yet. |
 | **Rating** | Computed locally from your signed game history (standard ELO, K=32 → 24 after 30 games). |
-| **Matchmaking** | The one piece that needs *some* server: a Cloudflare Worker (Durable Object) pairs two peers in the same time-control queue. It only sees peer IDs and public keys — never moves, audio, or game results. |
+| **Matchmaking** | A Cloudflare Worker backed by a D1 (SQLite) database holds the per-time-control wait queue and emits a pairing when two peers arrive. It sees peer IDs, handles, public keys, and ratings — never moves, audio, or game results. |
+| **WebRTC signaling** | Uses the public PeerJS broker (`0.peerjs.com`) to bootstrap the connection between peers. The broker sees peer IDs and SDP offers, not move payloads — once the data channel is up, the broker is out of the loop. Swappable for a self-hosted PeerJS server. |
 
 > **Trust model in plain words:** if you trust your opponent's signed move records, you can verify everything they claim happened. The matchmaker can't lie about game results because it never sees them. The TURN server (when needed for NAT traversal) sees encrypted DTLS-SRTP packets, not plaintext audio.
 
@@ -34,7 +35,7 @@ VCC ships with five variants. Each one is playable solo in free-play (with full 
 - ⏱️ Three time controls per variant — 5 min, 10 min, +1 min / move (with tenths-of-a-second display under 10s)
 - 🎯 Local ELO ratings (K=32 < 30 games, K=24 after)
 - 🔍 Matchmaking queue per (variant × time-control) combo
-- 🎙️ Voice chat (WebRTC audio, ride-along on the same peer connection)
+- 🎙️ Voice chat (WebRTC audio over the same PeerJS session as the move channel)
 - 💬 In-game text chat
 - ↻ Rematch handshake across all online modes
 - 🟩 Last-move highlight, low-time clock warning, hero glow on king pieces
@@ -53,11 +54,22 @@ Open in two browser tabs (or two devices on the same network), pick the same mod
 
 ## Build & deploy
 
-The front end is a static Vite build hosted on **Cloudflare Pages**; the matchmaker is a separate **Cloudflare Worker** with a Durable Object.
+The front end is a static Vite build hosted on **Cloudflare Pages**; the matchmaker is a separate **Cloudflare Worker** with a **D1 (SQLite)** database. D1 was chosen over a Durable Object so the whole stack fits on the Workers free plan.
 
 ```bash
 npm run deploy          # builds and pushes the front end to Pages (project: chess-vc)
 npm run deploy:worker   # deploys the matchmaker Worker (worker/wrangler.toml)
+```
+
+### First-time matchmaker setup (D1)
+
+The Worker needs a D1 database. Run these once before the first `deploy:worker`:
+
+```bash
+npm run d1:create        # creates the chess-matchmaker D1 db; copy the printed database_id
+                         # into worker/wrangler.toml under [[d1_databases]]
+npm run d1:schema        # applies worker/schema.sql (waiting / matched / queue_log tables)
+npm run deploy:worker    # deploy
 ```
 
 ### TURN (cross-NAT relay)
@@ -132,8 +144,9 @@ src/
     Join.tsx, Profile.tsx, Settings.tsx
   store/                 # zustand identity store + lobby handoff
 worker/
-  src/index.ts           # matchmaker Worker (Durable Object) + TURN minter
-  wrangler.toml          # Worker config
+  src/index.ts           # matchmaker Worker (D1-backed) + TURN credential minter
+  schema.sql             # D1 schema — waiting / matched / queue_log tables
+  wrangler.toml          # Worker config (D1 binding)
 vite.config.ts           # dev-mode in-memory matchmaker plugin
 ```
 
@@ -141,8 +154,8 @@ The board component (`MergeBoard`) is custom-built — `react-chessboard` was dr
 
 ## Known limits / v2 ideas
 
-- **Disconnect = forfeit.** If one peer drops mid-game, the other claims a `disconnect` win locally. A reconnect grace period would be a v2 nicety.
-- **Local-only leaderboard.** No global ranking; each player's ELO is computed from their own signed history. A v2 could gossip signed records peer-to-peer or post opt-in to a public Cloudflare KV bucket.
+- **Limited reconnect window.** If a peer drops mid-game, a 5-second forfeit countdown starts; any message from them cancels it. Up to two brief disconnects per game are forgiven — the third triggers an immediate forfeit. No long-lived reconnect across page reloads yet.
+- **No leaderboard, no rating sync.** Your rating and game history live only in this browser's IndexedDB. There's no global ranking and no UI for browsing other players' results. Exporting your identity moves the keypair to another device, but the history stays put. A v2 could gossip signed records peer-to-peer or surface a public, opt-in ranking from signed game records.
 - **Move clock trust.** Clocks reported on a signed move come from the mover. A stricter trust model would derive clock times from signed move *timestamps* on both ends.
 - **No spectators.** v1 is strictly 1v1.
 
