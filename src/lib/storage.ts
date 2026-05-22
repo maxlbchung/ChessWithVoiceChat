@@ -6,6 +6,12 @@ const SUMMARIES_KEY = 'chess.summaries.v1';
 const RATING_KEY = 'chess.rating.v1';
 const RECORD_KEY_PREFIX = 'chess.record.v1.';
 
+// Hard cap on how many game summaries we keep. When a new summary pushes us
+// past this, the oldest are dropped AND their backing record entries are
+// garbage-collected in the same pass — otherwise the `chess.record.v1.*`
+// blobs would orphan in IDB forever.
+export const SUMMARY_CAP = 500;
+
 export async function loadSummaries(): Promise<LocalGameSummary[]> {
   return (await get<LocalGameSummary[]>(SUMMARIES_KEY)) ?? [];
 }
@@ -13,7 +19,14 @@ export async function loadSummaries(): Promise<LocalGameSummary[]> {
 export async function appendSummary(summary: LocalGameSummary): Promise<void> {
   const list = await loadSummaries();
   list.unshift(summary);
-  await set(SUMMARIES_KEY, list.slice(0, 500));
+  const kept = list.slice(0, SUMMARY_CAP);
+  const dropped = list.slice(SUMMARY_CAP);
+  await set(SUMMARIES_KEY, kept);
+  // Garbage-collect the record entries that just fell off the end of the
+  // summary list. Best-effort: a single failure shouldn't abort the rest.
+  for (const s of dropped) {
+    try { await deleteGameRecord(s.gameId); } catch {}
+  }
 }
 
 export async function loadRating(): Promise<number> {
