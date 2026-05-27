@@ -280,12 +280,44 @@ export function playFlip() {
   blip({ startAt: t + 0.02, freq: 800, freqEnd: 2300, durMs: 130, type: 'sine', peak: 0.08, attackMs: 1 });
 }
 
-// Reset board — descending sweep, like pieces clearing back to start.
+// Reset board — analog-tape rewind: a high-band noise whir sweeping down,
+// with a row of clock-tick "tocks" layered on top that fade in (quiet → loud)
+// over the duration. Reads as time spooling backward.
 export function playReset() {
+  // Tight downward "swish" + soft thud — ~220 ms, no clock-tick layering.
+  // The old reel-to-reel rewind was nearly a full second of chaotic ticks;
+  // this one just punctuates the snap-back-to-start.
+  const dest = ensureChessBus();
   const ac = getCtx();
-  const t = ac.currentTime;
-  blip({ startAt: t, freq: 900, freqEnd: 200, durMs: 240, type: 'triangle', peak: 0.32, attackMs: 4, lpHz: 2500 });
-  blip({ startAt: t + 0.04, freq: 1400, freqEnd: 400, durMs: 200, type: 'sine', peak: 0.1, attackMs: 1, lpHz: 3500 });
+  const t0 = ac.currentTime;
+
+  // Filtered noise sweep — band-pass dropping from ~2 kHz to ~500 Hz.
+  const swishDur = 0.18;
+  const length = Math.max(1, Math.floor(swishDur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const noise = ac.createBufferSource();
+  noise.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 4;
+  bp.frequency.setValueAtTime(2000, t0);
+  bp.frequency.exponentialRampToValueAtTime(520, t0 + swishDur);
+  const ng = ac.createGain();
+  ng.gain.setValueAtTime(0, t0);
+  ng.gain.linearRampToValueAtTime(0.18, t0 + 0.02);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t0 + swishDur);
+  noise.connect(bp).connect(ng).connect(dest);
+  noise.start(t0);
+  noise.stop(t0 + swishDur + 0.02);
+
+  // Soft thud at the bottom of the sweep — gives the gesture a landing.
+  blip({
+    dest, startAt: t0 + swishDur - 0.02,
+    freq: 280, freqEnd: 180, durMs: 70,
+    type: 'sine', peak: 0.18, attackMs: 1, lpHz: 900,
+  });
 }
 
 // Castling — two quick taps in succession (king slide + rook hop), slightly
@@ -500,36 +532,140 @@ export function playFreeze() {
   buildFreeze(ensureChessBus(), getCtx().currentTime);
 }
 
-// Slice (hero: knight) — drawing a blade from a scabbard. A bandpassed
-// noise scrape sweeps low→high (steel sliding out), with a high-Q resonant
-// metallic tone that rises in pitch alongside it (the blade singing), and
-// a short bright tail "shiiing" as it clears the sheath.
+// Frost shatter — the freeze expiring. A sharp glass-break: a brief
+// bandpassed noise crack (the ice fracturing) followed by a scattered
+// cascade of high tinkles (shards tumbling). Reads as a brittle break.
+function buildFrostShatter(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  // Front crack — short, sharp bandpassed noise burst centred high.
+  const crackDur = 0.09;
+  const cLen = Math.max(1, Math.floor(crackDur * ac.sampleRate));
+  const cBuf = ac.createBuffer(1, cLen, ac.sampleRate);
+  const cData = cBuf.getChannelData(0);
+  for (let i = 0; i < cLen; i++) cData[i] = Math.random() * 2 - 1;
+  const cSrc = ac.createBufferSource();
+  cSrc.buffer = cBuf;
+  const cBp = ac.createBiquadFilter();
+  cBp.type = 'bandpass';
+  cBp.Q.value = 2.2;
+  cBp.frequency.setValueAtTime(4200, t);
+  cBp.frequency.exponentialRampToValueAtTime(2400, t + crackDur);
+  const cG = ac.createGain();
+  cG.gain.setValueAtTime(0, t);
+  cG.gain.linearRampToValueAtTime(0.5, t + 0.002);
+  cG.gain.exponentialRampToValueAtTime(0.0001, t + crackDur);
+  cSrc.connect(cBp).connect(cG).connect(dest);
+  cSrc.start(t);
+  cSrc.stop(t + crackDur + 0.02);
+
+  // Tinkle cascade — many short high sine blips scattered across ~0.5s, each
+  // at a randomly-chosen high frequency. The chord-of-glass feel.
+  const tinkleSpread = 0.55;
+  const tinkleCount = 14;
+  const baseFreqs = [3200, 3800, 4600, 5400, 6200, 7000, 7800, 8800];
+  for (let i = 0; i < tinkleCount; i++) {
+    const at = t + 0.015 + (i / tinkleCount) * tinkleSpread + Math.random() * 0.04;
+    const f = baseFreqs[Math.floor(Math.random() * baseFreqs.length)] * (0.92 + Math.random() * 0.16);
+    blip({
+      dest,
+      startAt: at,
+      freq: f,
+      durMs: 70 + Math.random() * 90,
+      type: 'sine',
+      peak: 0.05 + Math.random() * 0.07,
+      attackMs: 0.8,
+    });
+  }
+
+  // Lower body thud — the ice releasing pressure. Gives the break weight.
+  blip({ dest, startAt: t, freq: 220, freqEnd: 110, durMs: 180, type: 'sine', peak: 0.16, attackMs: 1 });
+}
+export function playFrostShatter() {
+  buildFrostShatter(ensureChessBus(), getCtx().currentTime);
+}
+
+// Slice (hero: warlord) — a drawn-out blade whoosh that crescendos into a
+// metallic clang of sword striking armor. The wind-up is a mid-range air
+// whoosh (no soaring whistle — that reads as a firework). The climax at
+// ~150ms in is a steel-on-armor crack: bandpassed noise transient + an
+// inharmonic clangtone stack + a low body thunk, decaying quickly as the
+// armor damps the ring.
 function buildSlice(dest: AudioNode, t: number) {
   const ac: BaseAudioContext = dest.context;
-  // Short, abrupt — no slow ramp. The scrape and metallic singing tone
-  // both start near full amplitude, sweep up briefly, and end on a bright tail.
-  const scrapeDur = 0.13;
-  const length = Math.max(1, Math.floor(scrapeDur * ac.sampleRate));
+  // Internal timing is anchored so the impact falls at t + impactAt — call
+  // sites fire playSlice() at swing-start so the whoosh leads INTO impact.
+  const impactAt = 0.45;          // clang moment (aligned to 900ms swing midpoint)
+  const whooshDur = impactAt + 0.05;
+
+  // === WIND-UP: pure air whoosh ===
+  // Just filtered noise — no tonal layers. Wide, low-Q lowpass on white
+  // noise gives a diffuse "rushing wind" rather than a resonant whistle.
+  // The cutoff sweeps up as the blade picks up speed.
+  const length = Math.max(1, Math.floor(whooshDur * ac.sampleRate));
   const buf = ac.createBuffer(1, length, ac.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
   const src = ac.createBufferSource();
   src.buffer = buf;
-  const bp = ac.createBiquadFilter();
-  bp.type = 'bandpass';
-  bp.Q.value = 6;
-  bp.frequency.setValueAtTime(1400, t);
-  bp.frequency.exponentialRampToValueAtTime(5200, t + scrapeDur * 0.8);
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 0.5;
+  lp.frequency.setValueAtTime(700, t);
+  lp.frequency.exponentialRampToValueAtTime(2400, t + impactAt);
+  // High-pass to roll off subsonic rumble so the noise reads as airy.
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.Q.value = 0.5;
+  hp.frequency.value = 220;
   const g = ac.createGain();
-  g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.42, t + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + scrapeDur);
-  src.connect(bp).connect(g).connect(dest);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.42, t + impactAt);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + whooshDur);
+  src.connect(hp).connect(lp).connect(g).connect(dest);
   src.start(t);
-  src.stop(t + scrapeDur + 0.02);
-  blip({ dest, startAt: t, freq: 1600, freqEnd: 3400, durMs: scrapeDur * 1000 * 0.8, type: 'sine', peak: 0.18, attackMs: 2 });
-  blip({ dest, startAt: t + scrapeDur * 0.8, freq: 3600, durMs: 110, type: 'sine', peak: 0.2, attackMs: 1 });
-  blip({ dest, startAt: t + scrapeDur * 0.8, freq: 5400, durMs: 80, type: 'sine', peak: 0.09, attackMs: 1 });
+  src.stop(t + whooshDur + 0.02);
+
+  // === IMPACT: sword striking armor ===
+  // Sharp metallic crack — short bandpassed noise transient for the
+  // steel-on-steel scrape that fronts the clang.
+  const crackDur = 0.08;
+  const cLen = Math.max(1, Math.floor(crackDur * ac.sampleRate));
+  const cBuf = ac.createBuffer(1, cLen, ac.sampleRate);
+  const cData = cBuf.getChannelData(0);
+  for (let i = 0; i < cLen; i++) cData[i] = Math.random() * 2 - 1;
+  const cSrc = ac.createBufferSource();
+  cSrc.buffer = cBuf;
+  const cBp = ac.createBiquadFilter();
+  cBp.type = 'bandpass';
+  cBp.Q.value = 2.4;
+  cBp.frequency.setValueAtTime(2200, t + impactAt);
+  cBp.frequency.exponentialRampToValueAtTime(1100, t + impactAt + crackDur);
+  const cG = ac.createGain();
+  cG.gain.setValueAtTime(0, t + impactAt);
+  cG.gain.linearRampToValueAtTime(0.55, t + impactAt + 0.002);
+  cG.gain.exponentialRampToValueAtTime(0.0001, t + impactAt + crackDur);
+  cSrc.connect(cBp).connect(cG).connect(dest);
+  cSrc.start(t + impactAt);
+  cSrc.stop(t + impactAt + crackDur + 0.02);
+
+  // Inharmonic clangtone stack — sine partials at non-harmonic ratios give
+  // the characteristic clang of metal striking metal (bell-like inharmonicity
+  // rather than a clean tone). Ratios chosen so no two voices are an octave
+  // or fifth apart.
+  const clangVoices: Array<{ f: number; peak: number; durMs: number }> = [
+    { f: 340,  peak: 0.22, durMs: 360 },
+    { f: 530,  peak: 0.18, durMs: 320 },
+    { f: 870,  peak: 0.14, durMs: 280 },
+    { f: 1430, peak: 0.1,  durMs: 240 },
+    { f: 2350, peak: 0.07, durMs: 180 },
+  ];
+  for (const v of clangVoices) {
+    blip({ dest, startAt: t + impactAt, freq: v.f, durMs: v.durMs, type: 'sine', peak: v.peak, attackMs: 1 });
+  }
+
+  // Low body thunk — the armor's deeper response gives the strike weight.
+  blip({ dest, startAt: t + impactAt, freq: 150, freqEnd: 80, durMs: 220, type: 'sine', peak: 0.24, attackMs: 1 });
+  blip({ dest, startAt: t + impactAt, freq: 90, durMs: 260, type: 'triangle', peak: 0.18, attackMs: 1 });
 }
 export function playSlice() {
   buildSlice(ensureChessBus(), getCtx().currentTime);
@@ -607,6 +743,555 @@ function buildFly(dest: AudioNode, t: number) {
 }
 export function playFly() {
   buildFly(ensureChessBus(), getCtx().currentTime);
+}
+
+// Mutate (hero: mutation) — Geiger-counter style ticks accelerating over a
+// low rising drone, capped by a soft "lock-in" chime. Reads as radiation
+// building up and the piece reconfiguring.
+function buildMutate(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const tickWindow = 0.5;
+
+  // Sparse Geiger ticks — a handful of clicks spaced evenly across the
+  // window, each jittered slightly so they don't sound mechanical.
+  const numTicks = 6;
+  for (let i = 0; i < numTicks; i++) {
+    const progress = i / (numTicks - 1);
+    const baseTime = progress * tickWindow;
+    const jitter = (Math.random() - 0.5) * 0.03;
+    const tickTime = t + baseTime + jitter;
+    const tickDur = 0.018;
+    const length = Math.ceil(tickDur * ac.sampleRate);
+    const buf = ac.createBuffer(1, length, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let j = 0; j < length; j++) data[j] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 1800 + Math.random() * 1400;
+    const g = ac.createGain();
+    const peak = 0.05 + Math.random() * 0.12;
+    g.gain.setValueAtTime(0, tickTime);
+    g.gain.linearRampToValueAtTime(peak, tickTime + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, tickTime + tickDur);
+    src.connect(hp).connect(g).connect(dest);
+    src.start(tickTime);
+    src.stop(tickTime + tickDur + 0.01);
+  }
+
+  // Low rising drone — DNA-warping growl that ramps up as the ticks build.
+  blip({ dest, startAt: t, freq: 85, freqEnd: 175, durMs: 560, type: 'sawtooth', peak: 0.11, attackMs: 40, lpHz: 700 });
+  blip({ dest, startAt: t + 0.04, freq: 128, freqEnd: 260, durMs: 520, type: 'triangle', peak: 0.08, attackMs: 30, lpHz: 1200 });
+}
+export function playMutate() {
+  buildMutate(ensureChessBus(), getCtx().currentTime);
+}
+
+// Missile launch (hero: ICBM firing) — two electronic arming beeps, then
+// an ascending whistle. The whistle mirrors the landing whistle's spectrum
+// exactly (same stacked sines + sub rumble + airy high), just inverted in
+// direction (ascending) and envelope (peaks at ignition then fades as the
+// missile pulls away — opposite the landing's crescendo into impact).
+function buildMissileLaunch(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // Electronic arming beeps — square-wave fundamental for that classic
+  // "system alert" / 8-bit harmonic character, run through a steep lowpass
+  // to tame the harshness while keeping the harmonics that make it sound
+  // electronic. Sharp linear-release shape (vs the natural exp decay) gives
+  // the crisp "blip" edge of a digital tone.
+  const beep = (start: number, freq: number, durMs: number, peak: number) => {
+    const dur = durMs / 1000;
+    const osc = ac.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = freq * 4;
+    lp.Q.value = 1.4;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(peak, start + 0.002);
+    g.gain.setValueAtTime(peak, start + dur - 0.004);
+    g.gain.linearRampToValueAtTime(0, start + dur);
+    osc.connect(lp).connect(g).connect(dest);
+    osc.start(start);
+    osc.stop(start + dur + 0.02);
+  };
+  beep(t,        880, 95, 0.05);
+  beep(t + 0.16, 880, 95, 0.05);
+
+  // Launch whistle begins just after the second beep finishes. Mirrors
+  // the landing whistle's voice stack, reversed.
+  const wStart = t + 0.32;
+  const wDur = 1.05;
+
+  // Ascending tone whose amplitude peaks just after ignition then decays —
+  // mirror of the landing's silent → loud crescendo.
+  const climb = (
+    freqStart: number,
+    freqEnd: number,
+    peakAmp: number,
+    oscType: OscillatorType,
+    startOffset = 0,
+  ) => {
+    const start = wStart + startOffset;
+    const len = wDur - startOffset;
+    const osc = ac.createOscillator();
+    osc.type = oscType;
+    osc.frequency.setValueAtTime(freqStart, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), start + len);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(peakAmp, start + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + len);
+    osc.connect(g).connect(dest);
+    osc.start(start);
+    osc.stop(start + len + 0.04);
+  };
+
+  // Mid-band body — ascending sines (mirror of the landing's 680→200 etc).
+  climb(200, 680, 0.42, 'sine');
+  climb(95,  340, 0.4,  'sine');
+  // Lower body — felt weight as the missile lifts off.
+  climb(60,  150, 0.5,  'sine');
+  // Sub-bass rumble — the launch thrust, fades as missile gets distant.
+  climb(32,  42,  0.78, 'sine');
+  // High airy whistle voice — quiet, retains the "whistle" character.
+  climb(480, 2000, 0.16, 'sine');
+
+  // Bandpassed turbulence — air being shoved aside by the climbing rocket.
+  // Sweeps up alongside the swoop voices, peaks just after ignition.
+  const length = Math.max(1, Math.floor(wDur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 1.1;
+  bp.frequency.setValueAtTime(380, wStart);
+  bp.frequency.exponentialRampToValueAtTime(1800, wStart + wDur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, wStart);
+  g.gain.linearRampToValueAtTime(0.45, wStart + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.0001, wStart + wDur);
+  src.connect(bp).connect(g).connect(dest);
+  src.start(wStart);
+  src.stop(wStart + wDur + 0.04);
+}
+export function playMissileLaunch() {
+  buildMissileLaunch(ensureChessBus(), getCtx().currentTime);
+}
+
+// Missile whistle (hero: ICBM in flight) — every voice fades IN from near
+// silence and crescendoes into the explosion, so it reads as "something
+// huge falling closer and closer." Spectrum is intentionally wide: a deep
+// sub-bass rumble for mass, mid-band swoop tones for the body, and a
+// quieter high airborne whistle riding on top. Bandpassed turbulence noise
+// crescendos alongside. Total duration matches the half-second pause so
+// the climax meets the explosion exactly.
+function buildMissileWhistle(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const dur = 0.5;
+  // A descending tone whose amplitude crescendos from silence to peak.
+  // Doesn't use blip() because blip uses an attack-decay envelope (peaks
+  // early then fades) — here we want a slow rise that's loudest at the end.
+  const swoop = (
+    freqStart: number,
+    freqEnd: number,
+    peakAmp: number,
+    oscType: OscillatorType,
+    startOffset = 0,
+  ) => {
+    const start = t + startOffset;
+    const len = dur - startOffset;
+    const osc = ac.createOscillator();
+    osc.type = oscType;
+    osc.frequency.setValueAtTime(freqStart, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), start + len);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(peakAmp, start + len);
+    osc.connect(g).connect(dest);
+    osc.start(start);
+    osc.stop(start + len + 0.04);
+  };
+
+  // Mid-band body — descending sines suggesting the missile cutting air.
+  swoop(680, 200, 0.42, 'sine');
+  swoop(340, 95,  0.4,  'sine');
+  // Lower body — felt weight.
+  swoop(150, 60,  0.5,  'sine');
+  // Sub-bass rumble — the "ground rumble" that builds as it approaches.
+  // Stays in the felt-only sub range; rises slightly so it has motion.
+  swoop(42, 32, 0.78, 'sine');
+  // High airy whistle voice — quiet, keeps a faint "whistle" character.
+  swoop(2000, 480, 0.16, 'sine');
+
+  // Bandpassed turbulence — air being torn open. Crescendos with the swoop.
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 1.1;
+  bp.frequency.setValueAtTime(1800, t);
+  bp.frequency.exponentialRampToValueAtTime(380, t + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.45, t + dur);
+  src.connect(bp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.04);
+}
+export function playMissileWhistle() {
+  buildMissileWhistle(ensureChessBus(), getCtx().currentTime);
+}
+
+// Explosion (hero: ICBM landing) — an explosive earthquake, not a slap.
+// The previous design's HF crack and 8ms attack read as percussive; here
+// we drop the high-frequency transient entirely, slow every attack to
+// 40–90ms (so it BUILDS instead of snapping), and run all sub-bass voices
+// through LFO-modulated gain stages for a ground-shaking tremolo. A long
+// low-passed noise bed carries the rumble; aftershock thumps roll through
+// the decay so the ground keeps shifting after the initial impact.
+function buildExplosion(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // Sub-bass voice with LFO-modulated amplitude — the LFO offsets a
+  // downstream gain node (base 0.8, depth ±0.2) so the post-envelope level
+  // rocks at lfoHz Hz. No full dropouts; just shaking.
+  const subQuake = (
+    freq: number,
+    freqEnd: number,
+    durMs: number,
+    peak: number,
+    attackMs: number,
+    lfoHz: number,
+    startOffset = 0,
+  ) => {
+    const start = t + startOffset;
+    const dur = durMs / 1000;
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), start + dur);
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(peak, start + attackMs / 1000);
+    env.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    const trem = ac.createGain();
+    trem.gain.value = 0.8;
+    const lfo = ac.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = lfoHz;
+    const lfoAmt = ac.createGain();
+    lfoAmt.gain.value = 0.2;
+    lfo.connect(lfoAmt).connect(trem.gain);
+    osc.connect(env).connect(trem).connect(dest);
+    osc.start(start);
+    osc.stop(start + dur + 0.04);
+    lfo.start(start);
+    lfo.stop(start + dur + 0.04);
+  };
+
+  // Stacked earthquake voices — pure sines so no harmonic adds drum-like
+  // tonality. Different LFO rates so the shake isn't a uniform pulse.
+  subQuake(48, 16, 2100, 0.85, 70, 5.5);
+  subQuake(28, 12, 2300, 0.75, 90, 7.2);
+  subQuake(75, 28, 1500, 0.55, 60, 4.1, 0.04);
+  subQuake(20, 14, 2500, 0.5, 100, 3.3);
+
+  // Soft low-band noise burst on the front — gives the impact a moment of
+  // definition without any mid/high content. Lowpassed at 220Hz (down from
+  // 700) so the spectral centroid stays buried in the bass — perceived
+  // pitch tracks the centroid, not just the fundamentals, so pulling the
+  // top off makes the same sub-bass feel deeper.
+  const fDur = 0.22;
+  const fLen = Math.max(1, Math.floor(fDur * ac.sampleRate));
+  const fBuf = ac.createBuffer(1, fLen, ac.sampleRate);
+  const fData = fBuf.getChannelData(0);
+  for (let i = 0; i < fLen; i++) fData[i] = Math.random() * 2 - 1;
+  const fSrc = ac.createBufferSource();
+  fSrc.buffer = fBuf;
+  const fLp = ac.createBiquadFilter();
+  fLp.type = 'lowpass';
+  fLp.frequency.value = 220;
+  const fG = ac.createGain();
+  fG.gain.setValueAtTime(0, t);
+  fG.gain.linearRampToValueAtTime(0.42, t + 0.04);
+  fG.gain.exponentialRampToValueAtTime(0.0001, t + fDur);
+  fSrc.connect(fLp).connect(fG).connect(dest);
+  fSrc.start(t);
+  fSrc.stop(t + fDur + 0.02);
+
+  // Main earthquake noise bed — long lowpassed rumble. Starting LP drops
+  // from 1400Hz → 450Hz so the spectral centroid stays low even at peak.
+  // The same noise energy, but with the top sheared off, reads as much
+  // deeper. 50ms attack + brief hold means it builds rather than slaps.
+  // Steeper Q on the lowpass keeps the corner sharp so no mids leak.
+  const dur = 2.3;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 0.9;
+  lp.frequency.setValueAtTime(450, t);
+  lp.frequency.exponentialRampToValueAtTime(55, t + dur);
+  // Second lowpass in series for an effective steeper rolloff — kills any
+  // residual mid-band content the single biquad lets through.
+  const lp2 = ac.createBiquadFilter();
+  lp2.type = 'lowpass';
+  lp2.frequency.setValueAtTime(450, t);
+  lp2.frequency.exponentialRampToValueAtTime(55, t + dur);
+  const env = ac.createGain();
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(0.95, t + 0.05);
+  env.gain.setValueAtTime(0.95, t + 0.22);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  const trem = ac.createGain();
+  trem.gain.value = 0.85;
+  const lfo = ac.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 3.8;
+  const lfoAmt = ac.createGain();
+  lfoAmt.gain.value = 0.15;
+  lfo.connect(lfoAmt).connect(trem.gain);
+  src.connect(lp).connect(lp2).connect(env).connect(trem).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.04);
+  lfo.start(t);
+  lfo.stop(t + dur + 0.04);
+
+  // Aftershock thumps — secondary impacts rolling through the decay. Slow
+  // attacks (25–30ms) keep them rumble-shaped, not slap-shaped.
+  blip({ dest, startAt: t + 0.55, freq: 50, freqEnd: 20, durMs: 750, type: 'sine', peak: 0.42, attackMs: 25 });
+  blip({ dest, startAt: t + 1.00, freq: 38, freqEnd: 18, durMs: 850, type: 'sine', peak: 0.32, attackMs: 30 });
+  blip({ dest, startAt: t + 1.45, freq: 30, freqEnd: 16, durMs: 650, type: 'sine', peak: 0.22, attackMs: 25 });
+}
+export function playExplosion() {
+  buildExplosion(ensureChessBus(), getCtx().currentTime);
+}
+
+// Harem — the classic two-note wolf whistle. A short rising "fweet" that
+// starts at the mid-pitch of the second whistle, an abrupt pause, then a
+// longer falling "fhwooo" from the peak down. Sine carriers tuned to
+// whistle frequencies with a touch of bandpassed breath noise underneath.
+function buildHarem(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // Fixed pitches chosen by hand for the cleanest catcall:
+  //   W1: 1400 → 1800 Hz
+  //   W2: 1200 → 1400 → 600 Hz (small upward bend before the long fall)
+  //   200 ms abrupt pause between.
+  const w1StartFreq = 1400;
+  const w1EndFreq = 2000;
+  const w2StartFreq = 1200;
+  const w2PeakFreq = 1400;
+  const w2EndFreq = 600;
+  // Fraction of W2's duration spent climbing 1200 → 1400 before the descent.
+  const w2PeakFrac = 0.12;
+
+  // ---- Whistle 1: short rising slide ("fweet!") ----
+  const w1Start = t;
+  const w1Dur = 0.15;
+  const w1Osc = ac.createOscillator();
+  w1Osc.type = 'sine';
+  w1Osc.frequency.setValueAtTime(w1StartFreq, w1Start);
+  w1Osc.frequency.exponentialRampToValueAtTime(w1EndFreq, w1Start + w1Dur);
+  const w1G = ac.createGain();
+  // Sharp linear release at the very end gives the "abrupt" cutoff
+  // before the pause; no exponential tail bleeding into the gap.
+  w1G.gain.setValueAtTime(0, w1Start);
+  w1G.gain.linearRampToValueAtTime(0.3, w1Start + 0.025);
+  w1G.gain.setValueAtTime(0.3, w1Start + w1Dur - 0.015);
+  w1G.gain.linearRampToValueAtTime(0, w1Start + w1Dur);
+  w1Osc.connect(w1G).connect(dest);
+  w1Osc.start(w1Start);
+  w1Osc.stop(w1Start + w1Dur + 0.01);
+
+  // Breath noise tracking the rising slide.
+  const breath1Len = Math.ceil(w1Dur * ac.sampleRate);
+  const breath1Buf = ac.createBuffer(1, breath1Len, ac.sampleRate);
+  const b1d = breath1Buf.getChannelData(0);
+  for (let i = 0; i < breath1Len; i++) b1d[i] = Math.random() * 2 - 1;
+  const breath1Src = ac.createBufferSource();
+  breath1Src.buffer = breath1Buf;
+  const breath1Bp = ac.createBiquadFilter();
+  breath1Bp.type = 'bandpass';
+  breath1Bp.Q.value = 4;
+  breath1Bp.frequency.setValueAtTime(w1StartFreq, w1Start);
+  breath1Bp.frequency.exponentialRampToValueAtTime(w1EndFreq, w1Start + w1Dur);
+  const breath1G = ac.createGain();
+  breath1G.gain.setValueAtTime(0, w1Start);
+  breath1G.gain.linearRampToValueAtTime(0.04, w1Start + 0.03);
+  breath1G.gain.linearRampToValueAtTime(0, w1Start + w1Dur);
+  breath1Src.connect(breath1Bp).connect(breath1G).connect(dest);
+  breath1Src.start(w1Start);
+  breath1Src.stop(w1Start + w1Dur + 0.01);
+
+  // ---- Abrupt 200 ms pause ----
+  const gap = 0.2;
+
+  // ---- Whistle 2: short upward bend then long descending slide
+  // ("fhwooo") 1400 → 1600 → 400 ----
+  const w2Start = w1Start + w1Dur + gap;
+  const w2Dur = 0.7;
+  const w2PeakAt = w2Start + w2Dur * w2PeakFrac;
+  const w2Osc = ac.createOscillator();
+  w2Osc.type = 'sine';
+  w2Osc.frequency.setValueAtTime(w2StartFreq, w2Start);
+  w2Osc.frequency.exponentialRampToValueAtTime(w2PeakFreq, w2PeakAt);
+  w2Osc.frequency.exponentialRampToValueAtTime(w2EndFreq, w2Start + w2Dur);
+  const w2G = ac.createGain();
+  w2G.gain.setValueAtTime(0, w2Start);
+  w2G.gain.linearRampToValueAtTime(0.32, w2Start + 0.03);
+  w2G.gain.setValueAtTime(0.32, w2Start + w2Dur * 0.55);
+  w2G.gain.exponentialRampToValueAtTime(0.0001, w2Start + w2Dur);
+  w2Osc.connect(w2G).connect(dest);
+  w2Osc.start(w2Start);
+  w2Osc.stop(w2Start + w2Dur + 0.04);
+
+  // Breath noise tracking the descending slide.
+  const breath2Len = Math.ceil(w2Dur * ac.sampleRate);
+  const breath2Buf = ac.createBuffer(1, breath2Len, ac.sampleRate);
+  const b2d = breath2Buf.getChannelData(0);
+  for (let i = 0; i < breath2Len; i++) b2d[i] = Math.random() * 2 - 1;
+  const breath2Src = ac.createBufferSource();
+  breath2Src.buffer = breath2Buf;
+  const breath2Bp = ac.createBiquadFilter();
+  breath2Bp.type = 'bandpass';
+  breath2Bp.Q.value = 4;
+  breath2Bp.frequency.setValueAtTime(w2StartFreq, w2Start);
+  breath2Bp.frequency.exponentialRampToValueAtTime(w2PeakFreq, w2PeakAt);
+  breath2Bp.frequency.exponentialRampToValueAtTime(w2EndFreq, w2Start + w2Dur);
+  const breath2G = ac.createGain();
+  breath2G.gain.setValueAtTime(0, w2Start);
+  breath2G.gain.linearRampToValueAtTime(0.05, w2Start + 0.04);
+  breath2G.gain.exponentialRampToValueAtTime(0.0001, w2Start + w2Dur);
+  breath2Src.connect(breath2Bp).connect(breath2G).connect(dest);
+  breath2Src.start(w2Start);
+  breath2Src.stop(w2Start + w2Dur + 0.02);
+}
+export function playHarem() {
+  buildHarem(ensureChessBus(), getCtx().currentTime);
+}
+
+// Goofball — comedy clown horn. Two short "honk!"s, each built from a
+// nasal sawtooth + an octave-above saw, run through a bandpass at ~700 Hz
+// so it gets the buzzy, comedy-bulb-horn timbre. Quick attack, fast
+// decay, two honks separated by a brief gap.
+function buildHorn(dest: AudioNode, t: number, baseFreq: number, dur: number) {
+  const ac: BaseAudioContext = dest.context;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1300;
+  bp.Q.value = 4;
+  bp.connect(dest);
+
+  // Two saw voices — fundamental + octave — for that buzzy, nasal sound.
+  const voices: Array<{ freq: number; peak: number }> = [
+    { freq: baseFreq,     peak: 0.42 },
+    { freq: baseFreq * 2, peak: 0.18 },
+  ];
+  for (const v of voices) {
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = v.freq;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(v.peak, t + 0.008);
+    g.gain.setValueAtTime(v.peak, t + dur - 0.025);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g).connect(bp);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  }
+}
+function buildGoofball(dest: AudioNode, t: number) {
+  // Two honks with a tiny gap. Second honk is slightly higher pitched —
+  // the classic "honk-HONK!" comedy beat.
+  const honk1Dur = 0.075;
+  const honk2Dur = 0.15;
+  const gap = 0.05;
+  buildHorn(dest, t, 600, honk1Dur);
+  buildHorn(dest, t + honk1Dur + gap, 760, honk2Dur);
+}
+export function playGoofball() {
+  buildGoofball(ensureChessBus(), getCtx().currentTime);
+}
+
+// Smoke bomb (hero: twin-jitsu) — quick "pft" ignition pop followed by a
+// longer hissing release of "gas" that sweeps downward in frequency as the
+// cloud dissipates. A subtle low thunk underneath gives the pop bottom.
+function buildTwinJitsuPoof(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // === POP: short ignition burst ===
+  const popDur = 0.07;
+  const pLen = Math.max(1, Math.floor(popDur * ac.sampleRate));
+  const pBuf = ac.createBuffer(1, pLen, ac.sampleRate);
+  const pData = pBuf.getChannelData(0);
+  for (let i = 0; i < pLen; i++) pData[i] = Math.random() * 2 - 1;
+  const pSrc = ac.createBufferSource();
+  pSrc.buffer = pBuf;
+  const pBp = ac.createBiquadFilter();
+  pBp.type = 'bandpass';
+  pBp.Q.value = 1.4;
+  pBp.frequency.setValueAtTime(420, t);
+  pBp.frequency.exponentialRampToValueAtTime(220, t + popDur);
+  const pG = ac.createGain();
+  pG.gain.setValueAtTime(0, t);
+  pG.gain.linearRampToValueAtTime(0.4, t + 0.003);
+  pG.gain.exponentialRampToValueAtTime(0.0001, t + popDur);
+  pSrc.connect(pBp).connect(pG).connect(dest);
+  pSrc.start(t);
+  pSrc.stop(t + popDur + 0.02);
+
+  // === HISS: smoke / gas release ===
+  // Filtered white noise with a downward-sweeping bandpass — pressure
+  // venting through the smoke bomb's holes, then the cloud spreading and
+  // settling as the highs roll off.
+  const hissDur = 0.55;
+  const hLen = Math.max(1, Math.floor(hissDur * ac.sampleRate));
+  const hBuf = ac.createBuffer(1, hLen, ac.sampleRate);
+  const hData = hBuf.getChannelData(0);
+  for (let i = 0; i < hLen; i++) hData[i] = Math.random() * 2 - 1;
+  const hSrc = ac.createBufferSource();
+  hSrc.buffer = hBuf;
+  const hBp = ac.createBiquadFilter();
+  hBp.type = 'bandpass';
+  hBp.Q.value = 0.6;
+  hBp.frequency.setValueAtTime(1900, t + 0.04);
+  hBp.frequency.exponentialRampToValueAtTime(700, t + hissDur);
+  // Roll subsonic off so the hiss doesn't muddy the pop's body.
+  const hHp = ac.createBiquadFilter();
+  hHp.type = 'highpass';
+  hHp.Q.value = 0.5;
+  hHp.frequency.value = 380;
+  const hG = ac.createGain();
+  hG.gain.setValueAtTime(0.0001, t);
+  hG.gain.exponentialRampToValueAtTime(0.34, t + 0.09);
+  hG.gain.exponentialRampToValueAtTime(0.0001, t + hissDur);
+  hSrc.connect(hHp).connect(hBp).connect(hG).connect(dest);
+  hSrc.start(t);
+  hSrc.stop(t + hissDur + 0.02);
+
+  // === BODY: subtle low thunk for weight ===
+  blip({ dest, startAt: t, freq: 90, freqEnd: 60, durMs: 110, type: 'sine', peak: 0.22, attackMs: 4 });
+}
+export function playTwinJitsu() {
+  buildTwinJitsuPoof(ensureChessBus(), getCtx().currentTime);
 }
 
 // Generic UI click — subtle, neutral tap played on every button by default

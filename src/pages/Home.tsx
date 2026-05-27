@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
+import { CustomSelect } from '../components/CustomSelect';
 import { CashShop } from '../components/CashShop';
 import { TimeModeSelector } from '../components/TimeModeSelector';
 import { TIME_CONTROLS, type TimeControl } from '../lib/timeControls';
@@ -28,6 +30,7 @@ import {
   legalBuyTargets as cashLegalBuyTargets,
   affordableLetters as cashAffordable,
   buyUci as cashBuyUci,
+  parseBuy as cashParseBuy,
   sqToIdx as cashSqToIdx,
   type GameState as CashState,
   type MoveResult as CashResult,
@@ -41,9 +44,12 @@ import {
   abilityTargets as heroAbilityTargets,
   abilityReady as heroAbilityReady,
   abilityUci as heroAbilityUci,
+  goofballLegalDestinations as heroGoofballLegalDestinations,
+  twinJitsuLegalDestinations as heroTwinJitsuLegalDestinations,
   turnsUntilReady as heroTurnsUntilReady,
   sqToIdx as heroSqToIdx,
   idxToSq as heroIdxToSq,
+  pieceAtImpactBeforeBlast,
   HERO_INFO,
   HERO_KINDS,
   type GameState as HeroState,
@@ -53,6 +59,8 @@ import {
 import { HeroAbilities } from '../components/HeroAbilities';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import type { AbilityAnim } from '../components/MergeBoard';
+import { renderPiece } from '../lib/pieceSvgs';
+import { useSettingsStore } from '../store/settingsStore';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
   TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
 );
@@ -79,6 +87,17 @@ export function Home() {
   const [freeChess] = useState(() => new Chess());
   const [freeFen, setFreeFen] = useState(freeChess.fen());
   const [freeOrientation, setFreeOrientation] = useState<'white' | 'black'>('white');
+  // Bumped on free-play variant switch / reset so MergeBoard wipes its
+  // right-click annotation arrows + highlights against the new position.
+  const [freeAnnotationsClearKey, setFreeAnnotationsClearKey] = useState(0);
+  // Queued pawn promotion in free play. While non-null the picker overlay
+  // is rendered and board interaction is gated. `variant` is needed so the
+  // resolver knows which engine's apply path to dispatch to.
+  const [freePromo, setFreePromo] = useState<{
+    from: string; to: string;
+    variant: 'normal' | 'merge' | 'two' | 'hero';
+    viaClick: boolean;
+  } | null>(null);
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
   // Ply we're currently viewing. Equals the active engine's history length at
   // present. Free play lets you make moves while in the past — doing so
@@ -98,16 +117,49 @@ export function Home() {
   // bought piece on a legal target square.
   const [cashShopLetter, setCashShopLetter] = useState<ShopLetter | null>(null);
 
-  // Hero state — picks default to Frost (W) / Knight (B); changing either
+  // Hero state — picks default to Frost (W) / Warlord (B); changing either
   // resets the engine. abilityArmed signals "next click is a target".
   const [heroW, setHeroW] = useState<HeroKind>('frost');
-  const [heroB, setHeroB] = useState<HeroKind>('knight');
-  const [heroStates, setHeroStates] = useState<HeroState[]>(() => [heroInitial('frost', 'knight')]);
+  const [heroB, setHeroB] = useState<HeroKind>('warlord');
+  const [heroStates, setHeroStates] = useState<HeroState[]>(() => [heroInitial('frost', 'warlord')]);
   const [heroResults, setHeroResults] = useState<HeroResult[]>([]);
   const [heroAbilityArmed, setHeroAbilityArmed] = useState(false);
+  // Goofball is a two-click ability — first click picks the opponent
+  // piece, second click picks where to send it. Cleared whenever the
+  // ability is disarmed.
+  const [goofballFrom, setGoofballFrom] = useState<string | null>(null);
+  // Twin-Jitsu is also two-click (pick piece → pick swap partner).
+  const [twinJitsuFrom, setTwinJitsuFrom] = useState<string | null>(null);
+  useEffect(() => {
+    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJitsuFrom(null); }
+  }, [heroAbilityArmed]);
   // Transient ability animation overlay (hero free play). Bumped to a fresh
   // key each time it should re-fire.
   const [heroAbilityAnim, setHeroAbilityAnim] = useState<AbilityAnim | null>(null);
+  // Pieces destroyed by an ICBM strike that should remain drawn through the
+  // 500ms whistle window. Cleared when the explosion fires.
+  const [heroDoomedPieces, setHeroDoomedPieces] = useState<{ sq: string; letter: string }[]>([]);
+  // Click-to-move smooth slide for free play. Each entry says "the piece now
+  // at `to` should appear to slide in from `from`". `key` bumps every event.
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: string; to: string }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: string[]; key: number } | null>(null);
+  const [mergeAnim, setMergeAnim] = useState<{ from: string; to: string; fromLetter: string; toLetter: string; mergedLetter: string; key: number; releasePx?: { x: number; y: number } } | null>(null);
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
+  useEffect(() => {
+    if (!mergeAnim) return;
+    const t = window.setTimeout(() => setMergeAnim(null), 520);
+    return () => clearTimeout(t);
+  }, [mergeAnim]);
+  const { animationsEnabled } = useSettingsStore();
 
   const navigate = useNavigate();
 
@@ -131,6 +183,7 @@ export function Home() {
     setHeroAbilityAnim(null);
     setFreeViewPly(0);
     setFreeSelected(null);
+    setFreeAnnotationsClearKey((k) => k + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeVariant]);
 
@@ -300,13 +353,25 @@ export function Home() {
   // Hero ability target squares when the ability is armed.
   const heroAbilityTargetSet = useMemo<Set<string>>(() => {
     if (freeVariant !== 'hero' || !heroAbilityArmed) return new Set();
-    if (freeViewPly !== heroResults.length) return new Set();
+    // Note: scrubbing back is allowed — firing the ability rewrites history
+    // from the current view point onward (commitHeroMove truncates first).
+    // Goofball is two-click: while a from-square is pending, surface the
+    // destination squares for that picked piece instead of the from-squares.
+    if (heroViewState.heroes[heroViewState.turn].hero === 'goofball' && goofballFrom) {
+      return new Set(heroGoofballLegalDestinations(heroViewState, heroSqToIdx(goofballFrom)).map(heroIdxToSq));
+    }
+    if (heroViewState.heroes[heroViewState.turn].hero === 'twin-jitsu' && twinJitsuFrom) {
+      return new Set(heroTwinJitsuLegalDestinations(heroViewState, heroSqToIdx(twinJitsuFrom)).map(heroIdxToSq));
+    }
     return new Set(heroAbilityTargets(heroViewState).map((idx) => heroIdxToSq(idx)));
-  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length]);
+  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length, goofballFrom, twinJitsuFrom]);
 
   const heroLegalTargets = useMemo(() => {
     if (freeVariant !== 'hero') return [];
     if (heroAbilityArmed) {
+      // ICBM targets every square — drawing 64 green rings is noise. The
+      // ghost crosshair on hover is the affordance instead.
+      if (heroViewState.heroes[heroViewState.turn].hero === 'icbm') return [];
       return Array.from(heroAbilityTargetSet).map((to) => ({
         to, isCapture: false, isMerge: true,
       }));
@@ -317,8 +382,9 @@ export function Home() {
     }));
   }, [freeVariant, freeSelected, heroViewState, heroAbilityArmed, heroAbilityTargetSet]);
 
-  // Subtle dark tint on the previous move's from/to squares. We skip ability
-  // (`!`) and buy (`+`) UCIs since those don't have a meaningful "from".
+  // Subtle dark tint on the previous move's from/to squares. Ability (`!`)
+  // UCIs have no meaningful "from" and are skipped; cash buys (`+Lxx`) tint
+  // just the placement square.
   const freeLastMove = useMemo(() => {
     if (freeViewPly <= 0) return null;
     let uci: string | undefined;
@@ -330,12 +396,43 @@ export function Home() {
     else if (freeVariant === 'two') uci = twoResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'cash') uci = cashResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'hero') uci = heroResults[freeViewPly - 1]?.uci;
-    if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    if (!uci) return null;
+    if (freeVariant === 'cash') {
+      const buy = cashParseBuy(uci);
+      if (buy) return { from: buy.to, to: buy.to };
+    }
+    // Hero abilities (UCIs prefixed with '!'): show the green tint by
+    // default. Twin-Jitsu only tints the original square(s) of any swapped
+    // piece that wasn't the real king — highlighting a king's origin would
+    // give away which decoy was the real king before the swap.
+    if (freeVariant === 'hero' && uci.startsWith('!')) {
+      const hero = uci[1];
+      if (hero === 'T') {
+        const a = uci.slice(2, 4);
+        const b = uci.slice(4, 6);
+        const prev = heroStates[freeViewPly - 1];
+        if (!prev) return null;
+        const pieceA = prev.board[heroSqToIdx(a)];
+        const pieceB = prev.board[heroSqToIdx(b)];
+        const aIsNonKing = !!pieceA && pieceA.letter.toUpperCase() !== 'K';
+        const bIsNonKing = !!pieceB && pieceB.letter.toUpperCase() !== 'K';
+        if (aIsNonKing && bIsNonKing) return { from: a, to: b };
+        if (aIsNonKing) return { from: a, to: a };
+        if (bIsNonKing) return { from: b, to: b };
+        return null;
+      }
+      if (hero === 'G') {
+        return { from: uci.slice(2, 4), to: uci.slice(4, 6) };
+      }
+      const sq = uci.slice(2, 4);
+      return { from: sq, to: sq };
+    }
+    if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
     return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults]);
+  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates]);
 
-  const applyFreeMove = (from: string, to: string, promotion?: string): boolean => {
+  const applyFreeMove = (from: string, to: string, promotion?: string, viaClick = false): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
     let m;
     try {
@@ -353,14 +450,34 @@ export function Home() {
     setFreeFen(freeChess.fen());
     setFreeViewPly(freeChess.history().length);
     setFreeSelected(null);
+    if (viaClick && animationsEnabled) {
+      const slides: { from: string; to: string }[] = [{ from, to }];
+      if (m.flags?.includes('k')) {
+        slides.push({ from: `h${to[1]}`, to: `f${to[1]}` });
+      } else if (m.flags?.includes('q')) {
+        slides.push({ from: `a${to[1]}`, to: `d${to[1]}` });
+      }
+      setSlideAnim({ moves: slides, key: Date.now() });
+    }
+    if (animationsEnabled && m.flags?.includes('p')) {
+      setPopAnim({ squares: [to], key: Date.now() });
+    }
     return true;
   };
 
-  const applyMergeMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+  const applyMergeMove = (
+    from: string,
+    to: string,
+    promotion?: 'Q' | 'R' | 'B' | 'N',
+    viaClick = false,
+    releasePx?: { x: number; y: number },
+  ): boolean => {
     // Branch in past: drop everything after viewPly, then apply on the snapshot we're viewing.
     const truncStates = mergeStates.slice(0, freeViewPly + 1);
     const truncResults = mergeResults.slice(0, freeViewPly);
     const base = truncStates[truncStates.length - 1];
+    const moverLetterBefore = base.board[mergeSqToIdx(from)]?.letter;
+    const receiverLetterBefore = base.board[mergeSqToIdx(to)]?.letter;
     const uci = from + to + (promotion ? promotion.toLowerCase() : '');
     const res = mergeApply(base, uci);
     if (!res) return false;
@@ -374,10 +491,58 @@ export function Home() {
     setMergeResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
     setFreeSelected(null);
+    // Merge overrides slide+pop with the flow animation.
+    const mergedLetterAfter = res.state.board[mergeSqToIdx(to)]?.letter;
+    if (animationsEnabled && res.result.merged && moverLetterBefore && receiverLetterBefore && mergedLetterAfter) {
+      setMergeAnim({
+        from,
+        to,
+        fromLetter: moverLetterBefore,
+        toLetter: receiverLetterBefore,
+        mergedLetter: mergedLetterAfter,
+        key: Date.now(),
+        releasePx,
+      });
+    } else {
+      if (viaClick && animationsEnabled) {
+        setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      }
+      if (animationsEnabled && !!promotion) {
+        setPopAnim({ squares: [to], key: Date.now() });
+      }
+    }
     return true;
   };
 
-  const applyTwoMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+  // For a rook push, the rook moves onto `to` and every contiguous piece at
+  // `to` shifts one square in the push direction. Walk the chain off the
+  // pre-move board so each pushed piece can be animated.
+  const computeTwoPushSlides = (base: TwoState, from: string, to: string): { from: string; to: string }[] => {
+    const slides: { from: string; to: string }[] = [{ from, to }];
+    const piece = base.board[twoSqToIdx(from)];
+    if (!piece || piece.letter.toUpperCase() !== 'R') return slides;
+    if (!base.board[twoSqToIdx(to)]) return slides;
+    const ff = from.charCodeAt(0) - 97;
+    const fr = parseInt(from[1], 10) - 1;
+    const tf = to.charCodeAt(0) - 97;
+    const tr = parseInt(to[1], 10) - 1;
+    const df = Math.sign(tf - ff);
+    const dr = Math.sign(tr - fr);
+    if (df === 0 && dr === 0) return slides;
+    let f = tf, r = tr;
+    while (f >= 0 && f < 8 && r >= 0 && r < 8) {
+      const sq = String.fromCharCode(97 + f) + String.fromCharCode(49 + r);
+      if (!base.board[twoSqToIdx(sq)]) break;
+      const nf = f + df, nr = r + dr;
+      if (nf < 0 || nf >= 8 || nr < 0 || nr >= 8) break;
+      const nsq = String.fromCharCode(97 + nf) + String.fromCharCode(49 + nr);
+      slides.push({ from: sq, to: nsq });
+      f = nf; r = nr;
+    }
+    return slides;
+  };
+
+  const applyTwoMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false): boolean => {
     const truncStates = twoStates.slice(0, freeViewPly + 1);
     const truncResults = twoResults.slice(0, freeViewPly);
     const base = truncStates[truncStates.length - 1];
@@ -393,10 +558,16 @@ export function Home() {
     setTwoResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
     setFreeSelected(null);
+    if (viaClick && animationsEnabled) {
+      setSlideAnim({ moves: computeTwoPushSlides(base, from, to), key: Date.now() });
+    }
+    if (animationsEnabled && !!promotion) {
+      setPopAnim({ squares: [to], key: Date.now() });
+    }
     return true;
   };
 
-  const commitCashMove = (uci: string): boolean => {
+  const commitCashMove = (uci: string, slides?: { from: string; to: string }[], pops?: string[]): boolean => {
     const truncStates = cashStates.slice(0, freeViewPly + 1);
     const truncResults = cashResults.slice(0, freeViewPly);
     const base = truncStates[truncStates.length - 1];
@@ -413,80 +584,198 @@ export function Home() {
     setFreeViewPly(truncStates.length);
     setFreeSelected(null);
     setCashShopLetter(null);
+    if (slides && slides.length > 0 && animationsEnabled) {
+      setSlideAnim({ moves: slides, key: Date.now() });
+    }
+    if (pops && pops.length > 0 && animationsEnabled) {
+      setPopAnim({ squares: pops, key: Date.now() });
+    }
     return true;
   };
 
-  const applyCashMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+  const applyCashMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false): boolean => {
     const uci = from + to + (promotion ? promotion.toLowerCase() : '');
-    return commitCashMove(uci);
+    return commitCashMove(uci, viaClick ? [{ from, to }] : undefined);
   };
 
   const applyCashBuy = (letter: ShopLetter, to: string): boolean => {
-    return commitCashMove(cashBuyUci(letter, to));
+    // Shop buys spawn a new piece at `to` — pop it in to celebrate the
+    // placement; nothing slides since the piece came from the shop.
+    return commitCashMove(cashBuyUci(letter, to), undefined, [to]);
   };
 
-  const commitHeroMove = (uci: string): boolean => {
+  const commitHeroMove = (uci: string, slides?: { from: string; to: string }[], pops?: string[]): boolean => {
     const truncStates = heroStates.slice(0, freeViewPly + 1);
     const truncResults = heroResults.slice(0, freeViewPly);
     const base = truncStates[truncStates.length - 1];
     const res = heroApply(base, uci);
     if (!res) return false;
     if (res.result.abilityUsed === 'frost') sfx.playFreeze();
-    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    // Slice fires at swing-start; its internal climax is timed to land at the
+    // swing midpoint so the whistle leads INTO the blade's apex strike.
+    else if (res.result.abilityUsed === 'warlord') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
+    else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
+    else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
+    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.checkmate) sfx.playWin();
     else if (res.result.check) sfx.playCheck();
-    if (res.result.abilityUsed) {
-      const targetSq = res.result.uci.slice(2);
-      const moverColor = base.turn;
-      let fromSq: string | undefined;
-      if (res.result.abilityUsed === 'flight') {
-        fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
-      } else if (res.result.abilityUsed === 'knight') {
-        fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
+    if (res.result.abilityUsed && animationsEnabled) {
+      const ab = res.result.abilityUsed;
+      // harem is passive and icbm has its own missile UI; skip overlay.
+      if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
+        const targetSq = res.result.uci.slice(2);
+        const moverColor = base.turn;
+        let fromSq: string | undefined;
+        if (ab === 'flight') {
+          fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
+        } else if (ab === 'warlord') {
+          fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
+        }
+        setHeroAbilityAnim({
+          kind: ab,
+          fromSq,
+          toSq: targetSq,
+          color: moverColor,
+          key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+        });
       }
-      setHeroAbilityAnim({
-        kind: res.result.abilityUsed,
-        fromSq,
-        toSq: targetSq,
-        color: moverColor,
-        key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+    }
+    // ICBM detonations on this ply (any missile whose landing ply has
+    // arrived). The whistle plays immediately; the explosion (and removal
+    // of the doomed piece) follows half a second later. Multiple
+    // simultaneous landings share the single abilityAnim slot — staggered so
+    // each still gets a key bump.
+    const landings = base.missiles.filter((m) => m.landsAtPly <= res.state.ply);
+    if (landings.length > 0) {
+      sfx.playMissileWhistle();
+      // A piece that moved INTO the impact square this ply is the doomed
+      // sprite — not whatever was on the square before the move applied.
+      const doomed = landings
+        .map((m) => {
+          const p = pieceAtImpactBeforeBlast(base, uci, m.idx);
+          return p ? { sq: heroIdxToSq(m.idx), letter: p.letter as string } : null;
+        })
+        .filter((x): x is { sq: string; letter: string } => x !== null);
+      if (doomed.length > 0) setHeroDoomedPieces(doomed);
+      landings.forEach((m, i) => {
+        const at = 500 + i * 220;
+        window.setTimeout(() => {
+          if (animationsEnabled) {
+            setHeroAbilityAnim({
+              kind: 'icbm',
+              toSq: heroIdxToSq(m.idx),
+              color: m.firedBy,
+              key: `icbm-${base.ply}-${m.idx}-${Date.now()}`,
+            });
+          }
+          sfx.playExplosion();
+          // Drop this landing's doomed sprite (others linger until their own
+          // staggered explosion clears them).
+          setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== heroIdxToSq(m.idx)));
+        }, at);
       });
+    }
+    // Knight ability: the engine already cleared the victim, but we keep it
+    // rendered as a doomed-piece overlay through the wind-up of the sword
+    // swing and only let it disappear at the swing midpoint (collision).
+    if (res.result.abilityUsed === 'warlord') {
+      const targetSq = res.result.uci.slice(2);
+      const victim = base.board[heroSqToIdx(targetSq)];
+      if (victim) {
+        const entry = { sq: targetSq, letter: victim.letter };
+        setHeroDoomedPieces((prev) => [...prev, entry]);
+        window.setTimeout(() => {
+          setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== targetSq));
+        }, 450);
+      }
+    }
+    // Frost shatter — one or more freeze entries cleared this move.
+    if (base.frozen.length > 0) {
+      const nextIdxs = new Set(res.state.frozen.map((f) => f.idx));
+      const expired = base.frozen.filter((f) => !nextIdxs.has(f.idx));
+      if (expired.length > 0) {
+        sfx.playFrostShatter();
+        if (animationsEnabled) {
+          const f = expired[expired.length - 1];
+          setHeroAbilityAnim({
+            kind: 'frost-shatter',
+            toSq: heroIdxToSq(f.idx),
+            color: 'w',
+            key: `frost-shatter-${base.ply}-${f.idx}-${Date.now()}`,
+          });
+        }
+      }
     }
     setHeroStates([...truncStates, res.state]);
     setHeroResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
     setFreeSelected(null);
     setHeroAbilityArmed(false);
+    // Skip slide on ability moves — abilityAnim already shows the movement
+    // effect for Flight, and the others don't move a piece at all. Twin-Jitsu
+    // does swap two pieces, so we drive a pair of slides at each endpoint.
+    if (slides && slides.length > 0 && !res.result.abilityUsed && animationsEnabled) {
+      setSlideAnim({ moves: slides, key: Date.now() });
+    } else if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
+      const a = uci.slice(2, 4);
+      const b = uci.slice(4, 6);
+      setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
+      // !G<from><to>[<promo>] — the puppeted piece moves from→to.
+      const from = uci.slice(2, 4);
+      const to = uci.slice(4, 6);
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
+    // Pop the destination on promotions and necromancer spawns.
+    if (animationsEnabled) {
+      const popList = [...(pops ?? [])];
+      if (uci.length >= 5 && /^[a-h][1-8][a-h][1-8]/.test(uci)) {
+        popList.push(uci.slice(2, 4));
+      }
+      if (res.result.abilityUsed === 'necromancer') {
+        popList.push(uci.slice(2, 4));
+      }
+      // Mutation transforms the piece into its merged form — pop it.
+      if (res.result.abilityUsed === 'mutation') {
+        popList.push(uci.slice(2, 4));
+      }
+      if (popList.length > 0) {
+        setPopAnim({ squares: popList, key: Date.now() });
+      }
+    }
     return true;
   };
 
-  const applyHeroMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N'): boolean => {
+  const applyHeroMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false): boolean => {
     const uci = from + to + (promotion ? promotion.toLowerCase() : '');
-    return commitHeroMove(uci);
+    return commitHeroMove(uci, viaClick ? [{ from, to }] : undefined);
   };
 
-  const applyHeroAbility = (to: string): boolean => {
+  const applyHeroAbility = (to: string, from?: string, promo?: string): boolean => {
     const hero = heroViewState.heroes[heroViewState.turn].hero;
-    return commitHeroMove(heroAbilityUci(hero, to));
+    return commitHeroMove(heroAbilityUci(hero, to, from, promo));
   };
 
-  // Pawn promotions in free play default to queen — no prompt mid-board to
-  // keep the practice flow snappy. (chess.js handles 'q' via its own arg.)
-  // Cash has no promotion: pawns reaching the back rank cash in for gold.
-  // Hero auto-promotes pawns to queen.
-  const promotionFor = (
-    variant: 'merge' | 'two' | 'cash' | 'hero',
+  // Detect whether `from`→`to` would promote a pawn for the given variant.
+  // Cash has no promotion (pawns cash in for gold instead) — always false.
+  const isPromotionMove = (
+    variant: 'normal' | 'merge' | 'two' | 'cash' | 'hero',
     from: string,
     to: string,
-  ): 'Q' | undefined => {
-    if (variant === 'cash') return undefined;
+  ): boolean => {
+    if (variant === 'cash') return false;
     const rank = parseInt(to[1], 10);
-    if (rank !== 1 && rank !== 8) return undefined;
+    if (rank !== 1 && rank !== 8) return false;
+    if (variant === 'normal') {
+      const p = previewChess.get(from as any);
+      return !!p && p.type === 'p';
+    }
     const idx =
       variant === 'merge' ? mergeSqToIdx(from) :
       variant === 'two' ? twoSqToIdx(from) :
@@ -495,26 +784,97 @@ export function Home() {
       variant === 'merge' ? mergeViewState.board[idx] :
       variant === 'two' ? twoViewState.board[idx] :
       heroViewState.board[idx];
-    if (!piece) return undefined;
-    return piece.letter.toUpperCase() === 'P' ? 'Q' : undefined;
+    return !!piece && piece.letter.toUpperCase() === 'P';
+  };
+
+  // Once the user picks a promotion piece, dispatch the move to the right
+  // engine's apply function with that promotion letter.
+  const resolveFreePromotion = (letter: PromotionLetter) => {
+    if (!freePromo) return;
+    const { from, to, variant, viaClick } = freePromo;
+    setFreePromo(null);
+    if (variant === 'normal') {
+      // chess.js wants lowercase letters; restrict to Q/R/B/N for normal.
+      const valid = ['Q', 'R', 'B', 'N'].includes(letter) ? letter : 'Q';
+      applyFreeMove(from, to, valid.toLowerCase(), viaClick);
+      return;
+    }
+    if (variant === 'merge') {
+      const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+        ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      applyMergeMove(from, to, valid, viaClick);
+      return;
+    }
+    if (variant === 'two') {
+      const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+        ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      applyTwoMove(from, to, valid, viaClick);
+      return;
+    }
+    // hero — Mutation side accepts Z/C/A fused options. The applyHeroMove
+    // signature still types its promotion as Q/R/B/N; the underlying engine
+    // accepts the extra letters, so cast through.
+    const allowed: PromotionLetter[] =
+      heroViewState.heroes[heroViewState.turn].hero === 'mutation'
+        ? ['Q', 'R', 'B', 'N', 'Z', 'C', 'A']
+        : ['Q', 'R', 'B', 'N'];
+    const valid = allowed.includes(letter) ? letter : 'Q';
+    applyHeroMove(from, to, valid as 'Q' | 'R' | 'B' | 'N', viaClick);
   };
 
   const handleFreeDrop = (from: string, to: string): boolean => {
-    // Pawn promotion auto-defaults to queen (chess.js handles it internally).
+    if (isPromotionMove('normal', from, to)) {
+      setFreePromo({ from, to, variant: 'normal', viaClick: false });
+      return true;
+    }
     return applyFreeMove(from, to);
   };
 
-  const handleMergeDrop = (from: string, to: string): boolean => {
-    return applyMergeMove(from, to, promotionFor('merge', from, to));
+  const handleMergeDrop = (
+    from: string,
+    to: string,
+    opts?: { releasePx?: { x: number; y: number } },
+  ): boolean => {
+    if (isPromotionMove('merge', from, to)) {
+      setFreePromo({ from, to, variant: 'merge', viaClick: false });
+      return true;
+    }
+    return applyMergeMove(from, to, undefined, false, opts?.releasePx);
   };
   const handleTwoDrop = (from: string, to: string): boolean => {
-    return applyTwoMove(from, to, promotionFor('two', from, to));
+    if (isPromotionMove('two', from, to)) {
+      setFreePromo({ from, to, variant: 'two', viaClick: false });
+      return true;
+    }
+    return applyTwoMove(from, to);
   };
   const handleCashDrop = (from: string, to: string): boolean => {
-    return applyCashMove(from, to, promotionFor('cash', from, to));
+    return applyCashMove(from, to);
   };
   const handleHeroDrop = (from: string, to: string): boolean => {
-    return applyHeroMove(from, to, promotionFor('hero', from, to));
+    // Dragging an enemy piece while Goofball is armed fires the ability:
+    // the drag's from/to encodes the forced opponent move directly.
+    if (
+      heroAbilityArmed &&
+      heroViewState.heroes[heroViewState.turn].hero === 'goofball'
+    ) {
+      const fromPiece = heroViewState.board[heroSqToIdx(from)];
+      const opp = heroViewState.turn === 'w' ? 'b' : 'w';
+      if (fromPiece && fromPiece.color === opp) {
+        const legals = heroGoofballLegalDestinations(heroViewState, heroSqToIdx(from));
+        if (legals.includes(heroSqToIdx(to))) {
+          applyHeroAbility(to, from, 'Q');
+          setGoofballFrom(null);
+          return true;
+        }
+      }
+      return false;
+    }
+    if (isPromotionMove('hero', from, to)) {
+      setFreePromo({ from, to, variant: 'hero', viaClick: false });
+      return true;
+    }
+    return applyHeroMove(from, to);
   };
 
   const onFreeSquareClick = (square: string) => {
@@ -525,7 +885,12 @@ export function Home() {
     if (freeVariant === 'normal') {
       const piece = previewChess.get(square as any);
       if (freeSelected && freeLegalTargets.includes(square)) {
-        applyFreeMove(freeSelected, square);
+        if (isPromotionMove('normal', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'normal', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applyFreeMove(freeSelected, square, undefined, true);
         return;
       }
       if (piece && piece.color === previewChess.turn()) {
@@ -538,7 +903,12 @@ export function Home() {
     if (freeVariant === 'merge') {
       const targets = mergeLegalTargets;
       if (freeSelected && targets.some((t) => t.to === square)) {
-        applyMergeMove(freeSelected, square, promotionFor('merge', freeSelected, square));
+        if (isPromotionMove('merge', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'merge', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applyMergeMove(freeSelected, square, undefined, true);
         return;
       }
       const piece = mergeViewState.board[mergeSqToIdx(square)];
@@ -552,7 +922,12 @@ export function Home() {
     if (freeVariant === 'two') {
       const targets = twoLegalTargets;
       if (freeSelected && targets.some((t) => t.to === square)) {
-        applyTwoMove(freeSelected, square, promotionFor('two', freeSelected, square));
+        if (isPromotionMove('two', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'two', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applyTwoMove(freeSelected, square, undefined, true);
         return;
       }
       const piece = twoViewState.board[twoSqToIdx(square)];
@@ -575,7 +950,7 @@ export function Home() {
       }
       const cashTargets = cashLegalTargets;
       if (freeSelected && cashTargets.some((t) => t.to === square)) {
-        applyCashMove(freeSelected, square, promotionFor('cash', freeSelected, square));
+        applyCashMove(freeSelected, square, undefined, true);
         return;
       }
       const cashPiece = cashViewState.board[cashSqToIdx(square)];
@@ -588,6 +963,44 @@ export function Home() {
     }
     // hero
     if (heroAbilityArmed) {
+      const armedHero = heroViewState.heroes[heroViewState.turn].hero;
+      if (armedHero === 'goofball') {
+        // Two-click flow: first click picks an opponent piece, second
+        // click picks where to send it.
+        if (!goofballFrom) {
+          if (heroAbilityTargetSet.has(square)) {
+            setGoofballFrom(square);
+          } else {
+            setHeroAbilityArmed(false);
+          }
+          return;
+        }
+        if (heroAbilityTargetSet.has(square)) {
+          applyHeroAbility(square, goofballFrom, 'Q');
+          setGoofballFrom(null);
+          return;
+        }
+        // Click off a legal destination resets back to picking a piece.
+        setGoofballFrom(null);
+        return;
+      }
+      if (armedHero === 'twin-jitsu') {
+        if (!twinJitsuFrom) {
+          if (heroAbilityTargetSet.has(square)) {
+            setTwinJitsuFrom(square);
+          } else {
+            setHeroAbilityArmed(false);
+          }
+          return;
+        }
+        if (heroAbilityTargetSet.has(square)) {
+          applyHeroAbility(square, twinJitsuFrom);
+          setTwinJitsuFrom(null);
+          return;
+        }
+        setTwinJitsuFrom(null);
+        return;
+      }
       if (heroAbilityTargetSet.has(square)) {
         applyHeroAbility(square);
         return;
@@ -596,7 +1009,12 @@ export function Home() {
       return;
     }
     if (freeSelected && heroLegalTargets.some((t) => t.to === square)) {
-      applyHeroMove(freeSelected, square, promotionFor('hero', freeSelected, square));
+      if (isPromotionMove('hero', freeSelected, square)) {
+        setFreePromo({ from: freeSelected, to: square, variant: 'hero', viaClick: true });
+        setFreeSelected(null);
+        return;
+      }
+      applyHeroMove(freeSelected, square, undefined, true);
       return;
     }
     const heroPiece = heroViewState.board[heroSqToIdx(square)];
@@ -636,6 +1054,21 @@ export function Home() {
       return;
     }
     if (freeVariant === 'hero') {
+      // Goofball: dragging an enemy piece while armed is part of the
+      // ability (drop fires it). Don't disarm and don't select our own
+      // piece in that case.
+      if (
+        heroAbilityArmed &&
+        heroViewState.heroes[heroViewState.turn].hero === 'goofball'
+      ) {
+        const piece = heroViewState.board[heroSqToIdx(from)];
+        const opp = heroViewState.turn === 'w' ? 'b' : 'w';
+        if (piece && piece.color === opp) {
+          setGoofballFrom(from);
+          return;
+        }
+        // Otherwise (dragging own / empty) — fall through and disarm.
+      }
       if (heroAbilityArmed) setHeroAbilityArmed(false);
       const piece = heroViewState.board[heroSqToIdx(from)];
       if (!piece || piece.color !== heroViewState.turn) return;
@@ -660,6 +1093,7 @@ export function Home() {
     setHeroAbilityArmed(false);
     setFreeViewPly(0);
     setFreeSelected(null);
+    setFreeAnnotationsClearKey((k) => k + 1);
     return;
   };
 
@@ -739,9 +1173,13 @@ export function Home() {
           if (r) {
             if (forward) {
               if (r.abilityUsed === 'frost') sfx.playFreeze();
-              else if (r.abilityUsed === 'knight') sfx.playSlice();
+              else if (r.abilityUsed === 'warlord') sfx.playSlice();
               else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
               else if (r.abilityUsed === 'flight') sfx.playFly();
+              else if (r.abilityUsed === 'mutation') sfx.playMutate();
+              else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
+              else if (r.abilityUsed === 'goofball') sfx.playGoofball();
+              else if (r.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
               else if (r.castled) sfx.playCastle();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
@@ -759,21 +1197,80 @@ export function Home() {
         const prevState = heroStates[p];
         const nextState = heroStates[p + 1];
         if (r && r.abilityUsed && prevState && nextState) {
-          const targetSq = r.uci.slice(2);
-          const moverColor = prevState.turn;
-          let fromSq: string | undefined;
-          if (r.abilityUsed === 'flight') {
-            fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
-          } else if (r.abilityUsed === 'knight') {
-            fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
+          const ab = r.abilityUsed;
+          if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
+            const targetSq = r.uci.slice(2);
+            const moverColor = prevState.turn;
+            let fromSq: string | undefined;
+            if (ab === 'flight') {
+              fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
+            } else if (ab === 'warlord') {
+              fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
+            }
+            setHeroAbilityAnim({
+              kind: ab,
+              fromSq,
+              toSq: targetSq,
+              color: moverColor,
+              key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+            });
           }
-          setHeroAbilityAnim({
-            kind: r.abilityUsed,
-            fromSq,
-            toSq: targetSq,
-            color: moverColor,
-            key: `${prevState.ply}-${r.uci}-${Date.now()}`,
-          });
+        }
+        // Replay missile detonations on this scrubbed-into ply.
+        if (prevState && nextState && r) {
+          const landings = prevState.missiles.filter((m) => m.landsAtPly <= nextState.ply);
+          if (landings.length > 0) {
+            sfx.playMissileWhistle();
+            // Reconstruct what was on the impact square at detonation time.
+            const doomed = landings
+              .map((m) => {
+                const p = pieceAtImpactBeforeBlast(prevState, r.uci, m.idx);
+                return p ? { sq: heroIdxToSq(m.idx), letter: p.letter as string } : null;
+              })
+              .filter((x): x is { sq: string; letter: string } => x !== null);
+            if (doomed.length > 0) setHeroDoomedPieces(doomed);
+            landings.forEach((m, i) => {
+              const at = 500 + i * 220;
+              window.setTimeout(() => {
+                setHeroAbilityAnim({
+                  kind: 'icbm',
+                  toSq: heroIdxToSq(m.idx),
+                  color: m.firedBy,
+                  key: `icbm-${prevState.ply}-${m.idx}-${Date.now()}`,
+                });
+                sfx.playExplosion();
+                setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== heroIdxToSq(m.idx)));
+              }, at);
+            });
+          }
+          // Replay warlord-ability doomed sprite on this scrubbed-into ply.
+          if (r.abilityUsed === 'warlord') {
+            const targetSq = r.uci.slice(2);
+            const victim = prevState.board[heroSqToIdx(targetSq)];
+            if (victim) {
+              const entry = { sq: targetSq, letter: victim.letter };
+              setHeroDoomedPieces((prev) => [...prev, entry]);
+              window.setTimeout(() => {
+                setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== targetSq));
+              }, 450);
+            }
+          }
+          // Replay frost shatter when scrubbing into the ply on which any
+          // freeze expired (entry present in prev but missing in next).
+          if (prevState.frozen.length > 0) {
+            const nextIdxs = new Set(nextState.frozen.map((f) => f.idx));
+            const expired = prevState.frozen.filter((f) => !nextIdxs.has(f.idx));
+            if (expired.length > 0) {
+              const f = expired[expired.length - 1];
+              sfx.playFrostShatter();
+              setHeroAbilityAnim({
+                kind: 'frost-shatter',
+                toSq: heroIdxToSq(f.idx),
+                color: 'w',
+                key: `frost-shatter-${prevState.ply}-${f.idx}-${Date.now()}`,
+              });
+            }
+          }
         }
       }
       return next;
@@ -870,7 +1367,6 @@ export function Home() {
             session: session!,
             myPeerId,
             partnerPeerId: result.partnerPeerId,
-            partnerPubKey: result.partnerPubKey,
             partnerHandle: result.partnerHandle,
             partnerRating: result.partnerRating,
             iAmWhite: result.iAmWhite,
@@ -935,7 +1431,6 @@ export function Home() {
             gameId,
             iAmWhite: !hostIsWhite,
             timeControlId: selected.id,
-            hostPubKey: identity.publicKeyHex,
             hostHandle: identity.handle,
             hostRating: rating,
           });
@@ -945,7 +1440,6 @@ export function Home() {
             session: session!,
             myPeerId,
             partnerPeerId: joinerPeerId,
-            partnerPubKey: msg.publicKeyHex,
             partnerHandle: msg.handle,
             partnerRating: msg.rating,
             iAmWhite: hostIsWhite,
@@ -995,8 +1489,8 @@ export function Home() {
       <div className="page-narrow">
         <h1 className="page-title">Welcome</h1>
         <p className="muted">
-          Pick a handle. We'll generate a keypair in your browser — your identity stays local. No
-          server account, no email, no password.
+          Pick a handle to play. No server account, no email, no password — your handle and rating
+          stay local on this device.
         </p>
         <form
           className="signup-form"
@@ -1013,7 +1507,7 @@ export function Home() {
             maxLength={20}
           />
           <button className="primary-btn" type="submit" disabled={!handleInput.trim()}>
-            Create identity
+            Continue
           </button>
         </form>
       </div>
@@ -1024,14 +1518,13 @@ export function Home() {
 
   return (
     <div className="page">
-      <div className="hero">
-        <h1 className="page-title">Voice Chat Chess</h1>
-        <p className="muted">
-          Chess with voice chat, new variants, and more!
-        </p>
-      </div>
-
       <div className="home-play-area">
+        <div className="hero">
+          <h1 className="page-title">Voice Chat Chess</h1>
+          <p className="muted">
+            Chess with voice chat, new variants, and more!
+          </p>
+        </div>
         <div className={`free-play-board${freeVariant === 'cash' || freeVariant === 'hero' ? ' with-shop' : ''}`}>
           {freeVariant === 'cash' && (
             <div className="free-play-shop-col">
@@ -1057,48 +1550,52 @@ export function Home() {
             <div className="free-play-shop-col">
               <div className="hero-side-pickers">
                 <label className="hero-side-picker">
-                  <span className="muted small">White</span>
-                  <select
+                  <span className="sandbox-king-label" aria-label="White">
+                    {renderPiece('wK', 22)}
+                  </span>
+                  <CustomSelect<HeroKind>
                     value={heroW}
-                    onChange={(e) => {
-                      const next = e.target.value as HeroKind;
+                    options={HERO_KINDS.map((h) => ({ value: h, label: HERO_INFO[h].name }))}
+                    onChange={(next) => {
                       if (next !== heroW) {
                         if (next === 'frost') sfx.playFreeze();
-                        else if (next === 'knight') sfx.playSlice();
+                        else if (next === 'warlord') sfx.playSlice();
                         else if (next === 'necromancer') sfx.playSpawn();
                         else if (next === 'flight') sfx.playFly();
+                        else if (next === 'mutation') sfx.playMutate();
+                        else if (next === 'harem') sfx.playHarem();
+                        else if (next === 'icbm') sfx.playMissileLaunch();
+                        else if (next === 'goofball') sfx.playGoofball();
+                        else if (next === 'twin-jitsu') sfx.playTwinJitsu();
                       }
                       setHeroW(next);
                     }}
-                    className="free-play-select"
                     data-no-sfx
-                  >
-                    {HERO_KINDS.map((h) => (
-                      <option key={h} value={h}>{HERO_INFO[h].name}</option>
-                    ))}
-                  </select>
+                  />
                 </label>
                 <label className="hero-side-picker">
-                  <span className="muted small">Black</span>
-                  <select
+                  <span className="sandbox-king-label" aria-label="Black">
+                    {renderPiece('bK', 22)}
+                  </span>
+                  <CustomSelect<HeroKind>
                     value={heroB}
-                    onChange={(e) => {
-                      const next = e.target.value as HeroKind;
+                    options={HERO_KINDS.map((h) => ({ value: h, label: HERO_INFO[h].name }))}
+                    onChange={(next) => {
                       if (next !== heroB) {
                         if (next === 'frost') sfx.playFreeze();
-                        else if (next === 'knight') sfx.playSlice();
+                        else if (next === 'warlord') sfx.playSlice();
                         else if (next === 'necromancer') sfx.playSpawn();
                         else if (next === 'flight') sfx.playFly();
+                        else if (next === 'mutation') sfx.playMutate();
+                        else if (next === 'harem') sfx.playHarem();
+                        else if (next === 'icbm') sfx.playMissileLaunch();
+                        else if (next === 'goofball') sfx.playGoofball();
+                        else if (next === 'twin-jitsu') sfx.playTwinJitsu();
                       }
                       setHeroB(next);
                     }}
-                    className="free-play-select"
                     data-no-sfx
-                  >
-                    {HERO_KINDS.map((h) => (
-                      <option key={h} value={h}>{HERO_INFO[h].name}</option>
-                    ))}
-                  </select>
+                  />
                 </label>
               </div>
               <HeroAbilities
@@ -1107,8 +1604,8 @@ export function Home() {
                 oppHero={heroViewState.heroes[heroViewState.turn === 'w' ? 'b' : 'w'].hero}
                 myCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn)}
                 oppCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn === 'w' ? 'b' : 'w')}
-                myTurn={freeViewPly === heroResults.length && heroAbilityReady(heroViewState, heroViewState.turn)}
-                hasTargets={freeViewPly === heroResults.length && heroAbilityTargets(heroViewState).length > 0}
+                myTurn={heroAbilityReady(heroViewState, heroViewState.turn)}
+                hasTargets={heroAbilityTargets(heroViewState).length > 0}
                 armed={heroAbilityArmed}
                 onArm={() => { setFreeSelected(null); setHeroAbilityArmed(true); sfx.playSelect(); }}
                 onCancel={() => setHeroAbilityArmed(false)}
@@ -1121,11 +1618,17 @@ export function Home() {
               <div className="free-play-turn" aria-label={`${freeTurn === 'w' ? 'White' : 'Black'} to move`}>
                 <span className={`turn-swatch ${freeTurn === 'w' ? 'white' : 'black'}`} aria-hidden />
               </div>
-              <select
-                className="free-play-select"
+              <CustomSelect<FreeVariant>
                 value={freeVariant}
-                onChange={(e) => {
-                  const next = e.target.value as FreeVariant;
+                aria-label="Free-play game mode"
+                options={[
+                  { value: 'normal', label: 'Normal' },
+                  { value: 'merge',  label: 'Merge' },
+                  { value: 'two',    label: 'Guerrilla' },
+                  { value: 'cash',   label: 'Cash Money' },
+                  { value: 'hero',   label: 'Hero' },
+                ]}
+                onChange={(next) => {
                   if (next !== freeVariant) {
                     if (next === 'merge') sfx.playMerge();
                     else if (next === 'two') sfx.playPush();
@@ -1135,14 +1638,7 @@ export function Home() {
                   }
                   setFreeVariant(next);
                 }}
-                aria-label="Free-play game mode"
-              >
-                <option value="normal">Normal</option>
-                <option value="merge">Merge</option>
-                <option value="two">Guerrilla</option>
-                <option value="cash">Cash Money</option>
-                <option value="hero">Hero</option>
-              </select>
+              />
             </div>
             <div className="free-play-header-actions">
               <button
@@ -1176,6 +1672,12 @@ export function Home() {
                   onPieceDrop={handleFreeDrop}
                   onDragStartSquare={onFreeDragStart}
                   lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : freeVariant === 'merge' ? (
                 <MergeBoard
@@ -1187,6 +1689,12 @@ export function Home() {
                   onPieceDrop={handleMergeDrop}
                   onDragStartSquare={onFreeDragStart}
                   lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : freeVariant === 'two' ? (
                 <MergeBoard
@@ -1198,6 +1706,12 @@ export function Home() {
                   onPieceDrop={handleTwoDrop}
                   onDragStartSquare={onFreeDragStart}
                   lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : freeVariant === 'cash' ? (
                 <MergeBoard
@@ -1208,13 +1722,28 @@ export function Home() {
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleCashDrop}
                   onDragStartSquare={onFreeDragStart}
+                  ghostSpawn={
+                    cashShopLetter
+                      ? {
+                          letter: cashViewState.turn === 'w'
+                            ? cashShopLetter
+                            : cashShopLetter.toLowerCase(),
+                        }
+                      : null
+                  }
                   lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : (
                 <MergeBoard
                   board={heroViewState.board as unknown as (MergePiece | null)[]}
                   orientation={freeOrientation}
-                  selectedSquare={heroAbilityArmed ? null : freeSelected}
+                  selectedSquare={heroAbilityArmed ? (goofballFrom ?? twinJitsuFrom ?? null) : freeSelected}
                   legalTargets={heroLegalTargets}
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleHeroDrop}
@@ -1223,13 +1752,81 @@ export function Home() {
                     w: HERO_INFO[heroViewState.heroes.w.hero].glowColor,
                     b: HERO_INFO[heroViewState.heroes.b.hero].glowColor,
                   }}
-                  frozenSquare={
-                    heroViewState.frozen && heroViewState.ply < heroViewState.frozen.expiresAtPly
-                      ? heroIdxToSq(heroViewState.frozen.idx)
+                  frozenSquares={
+                    heroViewState.frozen
+                      .filter((f) => heroViewState.ply < f.expiresAtPly)
+                      .map((f) => heroIdxToSq(f.idx))
+                  }
+                  frozenCrackingSquares={
+                    heroViewState.frozen
+                      .filter((f) => f.expiresAtPly - heroViewState.ply === 1)
+                      .map((f) => heroIdxToSq(f.idx))
+                  }
+                  missiles={heroViewState.missiles.map((m) => ({
+                    sq: heroIdxToSq(m.idx),
+                    pliesLeft: Math.max(0, m.landsAtPly - heroViewState.ply),
+                    firedBy: m.firedBy,
+                  }))}
+                  doomedPieces={heroDoomedPieces.map((d) => ({
+                    sq: d.sq as any,
+                    letter: d.letter as any,
+                  }))}
+                  ghostCrosshair={
+                    heroAbilityArmed &&
+                    heroViewState.heroes[heroViewState.turn].hero === 'icbm'
+                      ? { firedBy: heroViewState.turn }
                       : null
                   }
                   abilityAnim={heroAbilityAnim}
                   lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
+                  // Twin-Jitsu masks: in local play the same screen hosts both
+                  // sides, so we take the current turn as "self" — that side
+                  // sees its own masked pieces with the translucent overlay
+                  // while the other side's masked pieces render as kings.
+                  maskedSelfSquares={(() => {
+                    const out: string[] = [];
+                    for (let i = 0; i < 64; i++) {
+                      if (!heroViewState.masked[i]) continue;
+                      const p = heroViewState.board[i];
+                      if (p && p.color === heroViewState.turn) out.push(heroIdxToSq(i));
+                    }
+                    return out;
+                  })()}
+                  maskedAsKingSquares={(() => {
+                    const out: string[] = [];
+                    for (let i = 0; i < 64; i++) {
+                      if (!heroViewState.masked[i]) continue;
+                      const p = heroViewState.board[i];
+                      if (p && p.color !== heroViewState.turn) out.push(heroIdxToSq(i));
+                    }
+                    return out;
+                  })()}
+                />
+              )}
+              {freePromo && (
+                <PromotionPicker
+                  square={freePromo.to}
+                  color={
+                    freePromo.variant === 'normal' ? previewChess.turn() :
+                    freePromo.variant === 'merge' ? mergeViewState.turn :
+                    freePromo.variant === 'two' ? twoViewState.turn :
+                    heroViewState.turn
+                  }
+                  orientation={freeOrientation}
+                  options={
+                    freePromo.variant === 'hero' &&
+                    heroViewState.heroes[heroViewState.turn].hero === 'mutation'
+                      ? ['Q', 'R', 'B', 'N', 'Z', 'C', 'A']
+                      : ['Q', 'R', 'B', 'N']
+                  }
+                  onPick={resolveFreePromotion}
+                  onCancel={() => setFreePromo(null)}
                 />
               )}
               {freeEnd && (

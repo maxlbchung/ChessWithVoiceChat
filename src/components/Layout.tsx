@@ -42,6 +42,18 @@ export function Layout() {
             Play
           </Link>
           <Link
+            to="/sandbox"
+            className={location.pathname.startsWith('/sandbox') ? 'active' : ''}
+          >
+            Sandbox
+          </Link>
+          <Link
+            to="/review"
+            className={location.pathname.startsWith('/review') ? 'active' : ''}
+          >
+            Review
+          </Link>
+          <Link
             to="/profile"
             className={location.pathname.startsWith('/profile') ? 'active' : ''}
           >

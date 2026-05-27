@@ -6,10 +6,12 @@ export function Settings() {
     showOpponentNames,
     showOpponentAvatars,
     chatEnabled,
+    animationsEnabled,
     setVolume,
     setShowOpponentNames,
     setShowOpponentAvatars,
     setChatEnabled,
+    setAnimationsEnabled,
   } = useSettingsStore();
 
   return (
@@ -69,6 +71,20 @@ export function Settings() {
             checked={chatEnabled}
             onChange={setChatEnabled}
             label="Chat enabled"
+          />
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <div className="settings-title">Animations</div>
+            <div className="muted small">
+              Smooth peice movement, ability effects, merge animation.
+            </div>
+          </div>
+          <Toggle
+            checked={animationsEnabled}
+            onChange={setAnimationsEnabled}
+            label="Animations"
           />
         </div>
       </section>

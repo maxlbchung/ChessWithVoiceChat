@@ -6,27 +6,28 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
-import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
   GameEndReason,
   GameOutcome,
   GameRecord,
+  Move,
   PlayerInfo,
-  SignedMove,
   WireMessage,
 } from '../lib/types';
 import { eloDelta, newRating } from '../lib/elo';
-import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
+import { appendSummary, loadAggregateStats, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   applyMove,
   initialState,
@@ -78,7 +79,7 @@ export function TwoGame() {
   useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
-  const [moves, setMoves] = useState<SignedMove[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
   const [drawOfferedByMe, setDrawOfferedByMe] = useState(false);
@@ -99,6 +100,26 @@ export function TwoGame() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  // Pending promotion — the picker overlay is shown until the user clicks
+  // a piece. Slides/pops are captured at attempt time so the move animates
+  // identically whether it promoted to queen or a minor piece.
+  const [pendingPromo, setPendingPromo] = useState<{
+    from: Square; to: Square;
+    slides?: { from: Square; to: Square }[];
+    pops?: Square[];
+  } | null>(null);
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -133,17 +154,15 @@ export function TwoGame() {
   const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
 
   const me: PlayerInfo = {
-    publicKeyHex: identity.publicKeyHex,
     handle: identity.handle,
     rating,
   };
   const opp: PlayerInfo = {
-    publicKeyHex: handoff.partnerPubKey,
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -239,7 +258,6 @@ export function TwoGame() {
       setConnState('connected');
       session.send({
         type: 'hello',
-        publicKeyHex: identity.publicKeyHex,
         handle: identity.handle,
         rating,
       });
@@ -364,6 +382,8 @@ export function TwoGame() {
 
   const applyLocalMove = async (
     from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
+    slides?: { from: Square; to: Square }[],
+    pops?: Square[],
   ): Promise<boolean> => {
     if (end) return false;
     if (!gameStarted) return false;
@@ -397,12 +417,24 @@ export function TwoGame() {
       ? tc.perMoveMs
       : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
 
-    const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
+    const signed: Move = {
+      uci,
+      fenAfter: res.result.fenAfter,
+      ply,
+      whiteClockMs: wMs,
+      blackClockMs: bMs,
+    };
     setMoves((m) => [...m, signed]);
     setGame(res.state);
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setViewPly((p) => p + 1);
+    if (slides && slides.length > 0) {
+      setSlideAnim({ moves: slides, key: Date.now() });
+    }
+    if (pops && pops.length > 0) {
+      setPopAnim({ squares: pops, key: Date.now() });
+    }
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -412,13 +444,8 @@ export function TwoGame() {
     return true;
   };
 
-  const applyRemoteMove = async (move: SignedMove) => {
+  const applyRemoteMove = async (move: Move) => {
     if (end) return;
-    const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) {
-      console.warn('signature failed for move', move);
-      return;
-    }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
@@ -481,13 +508,12 @@ export function TwoGame() {
 
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
-    const summaries = await loadSummaries();
-    const gamesPlayed = summaries.length;
+    const { total: gamesPlayed } = await loadAggregateStats();
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
 
-    const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
+    const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
       white: handoff.iAmWhite ? me : opp,
@@ -498,18 +524,11 @@ export function TwoGame() {
       reason: state.reason,
       moves,
     };
-    const mySig = await signRecord(identity, partial);
-    const record: GameRecord = {
-      ...partial,
-      whiteSignature: handoff.iAmWhite ? mySig : '',
-      blackSignature: handoff.iAmWhite ? '' : mySig,
-    };
     await saveGameRecord(record);
     await appendSummary({
       gameId: gameId!,
       timeControlId: tc.id,
       opponentHandle: opp.handle,
-      opponentPubKey: opp.publicKeyHex,
       myColor,
       outcome: state.outcome,
       reason: state.reason,
@@ -639,20 +658,56 @@ export function TwoGame() {
     return (game.turn === 'w') === (c === 'white');
   };
 
-  const attemptMove = (from: Square, to: Square): boolean => {
+  // For a rook push, the rook moves onto `to` and every contiguous piece
+  // starting at `to` shifts one square in the push direction. Walk the chain
+  // off the pre-move board so we can animate each pushed piece.
+  const computeSlideMoves = (from: Square, to: Square): { from: Square; to: Square }[] => {
+    const slides: { from: Square; to: Square }[] = [{ from, to }];
+    const piece = game.board[sqIdx(from)];
+    if (!piece || piece.letter.toUpperCase() !== 'R') return slides;
+    if (!game.board[sqIdx(to)]) return slides; // not a push: empty destination
+    const ff = from.charCodeAt(0) - 97;
+    const fr = parseInt(from[1], 10) - 1;
+    const tf = to.charCodeAt(0) - 97;
+    const tr = parseInt(to[1], 10) - 1;
+    const df = Math.sign(tf - ff);
+    const dr = Math.sign(tr - fr);
+    if (df === 0 && dr === 0) return slides;
+    let f = tf, r = tr;
+    while (f >= 0 && f < 8 && r >= 0 && r < 8) {
+      const sq = (String.fromCharCode(97 + f) + String.fromCharCode(49 + r)) as Square;
+      if (!game.board[sqIdx(sq)]) break;
+      const nf = f + df, nr = r + dr;
+      if (nf < 0 || nf >= 8 || nr < 0 || nr >= 8) break;
+      const nsq = (String.fromCharCode(97 + nf) + String.fromCharCode(49 + nr)) as Square;
+      slides.push({ from: sq, to: nsq });
+      f = nf; r = nr;
+    }
+    return slides;
+  };
+
+  const attemptMove = (from: Square, to: Square, viaClick = false): boolean => {
     const piece = game.board[sqIdx(from)];
     const isPawn = piece && piece.letter.toUpperCase() === 'P';
     const targetRank = parseInt(to[1], 10);
     const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
+    const slides = viaClick && animationsEnabled ? computeSlideMoves(from, to) : undefined;
+    const pops = animationsEnabled && isPromoting ? [to] : undefined;
     if (isPromoting) {
-      const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
-      const promo = (choice ?? 'Q').toUpperCase();
-      const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
-      void applyLocalMove(from, to, valid);
+      setPendingPromo({ from, to, slides, pops });
     } else {
-      void applyLocalMove(from, to);
+      void applyLocalMove(from, to, undefined, slides, pops);
     }
     return true;
+  };
+
+  const resolvePromotion = (letter: PromotionLetter) => {
+    if (!pendingPromo) return;
+    const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+      ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+    const { from, to, slides, pops } = pendingPromo;
+    setPendingPromo(null);
+    void applyLocalMove(from, to, valid, slides, pops);
   };
 
   const onSquareClick = (square: Square) => {
@@ -663,7 +718,7 @@ export function TwoGame() {
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
-      attemptMove(selectedSquare, square);
+      attemptMove(selectedSquare, square, true);
       return;
     }
     const piece = game.board[sqIdx(square)];
@@ -738,10 +793,23 @@ export function TwoGame() {
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && gameStarted && isMyTurn() && atPresent}
-            draggable={!end && gameStarted && isMyTurn() && atPresent}
+            interactive={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
+            draggable={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
             lastMove={lastMove}
+            slideMoves={slideAnim?.moves}
+            slideKey={slideAnim?.key}
+            popSquares={popAnim?.squares}
+            popKey={popAnim?.key}
           />
+          {pendingPromo && (
+            <PromotionPicker
+              square={pendingPromo.to}
+              color={game.turn}
+              orientation={handoff.iAmWhite ? 'white' : 'black'}
+              onPick={resolvePromotion}
+              onCancel={() => setPendingPromo(null)}
+            />
+          )}
           {partnerReady && !gameStarted && movesCountRef.current === 0 && (
             <StartOverlay
               whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
@@ -838,6 +906,29 @@ export function TwoGame() {
             disabled={!canRedoView}
           >
             Redo
+          </button>
+          <button
+            className="free-play-btn"
+            type="button"
+            disabled={moves.length === 0}
+            onClick={() => {
+              const exp = buildGameExport({
+                variant: 'two',
+                gameId: gameId!,
+                timeControlId: tc.id,
+                white: handoff.iAmWhite ? me : opp,
+                black: handoff.iAmWhite ? opp : me,
+                startedAt: startedAtRef.current,
+                endedAt: end ? Date.now() : null,
+                outcome: end?.outcome ?? null,
+                reason: end?.reason ?? null,
+                moves,
+              });
+              downloadGameExport(exp);
+            }}
+            title="Download this game as JSON for the Review page"
+          >
+            Export
           </button>
           {!end && (
             <>

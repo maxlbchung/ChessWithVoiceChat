@@ -41,7 +41,6 @@ export function useRematch(handoff: LobbyHandoff, session: PeerSession) {
       session,
       myPeerId: handoff.myPeerId,
       partnerPeerId: handoff.partnerPeerId,
-      partnerPubKey: handoff.partnerPubKey,
       partnerHandle: handoff.partnerHandle,
       partnerRating: handoff.partnerRating,
       // Swap colors so the same pair alternates white/black across rematches.

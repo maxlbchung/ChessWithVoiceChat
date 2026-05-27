@@ -1,38 +1,91 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useIdentityStore } from '../store/identityStore';
-import { loadSummaries } from '../lib/storage';
+import {
+  loadAggregateStats,
+  loadDaySummaries,
+  loadGameRecord,
+  loadHistoryIndex,
+  type AggregateStats,
+} from '../lib/storage';
 import type { LocalGameSummary } from '../lib/types';
-import { exportIdentity, importIdentity } from '../lib/identity';
 import { getTimeControl } from '../lib/timeControls';
 import { fileToAvatarDataUrl } from '../lib/avatar';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 
 export function Profile() {
-  const { identity, rating, avatar, setIdentity, setHandle, setAvatar } = useIdentityStore();
+  const { identity, rating, avatar, setHandle, setAvatar } = useIdentityStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [summaries, setSummaries] = useState<LocalGameSummary[]>([]);
-  const [exportText, setExportText] = useState<string | null>(null);
-  const [importText, setImportText] = useState('');
   const [editingHandle, setEditingHandle] = useState(false);
   const [handleDraft, setHandleDraft] = useState('');
 
+  // History pagination state. `dates` is the manifest of dates that have at
+  // least one game, newest first. `viewIdx` is which date we're currently
+  // showing. `daySummaries` is that date's bucket. Aggregate stats come from
+  // their own counter key so we don't have to walk every bucket.
+  const [dates, setDates] = useState<string[]>([]);
+  const [viewIdx, setViewIdx] = useState(0);
+  const [daySummaries, setDaySummaries] = useState<LocalGameSummary[]>([]);
+  const [aggregate, setAggregate] = useState<AggregateStats>({ wins: 0, losses: 0, draws: 0, total: 0 });
+
   useEffect(() => {
-    loadSummaries().then(setSummaries);
+    Promise.all([loadHistoryIndex(), loadAggregateStats()]).then(([d, a]) => {
+      setDates(d);
+      setAggregate(a);
+    });
   }, []);
+
+  // Load the currently-viewed day's bucket whenever the cursor moves.
+  useEffect(() => {
+    if (dates.length === 0) {
+      setDaySummaries([]);
+      return;
+    }
+    const date = dates[Math.min(viewIdx, dates.length - 1)];
+    loadDaySummaries(date).then(setDaySummaries);
+  }, [dates, viewIdx]);
 
   if (!identity) {
     return (
       <div className="page-narrow">
-        <h1 className="page-title">No identity yet</h1>
-        <p className="muted">Head back to the lobby to create one.</p>
+        <h1 className="page-title">No profile yet</h1>
+        <p className="muted">Head back to the lobby to pick a handle.</p>
       </div>
     );
   }
 
-  const wins = summaries.filter((s) => s.outcome === s.myColor).length;
-  const losses = summaries.filter(
-    (s) => s.outcome !== 'draw' && s.outcome !== s.myColor,
-  ).length;
-  const draws = summaries.filter((s) => s.outcome === 'draw').length;
+  // Pull a stored record and trigger a JSON download. Hero matches aren't
+  // exportable from local history because the hero picks aren't persisted —
+  // those rows show "—" instead of buttons.
+  const exportGame = async (gameId: string) => {
+    const rec = await loadGameRecord(gameId);
+    if (!rec) {
+      alert('That game record is no longer in local storage.');
+      return;
+    }
+    const tc = getTimeControl(rec.timeControlId);
+    if (!tc) {
+      alert('Unknown time control on that record.');
+      return;
+    }
+    const exp = buildGameExport({
+      variant: tc.variant,
+      gameId: rec.gameId,
+      timeControlId: rec.timeControlId,
+      white: rec.white,
+      black: rec.black,
+      startedAt: rec.startedAt,
+      endedAt: rec.endedAt,
+      outcome: rec.outcome,
+      reason: rec.reason,
+      moves: rec.moves,
+    });
+    downloadGameExport(exp);
+  };
+
+  const currentDate = dates[Math.min(viewIdx, Math.max(0, dates.length - 1))];
+  const canPrev = viewIdx < dates.length - 1; // older
+  const canNext = viewIdx > 0; // newer
 
   return (
     <div className="page">
@@ -129,121 +182,204 @@ export function Profile() {
           <div className="profile-field">
             <div className="muted small">Record</div>
             <div className="profile-value">
-              {wins}W / {losses}L / {draws}D
+              {aggregate.wins}W / {aggregate.losses}L / {aggregate.draws}D
+              <span className="muted small"> ({aggregate.total} total)</span>
             </div>
           </div>
         </div>
-
-        <div className="profile-row">
-          <div className="profile-field grow">
-            <div className="muted small">Public key</div>
-            <div className="mono break">{identity.publicKeyHex}</div>
-          </div>
-        </div>
-
-        <div className="profile-row identity-actions">
-          {!exportText ? (
-            <button
-              className="secondary-btn"
-              onClick={() => setExportText(exportIdentity(identity))}
-            >
-              Export identity
-            </button>
-          ) : (
-            <div className="profile-field grow">
-              <div className="muted small">
-                Save this string somewhere safe. It IS your account.
-              </div>
-              <textarea
-                className="text-input mono"
-                readOnly
-                rows={3}
-                value={exportText}
-                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-              />
-              <button className="link-btn" onClick={() => setExportText(null)}>
-                hide
-              </button>
-            </div>
-          )}
-        </div>
-
-        <details className="import-block">
-          <summary>Import identity from another device</summary>
-          <p className="muted small">
-            Pasting an identity string overwrites your current one. Game history & rating on this
-            device stay unless you clear browser storage.
-          </p>
-          <textarea
-            className="text-input mono"
-            rows={3}
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            placeholder="paste exported identity string"
-          />
-          <button
-            className="primary-btn"
-            disabled={!importText.trim()}
-            onClick={async () => {
-              try {
-                const id = await importIdentity(importText.trim());
-                setIdentity(id);
-                setImportText('');
-              } catch (e) {
-                alert('Invalid identity string');
-              }
-            }}
-          >
-            Import
-          </button>
-        </details>
       </section>
 
       <section className="history-section">
-        <h2>Recent games</h2>
-        {summaries.length === 0 ? (
+        <h2>Game history</h2>
+        {dates.length === 0 ? (
           <div className="muted">No games yet — go play one.</div>
         ) : (
-          <table className="history-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Color</th>
-                <th>Opponent</th>
-                <th>Result</th>
-                <th>Δ</th>
-                <th>Rating</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summaries.map((s) => {
-                const tc = getTimeControl(s.timeControlId);
-                const delta = s.ratingAfter - s.ratingBefore;
-                const myResult =
-                  s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
-                return (
-                  <tr key={s.gameId}>
-                    <td>{tc?.label ?? s.timeControlId}</td>
-                    <td>{s.myColor}</td>
-                    <td>
-                      <span className="mono small">{s.opponentHandle}</span>
-                    </td>
-                    <td className={`result-${myResult === '1' ? 'win' : myResult === '0' ? 'loss' : 'draw'}`}>
-                      {myResult}
-                    </td>
-                    <td className={delta >= 0 ? 'pos' : 'neg'}>
-                      {delta >= 0 ? '+' : ''}{delta}
-                    </td>
-                    <td>{s.ratingAfter}</td>
-                    <td className="muted small">{s.reason}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <>
+            <DateNav
+              dates={dates}
+              viewIdx={viewIdx}
+              onPrev={() => canPrev && setViewIdx((i) => i + 1)}
+              onNext={() => canNext && setViewIdx((i) => i - 1)}
+              onJump={(date) => {
+                const idx = dates.indexOf(date);
+                if (idx >= 0) setViewIdx(idx);
+              }}
+              onLatest={() => setViewIdx(0)}
+              currentDate={currentDate}
+            />
+            <DaySummaryTable
+              summaries={daySummaries}
+              onExport={(id) => void exportGame(id)}
+            />
+          </>
         )}
       </section>
     </div>
+  );
+}
+
+function DateNav({
+  dates,
+  viewIdx,
+  onPrev,
+  onNext,
+  onJump,
+  onLatest,
+  currentDate,
+}: {
+  dates: string[];
+  viewIdx: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onJump: (date: string) => void;
+  onLatest: () => void;
+  currentDate: string | undefined;
+}) {
+  const canPrev = viewIdx < dates.length - 1;
+  const canNext = viewIdx > 0;
+  // Min and max for the date picker: oldest and newest in the manifest.
+  const min = dates[dates.length - 1];
+  const max = dates[0];
+
+  const label = useMemo(() => {
+    if (!currentDate) return '';
+    // YYYY-MM-DD → local Date at midnight. Use components to avoid the TZ
+    // shift that `new Date('2026-05-21')` would inject (it'd parse as UTC).
+    const [y, m, d] = currentDate.split('-').map((n) => parseInt(n, 10));
+    const date = new Date(y, (m - 1), d);
+    return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  }, [currentDate]);
+
+  // Position in the manifest, presented as "newer side has lower index" so
+  // the user sees Page 1 = today and Page N = oldest.
+  const pageNumber = dates.length - viewIdx;
+  return (
+    <div className="history-date-nav">
+      <button
+        className="free-play-btn"
+        type="button"
+        onClick={onPrev}
+        disabled={!canPrev}
+        title="Older day with games"
+      >
+        ← Older
+      </button>
+      <div className="history-date-center">
+        <div className="history-date-label">{label}</div>
+        <div className="muted small">
+          {currentDate} · day {pageNumber} of {dates.length}
+        </div>
+      </div>
+      <button
+        className="free-play-btn"
+        type="button"
+        onClick={onNext}
+        disabled={!canNext}
+        title="Newer day with games"
+      >
+        Newer →
+      </button>
+      <div className="history-date-tools">
+        <input
+          type="date"
+          className="text-input"
+          value={currentDate ?? ''}
+          min={min}
+          max={max}
+          onChange={(e) => onJump(e.target.value)}
+          title="Jump to a specific day"
+        />
+        <button
+          className="free-play-btn"
+          type="button"
+          onClick={onLatest}
+          disabled={viewIdx === 0}
+          title="Jump to the most recent day with games"
+        >
+          Latest
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DaySummaryTable({
+  summaries,
+  onExport,
+}: {
+  summaries: LocalGameSummary[];
+  onExport: (gameId: string) => void;
+}) {
+  if (summaries.length === 0) {
+    return <div className="muted">No games on this day.</div>;
+  }
+  return (
+    <table className="history-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Color</th>
+          <th>Opponent</th>
+          <th>Result</th>
+          <th>Δ</th>
+          <th>Rating</th>
+          <th>Reason</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {summaries.map((s) => {
+          const tc = getTimeControl(s.timeControlId);
+          const delta = s.ratingAfter - s.ratingBefore;
+          const myResult =
+            s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
+          // Hero matches don't store hero picks in the local record, so
+          // review-from-history can't reconstruct them.
+          const canReview = tc?.variant !== 'hero';
+          return (
+            <tr key={s.gameId}>
+              <td>{tc?.label ?? s.timeControlId}</td>
+              <td>{s.myColor}</td>
+              <td>
+                <span className="mono small">{s.opponentHandle}</span>
+              </td>
+              <td className={`result-${myResult === '1' ? 'win' : myResult === '0' ? 'loss' : 'draw'}`}>
+                {myResult}
+              </td>
+              <td className={delta >= 0 ? 'pos' : 'neg'}>
+                {delta >= 0 ? '+' : ''}{delta}
+              </td>
+              <td>{s.ratingAfter}</td>
+              <td className="muted small">{s.reason}</td>
+              <td>
+                {canReview ? (
+                  <div className="history-row-actions">
+                    <button
+                      className="link-btn"
+                      type="button"
+                      onClick={() => onExport(s.gameId)}
+                      title="Download this game as JSON"
+                    >
+                      Export
+                    </button>
+                    <Link
+                      className="link-btn"
+                      to={`/review?game=${encodeURIComponent(s.gameId)}`}
+                      title="Open this game in the Review page"
+                    >
+                      Review
+                    </Link>
+                  </div>
+                ) : (
+                  <span className="muted small" title="Hero matches can’t replay from local history">
+                    —
+                  </span>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

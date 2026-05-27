@@ -107,6 +107,8 @@ type WaitingRow = {
   ticket: string;
   time_control_id: string;
   peer_id: string;
+  // Legacy column from when identity was an Ed25519 keypair. Still present in
+  // the D1 schema as NOT NULL, so we write an empty string. Not read anywhere.
   public_key_hex: string;
   handle: string;
   rating: number;
@@ -125,8 +127,8 @@ type MatchedRow = {
 };
 
 async function handleJoin(db: D1Database, body: any): Promise<Response> {
-  const { timeControlId, peerId, publicKeyHex, handle, rating } = body;
-  if (!timeControlId || !peerId || !publicKeyHex || typeof rating !== 'number') {
+  const { timeControlId, peerId, handle, rating } = body;
+  if (!timeControlId || !peerId || typeof rating !== 'number') {
     return json({ error: 'missing fields' }, 400);
   }
   await gc(db);
@@ -161,7 +163,7 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
     ).bind(
       partner.ticket,
       peerId,
-      publicKeyHex,
+      '',
       handle ?? 'anon',
       rating,
       newcomerIsWhite ? 0 : 1,
@@ -173,7 +175,6 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
       status: 'matched',
       ticket,
       partnerPeerId: partner.peer_id,
-      partnerPubKey: partner.public_key_hex,
       partnerHandle: partner.handle,
       partnerRating: partner.rating,
       iAmWhite: newcomerIsWhite,
@@ -185,7 +186,7 @@ async function handleJoin(db: D1Database, body: any): Promise<Response> {
   await db.prepare(
     `INSERT INTO waiting (ticket, time_control_id, peer_id, public_key_hex, handle, rating, joined_at, last_seen_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(ticket, timeControlId, peerId, publicKeyHex, handle ?? 'anon', rating, now, now).run();
+  ).bind(ticket, timeControlId, peerId, '', handle ?? 'anon', rating, now, now).run();
 
   return json({ status: 'waiting', ticket });
 }
@@ -210,7 +211,6 @@ async function handlePoll(db: D1Database, body: any): Promise<Response> {
     return json({
       status: 'matched',
       partnerPeerId: matched.partner_peer_id,
-      partnerPubKey: matched.partner_pub_key,
       partnerHandle: matched.partner_handle,
       partnerRating: matched.partner_rating,
       iAmWhite: matched.i_am_white === 1,

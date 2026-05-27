@@ -15,7 +15,6 @@ type IdentityStore = {
   load: () => Promise<void>;
   signUp: (handle: string) => Promise<void>;
   setHandle: (handle: string) => Promise<void>;
-  setIdentity: (id: Identity) => void;
   setRating: (r: number) => Promise<void>;
   setAvatar: (dataUrl: string | null) => Promise<void>;
 };
@@ -45,10 +44,6 @@ export const useIdentityStore = create<IdentityStore>((set, get) => ({
     if (!cur) return;
     const next = await persistHandle(cur, handle.trim().slice(0, MAX_HANDLE_LEN));
     set({ identity: next });
-  },
-
-  setIdentity(id) {
-    set({ identity: id });
   },
 
   async setRating(r: number) {

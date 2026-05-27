@@ -6,27 +6,28 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
-import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
   GameEndReason,
   GameOutcome,
   GameRecord,
+  Move,
   PlayerInfo,
-  SignedMove,
   WireMessage,
 } from '../lib/types';
 import { eloDelta, newRating } from '../lib/elo';
-import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
+import { appendSummary, loadAggregateStats, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   applyMove,
   initialState,
@@ -78,7 +79,7 @@ export function MergeGame() {
   useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
-  const [moves, setMoves] = useState<SignedMove[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
   const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
@@ -100,6 +101,27 @@ export function MergeGame() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  // Set when a pawn move requires a promotion choice. While non-null the
+  // promotion picker overlay is shown and board interaction is gated.
+  const [pendingPromo, setPendingPromo] = useState<{ from: Square; to: Square; viaClick: boolean } | null>(null);
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
+  const [mergeAnim, setMergeAnim] = useState<{ from: Square; to: Square; fromLetter: string; toLetter: string; mergedLetter: string; key: number; releasePx?: { x: number; y: number } } | null>(null);
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
+  useEffect(() => {
+    if (!mergeAnim) return;
+    const t = window.setTimeout(() => setMergeAnim(null), 520);
+    return () => clearTimeout(t);
+  }, [mergeAnim]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -135,17 +157,15 @@ export function MergeGame() {
   const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
 
   const me: PlayerInfo = {
-    publicKeyHex: identity.publicKeyHex,
     handle: identity.handle,
     rating,
   };
   const opp: PlayerInfo = {
-    publicKeyHex: handoff.partnerPubKey,
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -253,7 +273,6 @@ export function MergeGame() {
       setConnState('connected');
       session.send({
         type: 'hello',
-        publicKeyHex: identity.publicKeyHex,
         handle: identity.handle,
         rating,
       });
@@ -380,7 +399,13 @@ export function MergeGame() {
   // --------------------------------------------------------------------
   const isMyTurn = () => game.turn === myEngineColor;
 
-  const applyLocalMove = async (from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N'): Promise<boolean> => {
+  const applyLocalMove = async (
+    from: Square,
+    to: Square,
+    promotion?: 'Q' | 'R' | 'B' | 'N',
+    viaClick = false,
+    releasePx?: { x: number; y: number },
+  ): Promise<boolean> => {
     if (end) return false;
     if (!gameStarted) return false;
     if (!isMyTurn()) return false;
@@ -389,6 +414,10 @@ export function MergeGame() {
     const beforeTurn = game.turn;
     let uci = from + to;
     if (promotion) uci += promotion.toLowerCase();
+    // Snapshot the pre-move letters at from/to for the merge animation —
+    // applyMove returns a fresh state, so we'd otherwise lose them.
+    const moverLetterBefore = game.board[sqIdx(from)]?.letter;
+    const receiverLetterBefore = game.board[sqIdx(to)]?.letter;
     const res = applyMove(game, uci);
     if (!res) return false;
 
@@ -416,12 +445,39 @@ export function MergeGame() {
       ? tc.perMoveMs
       : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
 
-    const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
+    const signed: Move = {
+      uci,
+      fenAfter: res.result.fenAfter,
+      ply,
+      whiteClockMs: wMs,
+      blackClockMs: bMs,
+    };
     setMoves((m) => [...m, signed]);
     setGame(res.state);
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setViewPly((p) => p + 1);
+    // Merge overrides slide+pop with its own flow animation. Slide for a
+    // regular click move; pop for promotions.
+    const mergedLetterAfter = res.state.board[sqIdx(to)]?.letter;
+    if (animationsEnabled && res.result.merged && moverLetterBefore && receiverLetterBefore && mergedLetterAfter) {
+      setMergeAnim({
+        from,
+        to,
+        fromLetter: moverLetterBefore,
+        toLetter: receiverLetterBefore,
+        mergedLetter: mergedLetterAfter,
+        key: Date.now(),
+        releasePx,
+      });
+    } else {
+      if (viaClick && animationsEnabled) {
+        setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      }
+      if (animationsEnabled && !!promotion) {
+        setPopAnim({ squares: [to], key: Date.now() });
+      }
+    }
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -431,13 +487,8 @@ export function MergeGame() {
     return true;
   };
 
-  const applyRemoteMove = async (move: SignedMove) => {
+  const applyRemoteMove = async (move: Move) => {
     if (end) return;
-    const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) {
-      console.warn('signature failed for move', move);
-      return;
-    }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
@@ -497,13 +548,12 @@ export function MergeGame() {
 
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
-    const summaries = await loadSummaries();
-    const gamesPlayed = summaries.length;
+    const { total: gamesPlayed } = await loadAggregateStats();
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
 
-    const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
+    const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
       white: handoff.iAmWhite ? me : opp,
@@ -514,18 +564,11 @@ export function MergeGame() {
       reason: state.reason,
       moves,
     };
-    const mySig = await signRecord(identity, partial);
-    const record: GameRecord = {
-      ...partial,
-      whiteSignature: handoff.iAmWhite ? mySig : '',
-      blackSignature: handoff.iAmWhite ? '' : mySig,
-    };
     await saveGameRecord(record);
     await appendSummary({
       gameId: gameId!,
       timeControlId: tc.id,
       opponentHandle: opp.handle,
-      opponentPubKey: opp.publicKeyHex,
       myColor,
       outcome: state.outcome,
       reason: state.reason,
@@ -660,22 +703,34 @@ export function MergeGame() {
     return (game.turn === 'w') === (c === 'white');
   };
 
-  // Try to play `from`→`to`. Handles pawn promotion via a quick prompt.
+  // Try to play `from`→`to`. Pawn promotions defer to the picker overlay
+  // (resolved by `resolvePromotion` once the user clicks a piece).
   // Returns true if a move was attempted (caller can clear selection).
-  const attemptMove = (from: Square, to: Square): boolean => {
+  const attemptMove = (
+    from: Square,
+    to: Square,
+    viaClick = false,
+    releasePx?: { x: number; y: number },
+  ): boolean => {
     const piece = game.board[sqIdx(from)];
     const isPawn = piece && piece.letter.toUpperCase() === 'P';
     const targetRank = parseInt(to[1], 10);
     const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
     if (isPromoting) {
-      const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
-      const promo = (choice ?? 'Q').toUpperCase();
-      const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
-      void applyLocalMove(from, to, valid);
+      setPendingPromo({ from, to, viaClick });
     } else {
-      void applyLocalMove(from, to);
+      void applyLocalMove(from, to, undefined, viaClick, releasePx);
     }
     return true;
+  };
+
+  const resolvePromotion = (letter: PromotionLetter) => {
+    if (!pendingPromo) return;
+    const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+      ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+    const { from, to, viaClick } = pendingPromo;
+    setPendingPromo(null);
+    void applyLocalMove(from, to, valid, viaClick);
   };
 
   const onSquareClick = (square: Square) => {
@@ -686,7 +741,7 @@ export function MergeGame() {
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
-      attemptMove(selectedSquare, square);
+      attemptMove(selectedSquare, square, true);
       return;
     }
     const piece = game.board[sqIdx(square)];
@@ -711,7 +766,11 @@ export function MergeGame() {
 
   // Drop on a target — apply if legal, otherwise leave selection as-is so
   // the user can still click-to-move.
-  const onPieceDrop = (from: Square, to: Square): boolean => {
+  const onPieceDrop = (
+    from: Square,
+    to: Square,
+    opts?: { releasePx?: { x: number; y: number } },
+  ): boolean => {
     if (end) return false;
     if (!gameStarted) return false;
     if (!atPresent) return false;
@@ -720,7 +779,7 @@ export function MergeGame() {
     if (!piece || piece.color !== myEngineColor) return false;
     const legal = legalMovesFrom(game, from).some((m) => m.to === to);
     if (!legal) return false;
-    return attemptMove(from, to);
+    return attemptMove(from, to, false, opts?.releasePx);
   };
 
   const movesDisplay = useMemo(() => {
@@ -760,10 +819,24 @@ export function MergeGame() {
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && gameStarted && isMyTurn() && atPresent}
-            draggable={!end && gameStarted && isMyTurn() && atPresent}
+            interactive={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
+            draggable={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
             lastMove={lastMove}
+            slideMoves={slideAnim?.moves}
+            slideKey={slideAnim?.key}
+            popSquares={popAnim?.squares}
+            popKey={popAnim?.key}
+            mergeAnim={mergeAnim}
           />
+          {pendingPromo && (
+            <PromotionPicker
+              square={pendingPromo.to}
+              color={game.turn}
+              orientation={handoff.iAmWhite ? 'white' : 'black'}
+              onPick={resolvePromotion}
+              onCancel={() => setPendingPromo(null)}
+            />
+          )}
           {partnerReady && !gameStarted && movesCountRef.current === 0 && (
             <StartOverlay
               whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
@@ -860,6 +933,29 @@ export function MergeGame() {
             disabled={!canRedoView}
           >
             Redo
+          </button>
+          <button
+            className="free-play-btn"
+            type="button"
+            disabled={moves.length === 0}
+            onClick={() => {
+              const exp = buildGameExport({
+                variant: 'merge',
+                gameId: gameId!,
+                timeControlId: tc.id,
+                white: handoff.iAmWhite ? me : opp,
+                black: handoff.iAmWhite ? opp : me,
+                startedAt: startedAtRef.current,
+                endedAt: end ? Date.now() : null,
+                outcome: end?.outcome ?? null,
+                reason: end?.reason ?? null,
+                moves,
+              });
+              downloadGameExport(exp);
+            }}
+            title="Download this game as JSON for the Review page"
+          >
+            Export
           </button>
           {!end && (
             <>

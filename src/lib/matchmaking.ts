@@ -1,8 +1,7 @@
-import { signMessage, hex } from './identity';
 import type { Identity } from './identity';
 
 export type MatchResult =
-  | { status: 'matched'; partnerPeerId: string; partnerPubKey: string; partnerHandle: string; partnerRating: number; iAmWhite: boolean; gameId: string }
+  | { status: 'matched'; partnerPeerId: string; partnerHandle: string; partnerRating: number; iAmWhite: boolean; gameId: string }
   | { status: 'waiting' }
   | { status: 'cancelled' };
 
@@ -12,8 +11,6 @@ const MATCHMAKE_URL =
   import.meta.env.VITE_MATCHMAKE_URL ||
   (import.meta.env.DEV ? '/api/matchmake' : 'https://chess-matchmaker.maxlbchung.workers.dev');
 const POLL_MS = 1500;
-
-const enc = new TextEncoder();
 
 export class Matchmaker {
   private cancelled = false;
@@ -27,10 +24,6 @@ export class Matchmaker {
   }): Promise<MatchResult> {
     this.cancelled = false;
 
-    // Sign a small payload so the matchmaker can prove the peerId belongs to this pubkey
-    const payload = `MATCH|${opts.timeControlId}|${opts.peerId}|${opts.identity.publicKeyHex}`;
-    const sig = await signMessage(opts.identity, enc.encode(payload));
-
     const join = await fetch(MATCHMAKE_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -38,10 +31,8 @@ export class Matchmaker {
         action: 'join',
         timeControlId: opts.timeControlId,
         peerId: opts.peerId,
-        publicKeyHex: opts.identity.publicKeyHex,
         handle: opts.identity.handle,
         rating: opts.rating,
-        signature: hex.bytesToHex(sig),
       }),
     });
     if (!join.ok) throw new Error('matchmake join failed: ' + join.status);

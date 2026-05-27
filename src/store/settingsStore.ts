@@ -6,6 +6,7 @@ type Settings = {
   showOpponentNames: boolean;
   showOpponentAvatars: boolean;
   chatEnabled: boolean;
+  animationsEnabled: boolean;
 };
 
 const STORAGE_KEY = 'vcc.settings.v1';
@@ -15,6 +16,7 @@ const DEFAULTS: Settings = {
   showOpponentNames: true,
   showOpponentAvatars: true,
   chatEnabled: true,
+  animationsEnabled: true,
 };
 
 function load(): Settings {
@@ -37,6 +39,7 @@ type SettingsStore = Settings & {
   setShowOpponentNames: (v: boolean) => void;
   setShowOpponentAvatars: (v: boolean) => void;
   setChatEnabled: (v: boolean) => void;
+  setAnimationsEnabled: (v: boolean) => void;
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -63,6 +66,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     setChatEnabled(v) {
       save({ ...get(), chatEnabled: v });
       set({ chatEnabled: v });
+    },
+    setAnimationsEnabled(v) {
+      save({ ...get(), animationsEnabled: v });
+      set({ animationsEnabled: v });
     },
   };
 });

@@ -8,7 +8,6 @@ export type LobbyHandoff = {
   session: PeerSession;
   myPeerId: string;
   partnerPeerId: string;
-  partnerPubKey: string;
   partnerHandle: string;
   partnerRating: number;
   iAmWhite: boolean;

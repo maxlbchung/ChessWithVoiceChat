@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Text-entry caret — capital-I silhouette with flatter, low-profile
+       triangular serifs and a slim continuous stem. Single closed path so
+       the white interior flows through both serifs and the stem without
+       internal seams. Hotspot at (12, 12) — the stem's centre. -->
+  <path d="M 8 2.5
+           L 16 2.5
+           L 13.2 5
+           L 13.2 19
+           L 16 21.5
+           L 8 21.5
+           L 10.8 19
+           L 10.8 5 Z"
+        fill="#ffffff" stroke="#000000" stroke-width="1.4"
+        stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

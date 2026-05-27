@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
@@ -13,22 +14,22 @@ import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
-import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
   GameEndReason,
   GameOutcome,
   GameRecord,
+  Move,
   PlayerInfo,
-  SignedMove,
   WireMessage,
 } from '../lib/types';
 import { eloDelta, newRating } from '../lib/elo';
-import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
+import { appendSummary, loadAggregateStats, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 
 type EndState = {
   outcome: GameOutcome;
@@ -61,7 +62,7 @@ export function Game() {
   const [fen, setFen] = useState(chess.fen());
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
-  const [moves, setMoves] = useState<SignedMove[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
   const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
@@ -83,6 +84,23 @@ export function Game() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  // Promotion picker state. Set when a pawn move reaches rank 1/8 so the
+  // user can pick Q/R/B/N rather than getting an auto-queened move.
+  const [pendingPromo, setPendingPromo] = useState<{ from: string; to: string; viaClick: boolean } | null>(null);
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: string; to: string }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: string[]; key: number } | null>(null);
+  // Auto-clear shortly after the animations finish so they can't outlive
+  // themselves and replay on an unrelated re-render.
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
   // Move-history viewer: viewPly counts plies from the start. When it equals
   // chess.history().length, we're "at the present" — input is allowed and
   // the board shows live state. Arrow keys scrub through past positions.
@@ -125,12 +143,10 @@ export function Game() {
   const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
 
   const me: PlayerInfo = {
-    publicKeyHex: identity.publicKeyHex,
     handle: identity.handle,
     rating,
   };
   const opp: PlayerInfo = {
-    publicKeyHex: handoff.partnerPubKey,
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
@@ -138,7 +154,7 @@ export function Game() {
   // Privacy toggles — hide the real opponent handle/avatar when the user has
   // turned them off in settings. The real values still travel over the wire
   // and are persisted in the game record; this only affects display.
-  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -281,7 +297,6 @@ export function Game() {
       setConnState('connected');
       session.send({
         type: 'hello',
-        publicKeyHex: identity.publicKeyHex,
         handle: identity.handle,
         rating,
       });
@@ -441,7 +456,7 @@ export function Game() {
   // ----------------------------------------------------------------------
   const isMyTurn = () => (chess.turn() === 'w') === handoff.iAmWhite;
 
-  const applyLocalMove = async (from: string, to: string, promotion?: string): Promise<boolean> => {
+  const applyLocalMove = async (from: string, to: string, promotion?: string, viaClick = false): Promise<boolean> => {
     if (end) return false;
     if (!gameStarted) return false;
     if (!isMyTurn()) return false;
@@ -482,10 +497,34 @@ export function Game() {
       ? tc.perMoveMs
       : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
     const uci = move.from + move.to + (move.promotion ?? '');
-    const signed = await signMove(identity, gameId!, uci, chess.fen(), ply, wMs, bMs);
+    const signed: Move = {
+      uci,
+      fenAfter: chess.fen(),
+      ply,
+      whiteClockMs: wMs,
+      blackClockMs: bMs,
+    };
     setMoves((m) => [...m, signed]);
     setFen(chess.fen());
     setViewPly(chess.history().length);
+    // Trigger slide/pop AFTER the fen/board state updates so they batch in
+    // one render — otherwise the animations would mount briefly against the
+    // stale pre-move board and show the wrong piece.
+    if (viaClick && animationsEnabled) {
+      const slides: { from: string; to: string }[] = [{ from, to }];
+      if (move.flags?.includes('k')) {
+        const rank = to[1];
+        slides.push({ from: `h${rank}`, to: `f${rank}` });
+      } else if (move.flags?.includes('q')) {
+        const rank = to[1];
+        slides.push({ from: `a${rank}`, to: `d${rank}` });
+      }
+      setSlideAnim({ moves: slides, key: Date.now() });
+    }
+    // Promotion always pops, even on drag — the transformed piece is new.
+    if (animationsEnabled && move.flags?.includes('p')) {
+      setPopAnim({ squares: [to], key: Date.now() });
+    }
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -495,14 +534,8 @@ export function Game() {
     return true;
   };
 
-  const applyRemoteMove = async (move: SignedMove) => {
+  const applyRemoteMove = async (move: Move) => {
     if (end) return;
-    // Verify signature
-    const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) {
-      console.warn('signature failed for move', move);
-      return;
-    }
     if (move.ply !== chess.history().length + 1) {
       console.warn('out of order move', move.ply, 'expected', chess.history().length + 1);
       return;
@@ -581,14 +614,12 @@ export function Game() {
 
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
-    const summaries = await loadSummaries();
-    const gamesPlayed = summaries.length;
+    const { total: gamesPlayed } = await loadAggregateStats();
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
 
-    // Save signed game record
-    const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
+    const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
       white: handoff.iAmWhite ? me : opp,
@@ -599,18 +630,11 @@ export function Game() {
       reason: state.reason,
       moves,
     };
-    const mySig = await signRecord(identity, partial);
-    const record: GameRecord = {
-      ...partial,
-      whiteSignature: handoff.iAmWhite ? mySig : '',
-      blackSignature: handoff.iAmWhite ? '' : mySig,
-    };
     await saveGameRecord(record);
     await appendSummary({
       gameId: gameId!,
       timeControlId: tc.id,
       opponentHandle: opp.handle,
-      opponentPubKey: opp.publicKeyHex,
       myColor,
       outcome: state.outcome,
       reason: state.reason,
@@ -684,12 +708,31 @@ export function Game() {
     return (chess.turn() === 'w') === (c === 'white');
   };
 
+  const isPromotionMove = (from: string, to: string): boolean => {
+    const piece = chess.get(from as any);
+    if (!piece || piece.type !== 'p') return false;
+    const targetRank = parseInt(to[1], 10);
+    return targetRank === 8 || targetRank === 1;
+  };
+
   const onPieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     // MergeBoard returns boolean; the async apply runs fire-and-forget.
-    // Pawn promotion defaults to queen (matches the other variants).
+    if (isPromotionMove(sourceSquare, targetSquare)) {
+      setPendingPromo({ from: sourceSquare, to: targetSquare, viaClick: false });
+      setSelectedSquare(null);
+      return true;
+    }
     void applyLocalMove(sourceSquare, targetSquare);
     setSelectedSquare(null);
     return true;
+  };
+
+  const resolvePromotion = (letter: PromotionLetter) => {
+    if (!pendingPromo) return;
+    const valid = ['Q', 'R', 'B', 'N'].includes(letter) ? letter : 'Q';
+    const { from, to, viaClick } = pendingPromo;
+    setPendingPromo(null);
+    void applyLocalMove(from, to, valid.toLowerCase(), viaClick);
   };
 
   // Drag start mirrors a click — sets the selected square so the legal-target
@@ -731,7 +774,12 @@ export function Game() {
     }
     // A piece is selected and the click is a legal target → move
     if (selectedSquare && legalTargets.includes(square)) {
-      void applyLocalMove(selectedSquare, square);
+      if (isPromotionMove(selectedSquare, square)) {
+        setPendingPromo({ from: selectedSquare, to: square, viaClick: true });
+        setSelectedSquare(null);
+        return;
+      }
+      void applyLocalMove(selectedSquare, square, undefined, true);
       setSelectedSquare(null);
       return;
     }
@@ -885,10 +933,23 @@ export function Game() {
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && gameStarted && isMyTurn() && atPresent}
-            draggable={!end && gameStarted && isMyTurn() && atPresent}
+            interactive={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
+            draggable={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
             lastMove={lastMove}
+            slideMoves={slideAnim?.moves}
+            slideKey={slideAnim?.key}
+            popSquares={popAnim?.squares}
+            popKey={popAnim?.key}
           />
+          {pendingPromo && (
+            <PromotionPicker
+              square={pendingPromo.to}
+              color={chess.turn()}
+              orientation={handoff.iAmWhite ? 'white' : 'black'}
+              onPick={resolvePromotion}
+              onCancel={() => setPendingPromo(null)}
+            />
+          )}
           {partnerReady && !gameStarted && chess.history().length === 0 && (
             <StartOverlay
               whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
@@ -984,6 +1045,29 @@ export function Game() {
             disabled={!canRedoGame}
           >
             Redo
+          </button>
+          <button
+            className="free-play-btn"
+            type="button"
+            disabled={moves.length === 0}
+            onClick={() => {
+              const exp = buildGameExport({
+                variant: 'normal',
+                gameId: gameId!,
+                timeControlId: tc.id,
+                white: handoff.iAmWhite ? me : opp,
+                black: handoff.iAmWhite ? opp : me,
+                startedAt: startedAtRef.current,
+                endedAt: end ? Date.now() : null,
+                outcome: end?.outcome ?? null,
+                reason: end?.reason ?? null,
+                moves,
+              });
+              downloadGameExport(exp);
+            }}
+            title="Download this game as JSON for the Review page"
+          >
+            Export
           </button>
           {!end && (
             <>

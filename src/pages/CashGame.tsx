@@ -12,27 +12,28 @@ import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
-import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
   GameEndReason,
   GameOutcome,
   GameRecord,
+  Move,
   PlayerInfo,
-  SignedMove,
   WireMessage,
 } from '../lib/types';
 import { eloDelta, newRating } from '../lib/elo';
-import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
+import { appendSummary, loadAggregateStats, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   affordableLetters,
   applyMove,
   buyUci,
   initialState,
+  parseBuy,
   isCheckmate,
   isFiftyMoveRule,
   isInCheck,
@@ -80,7 +81,7 @@ export function CashGame() {
   useEffect(() => { viewPlyRef.current = viewPly; }, [viewPly]);
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
-  const [moves, setMoves] = useState<SignedMove[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
   const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
@@ -102,6 +103,18 @@ export function CashGame() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
   // When a shop letter is selected, board clicks attempt to place that piece
   // on a legal target square instead of moving.
   const [selectedShop, setSelectedShop] = useState<ShopLetter | null>(null);
@@ -137,17 +150,15 @@ export function CashGame() {
   const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
 
   const me: PlayerInfo = {
-    publicKeyHex: identity.publicKeyHex,
     handle: identity.handle,
     rating,
   };
   const opp: PlayerInfo = {
-    publicKeyHex: handoff.partnerPubKey,
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -246,7 +257,6 @@ export function CashGame() {
       setConnState('connected');
       session.send({
         type: 'hello',
-        publicKeyHex: identity.publicKeyHex,
         handle: identity.handle,
         rating,
       });
@@ -369,7 +379,7 @@ export function CashGame() {
   // ----------------------------------------------------------------
   const isMyTurn = () => game.turn === myEngineColor;
 
-  const commitMove = async (uci: string, beforeTurn: 'w' | 'b'): Promise<boolean> => {
+  const commitMove = async (uci: string, beforeTurn: 'w' | 'b', slides?: { from: Square; to: Square }[], pops?: Square[]): Promise<boolean> => {
     const res = applyMove(game, uci);
     if (!res) return false;
 
@@ -396,12 +406,24 @@ export function CashGame() {
       ? tc.perMoveMs
       : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
 
-    const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
+    const signed: Move = {
+      uci,
+      fenAfter: res.result.fenAfter,
+      ply,
+      whiteClockMs: wMs,
+      blackClockMs: bMs,
+    };
     setMoves((m) => [...m, signed]);
     setGame(res.state);
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setViewPly((p) => p + 1);
+    if (slides && slides.length > 0) {
+      setSlideAnim({ moves: slides, key: Date.now() });
+    }
+    if (pops && pops.length > 0) {
+      setPopAnim({ squares: pops, key: Date.now() });
+    }
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -413,7 +435,7 @@ export function CashGame() {
   };
 
   const applyLocalMove = async (
-    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
+    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false,
   ): Promise<boolean> => {
     if (end) return false;
     if (!gameStarted) return false;
@@ -422,7 +444,8 @@ export function CashGame() {
     const beforeTurn = game.turn;
     let uci = from + to;
     if (promotion) uci += promotion.toLowerCase();
-    return commitMove(uci, beforeTurn);
+    const slides = viaClick && animationsEnabled ? [{ from, to }] : undefined;
+    return commitMove(uci, beforeTurn, slides);
   };
 
   const applyLocalBuy = async (letter: ShopLetter, to: Square): Promise<boolean> => {
@@ -431,13 +454,12 @@ export function CashGame() {
     if (!isMyTurn()) return false;
     if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
-    return commitMove(buyUci(letter, to), beforeTurn);
+    const pops = animationsEnabled ? [to] : undefined;
+    return commitMove(buyUci(letter, to), beforeTurn, undefined, pops);
   };
 
-  const applyRemoteMove = async (move: SignedMove) => {
+  const applyRemoteMove = async (move: Move) => {
     if (end) return;
-    const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) { console.warn('signature failed for move', move); return; }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
@@ -500,13 +522,12 @@ export function CashGame() {
 
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
-    const summaries = await loadSummaries();
-    const gamesPlayed = summaries.length;
+    const { total: gamesPlayed } = await loadAggregateStats();
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
 
-    const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
+    const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
       white: handoff.iAmWhite ? me : opp,
@@ -517,18 +538,11 @@ export function CashGame() {
       reason: state.reason,
       moves,
     };
-    const mySig = await signRecord(identity, partial);
-    const record: GameRecord = {
-      ...partial,
-      whiteSignature: handoff.iAmWhite ? mySig : '',
-      blackSignature: handoff.iAmWhite ? '' : mySig,
-    };
     await saveGameRecord(record);
     await appendSummary({
       gameId: gameId!,
       timeControlId: tc.id,
       opponentHandle: opp.handle,
-      opponentPubKey: opp.publicKeyHex,
       myColor,
       outcome: state.outcome,
       reason: state.reason,
@@ -615,7 +629,12 @@ export function CashGame() {
   const lastMove = useMemo(() => {
     if (viewPly <= 0) return null;
     const uci = moves[viewPly - 1]?.uci;
-    if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    if (!uci) return null;
+    // Buys (`+Lxx`) have no origin square — tint just the placement square by
+    // using `to` for both ends of the highlight pair.
+    const buy = parseBuy(uci);
+    if (buy) return { from: buy.to as Square, to: buy.to as Square };
+    if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
     return { from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square };
   }, [viewPly, moves]);
 
@@ -687,10 +706,10 @@ export function CashGame() {
     if (letter) sfx.playBuy();
   };
 
-  const attemptMove = (from: Square, to: Square): boolean => {
+  const attemptMove = (from: Square, to: Square, viaClick = false): boolean => {
     // No promotion in Cash — a pawn that lands on the back rank cashes in
     // for gold instead. So we never prompt.
-    void applyLocalMove(from, to);
+    void applyLocalMove(from, to, undefined, viaClick);
     return true;
   };
 
@@ -711,7 +730,7 @@ export function CashGame() {
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
-      attemptMove(selectedSquare, square);
+      attemptMove(selectedSquare, square, true);
       return;
     }
     const piece = game.board[sqIdx(square)];
@@ -800,7 +819,20 @@ export function CashGame() {
             onDragStartSquare={onDragStartSquare}
             interactive={!end && gameStarted && isMyTurn() && atPresent}
             draggable={!end && gameStarted && isMyTurn() && atPresent}
+            ghostSpawn={
+              atPresent && selectedShop
+                ? {
+                    letter: handoff.iAmWhite
+                      ? selectedShop
+                      : selectedShop.toLowerCase(),
+                  }
+                : null
+            }
             lastMove={lastMove}
+            slideMoves={slideAnim?.moves}
+            slideKey={slideAnim?.key}
+            popSquares={popAnim?.squares}
+            popKey={popAnim?.key}
           />
           {partnerReady && !gameStarted && movesCountRef.current === 0 && (
             <StartOverlay
@@ -898,6 +930,29 @@ export function CashGame() {
             disabled={!canRedoView}
           >
             Redo
+          </button>
+          <button
+            className="free-play-btn"
+            type="button"
+            disabled={moves.length === 0}
+            onClick={() => {
+              const exp = buildGameExport({
+                variant: 'cash',
+                gameId: gameId!,
+                timeControlId: tc.id,
+                white: handoff.iAmWhite ? me : opp,
+                black: handoff.iAmWhite ? opp : me,
+                startedAt: startedAtRef.current,
+                endedAt: end ? Date.now() : null,
+                outcome: end?.outcome ?? null,
+                reason: end?.reason ?? null,
+                moves,
+              });
+              downloadGameExport(exp);
+            }}
+            title="Download this game as JSON for the Review page"
+          >
+            Export
           </button>
           {!end && (
             <>

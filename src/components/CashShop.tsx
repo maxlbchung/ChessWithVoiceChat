@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { SHOP_LETTERS, SHOP_PRICES, type ShopLetter } from '../lib/cashChess';
 import { renderPiece } from '../lib/pieceSvgs';
 
@@ -41,9 +41,15 @@ export function CashShop({
       <div className="cash-shop-header">
         <div className="cash-shop-title">Shop</div>
         <div className="cash-gold-row">
-          <GoldDisplay label={compact ? 'White' : 'You'} amount={myGold} highlight />
           <GoldDisplay
-            label={compact ? 'Black' : 'Opp'}
+            label={compact ? renderPiece('wK', 18) : 'You'}
+            ariaLabel={compact ? 'White' : undefined}
+            amount={myGold}
+            highlight
+          />
+          <GoldDisplay
+            label={compact ? renderPiece('bK', 18) : 'Opp'}
+            ariaLabel={compact ? 'Black' : undefined}
             amount={oppGold}
           />
         </div>
@@ -89,16 +95,20 @@ export function CashShop({
 
 function GoldDisplay({
   label,
+  ariaLabel,
   amount,
   highlight,
 }: {
-  label: string;
+  // String label for game pages ("You" / "Opp") or a king SVG for free play.
+  label: ReactNode;
+  // Provided when label is a graphic so screen readers still get the side name.
+  ariaLabel?: string;
   amount: number;
   highlight?: boolean;
 }) {
   return (
     <div className={`cash-gold${highlight ? ' highlight' : ''}`}>
-      <span className="cash-gold-label">{label}</span>
+      <span className="cash-gold-label" aria-label={ariaLabel}>{label}</span>
       <span className="cash-gold-amount">
         <span className="cash-gold-coin" aria-hidden />
         {amount}

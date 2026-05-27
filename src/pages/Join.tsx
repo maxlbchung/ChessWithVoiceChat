@@ -39,7 +39,6 @@ export function Join() {
           setStatusMsg('Identifying…');
           session!.send({
             type: 'hello',
-            publicKeyHex: identity.publicKeyHex,
             handle: identity.handle,
             rating,
           });
@@ -59,7 +58,6 @@ export function Join() {
             session: session!,
             myPeerId,
             partnerPeerId: hostPeerId,
-            partnerPubKey: msg.hostPubKey,
             partnerHandle: msg.hostHandle,
             partnerRating: msg.hostRating,
             iAmWhite: msg.iAmWhite,
@@ -97,7 +95,7 @@ export function Join() {
       <div className="page-narrow">
         <h1 className="page-title">Join a game</h1>
         <p className="muted">
-          Pick a handle to play. We'll generate a keypair locally — no signup, no email.
+          Pick a handle to play. No signup, no email.
         </p>
         <form
           className="signup-form"

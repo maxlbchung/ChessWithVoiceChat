@@ -14,15 +14,14 @@ export type GameEndReason =
   | 'disconnect';
 
 export type PlayerInfo = {
-  publicKeyHex: string;
   handle: string;
   rating: number;
 };
 
-export type SignedMove = {
+export type Move = {
   // Move in UCI form, e.g. "e2e4" or "e7e8q"
   uci: string;
-  // FEN after the move (used for resync / verification)
+  // FEN after the move (used for resync)
   fenAfter: string;
   // Ply number, starting at 1
   ply: number;
@@ -30,8 +29,6 @@ export type SignedMove = {
   whiteClockMs: number;
   // Black's clock ms after this move
   blackClockMs: number;
-  // hex signature by mover's keypair over the canonical move payload
-  signature: string;
 };
 
 export type GameRecord = {
@@ -43,17 +40,13 @@ export type GameRecord = {
   endedAt: number;
   outcome: GameOutcome;
   reason: GameEndReason;
-  moves: SignedMove[];
-  // signatures by both players over the canonical record-end payload
-  whiteSignature: string;
-  blackSignature: string;
+  moves: Move[];
 };
 
 export type LocalGameSummary = {
   gameId: string;
   timeControlId: string;
   opponentHandle: string;
-  opponentPubKey: string;
   myColor: Color;
   outcome: GameOutcome;
   reason: GameEndReason;
@@ -63,19 +56,18 @@ export type LocalGameSummary = {
 };
 
 export type WireMessage =
-  | { type: 'hello'; publicKeyHex: string; handle: string; rating: number }
-  | { type: 'hero-pick'; hero: 'frost' | 'knight' | 'necromancer' | 'flight' }
+  | { type: 'hello'; handle: string; rating: number }
+  | { type: 'hero-pick'; hero: 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jitsu' }
   | {
       type: 'lobby-confirm';
       gameId: string;
       iAmWhite: boolean;
       timeControlId: string;
-      hostPubKey: string;
       hostHandle: string;
       hostRating: number;
     }
   | { type: 'ready' }
-  | { type: 'move'; move: SignedMove }
+  | { type: 'move'; move: Move }
   | { type: 'resign' }
   | { type: 'draw-offer' }
   | { type: 'draw-accept' }

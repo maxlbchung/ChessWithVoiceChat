@@ -105,9 +105,11 @@ export function HeroAbilities({
 function noTargetHint(hero: HeroKind): string {
   switch (hero) {
     case 'necromancer': return 'No empty square next to your king.';
-    case 'knight':      return 'No enemy piece adjacent to your king.';
+    case 'warlord':     return 'No enemy piece adjacent to your king.';
     case 'frost':       return 'No piece available to freeze.';
     case 'flight':      return 'No safe square to fly to.';
+    case 'twin-jitsu':  return 'No legal swap pair right now.';
+    default:            return 'No legal target right now.';
   }
 }
 

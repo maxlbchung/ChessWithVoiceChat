@@ -8,7 +8,6 @@ function devMatchmakerPlugin(): Plugin {
   type Waiting = {
     ticket: string;
     peerId: string;
-    publicKeyHex: string;
     handle: string;
     rating: number;
     timeControlId: string;
@@ -18,7 +17,6 @@ function devMatchmakerPlugin(): Plugin {
   type Matched = {
     ticket: string;
     partnerPeerId: string;
-    partnerPubKey: string;
     partnerHandle: string;
     partnerRating: number;
     iAmWhite: boolean;
@@ -62,7 +60,7 @@ function devMatchmakerPlugin(): Plugin {
         };
 
         if (body.action === 'join') {
-          const { timeControlId, peerId, publicKeyHex, handle, rating } = body;
+          const { timeControlId, peerId, handle, rating } = body;
           const ticket = rid();
           joinLog.push({ timeControlId, joinedAt: Date.now() });
           trimLog();
@@ -95,7 +93,6 @@ function devMatchmakerPlugin(): Plugin {
             matched.set(pair, {
               ticket: pair,
               partnerPeerId: peerId,
-              partnerPubKey: publicKeyHex,
               partnerHandle: handle,
               partnerRating: rating,
               iAmWhite: !newcomerWhite,
@@ -105,7 +102,6 @@ function devMatchmakerPlugin(): Plugin {
               status: 'matched',
               ticket,
               partnerPeerId: partner.peerId,
-              partnerPubKey: partner.publicKeyHex,
               partnerHandle: partner.handle,
               partnerRating: partner.rating,
               iAmWhite: newcomerWhite,
@@ -116,7 +112,6 @@ function devMatchmakerPlugin(): Plugin {
           waiting.set(ticket, {
             ticket,
             peerId,
-            publicKeyHex,
             handle: handle ?? 'anon',
             rating,
             timeControlId,

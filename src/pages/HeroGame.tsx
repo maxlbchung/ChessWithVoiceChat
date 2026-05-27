@@ -5,6 +5,7 @@ import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { HeroPicker } from '../components/HeroPicker';
 import { HeroAbilities } from '../components/HeroAbilities';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
@@ -12,28 +13,32 @@ import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
 import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
-import { signMove, verifyMove, signRecord } from '../lib/gameRecord';
 import type {
   Color,
   GameEndReason,
   GameOutcome,
   GameRecord,
+  Move,
   PlayerInfo,
-  SignedMove,
   WireMessage,
 } from '../lib/types';
 import { eloDelta, newRating } from '../lib/elo';
-import { appendSummary, loadSummaries, saveGameRecord } from '../lib/storage';
+import { appendSummary, loadAggregateStats, saveGameRecord } from '../lib/storage';
 import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   abilityTargets,
   abilityUci,
   applyMove,
+  goofballLegalDestinations,
+  twinJitsuLegalDestinations,
   HERO_INFO,
+  heroPoolForGame,
   idxToSq,
+  sqToIdx,
   initialState,
   isCheckmate,
   isFiftyMoveRule,
@@ -43,6 +48,7 @@ import {
   isThreefoldRepetition,
   kingSquareOf,
   legalMovesFrom,
+  pieceAtImpactBeforeBlast,
   toFen,
   turnsUntilReady,
   type GameState,
@@ -94,7 +100,7 @@ export function HeroGame() {
 
   const [whiteMs, setWhiteMs] = useState(tc.initialMs);
   const [blackMs, setBlackMs] = useState(tc.initialMs);
-  const [moves, setMoves] = useState<SignedMove[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
   const [end, setEnd] = useState<EndState | null>(null);
   const endRef = useRef<EndState | null>(null);
   const [endHandled, setEndHandled] = useState(false);
@@ -111,8 +117,36 @@ export function HeroGame() {
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
+  // Promotion-picker overlay state. While set, the board is non-interactive
+  // and the picker awaits the player's choice. Slides (drag animations) are
+  // captured up-front so the eventual move still animates properly.
+  const [pendingPromo, setPendingPromo] = useState<{
+    from: Square; to: Square; slides?: { from: Square; to: Square }[];
+  } | null>(null);
+  const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
+  const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
+  useEffect(() => {
+    if (!slideAnim) return;
+    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    return () => clearTimeout(t);
+  }, [slideAnim]);
+  useEffect(() => {
+    if (!popAnim) return;
+    const t = window.setTimeout(() => setPopAnim(null), 420);
+    return () => clearTimeout(t);
+  }, [popAnim]);
   // True when the ability is "armed" — next board click selects the target.
   const [abilityArmed, setAbilityArmed] = useState(false);
+  // Goofball is a two-click ability: first click picks the opponent piece
+  // being puppeted, second click picks where it goes. Cleared whenever
+  // armed flips off or after firing.
+  const [goofballFrom, setGoofballFrom] = useState<Square | null>(null);
+  // Twin-Jitsu is the other two-click ability: first click picks one of your
+  // own pieces, second click picks a swap partner.
+  const [twinJitsuFrom, setTwinJitsuFrom] = useState<Square | null>(null);
+  useEffect(() => {
+    if (!abilityArmed) { setGoofballFrom(null); setTwinJitsuFrom(null); }
+  }, [abilityArmed]);
   // Transient ability animation overlay state. Bumped to a fresh key every
   // time we want the animation to re-fire (CSS keyframes restart on remount).
   const [abilityAnim, setAbilityAnim] = useState<AbilityAnim | null>(null);
@@ -123,6 +157,9 @@ export function HeroGame() {
     const t = window.setTimeout(() => setAbilityAnim(null), 1200);
     return () => clearTimeout(t);
   }, [abilityAnim]);
+  // Pieces destroyed by an ICBM that we render through the whistle window so
+  // they're still visible until the explosion fires.
+  const [doomedPieces, setDoomedPieces] = useState<{ sq: Square; letter: string }[]>([]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -155,17 +192,15 @@ export function HeroGame() {
   const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
 
   const me: PlayerInfo = {
-    publicKeyHex: identity.publicKeyHex,
     handle: identity.handle,
     rating,
   };
   const opp: PlayerInfo = {
-    publicKeyHex: handoff.partnerPubKey,
     handle: handoff.partnerHandle,
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -283,7 +318,6 @@ export function HeroGame() {
       setConnState('connected');
       session.send({
         type: 'hello',
-        publicKeyHex: identity.publicKeyHex,
         handle: identity.handle,
         rating,
       });
@@ -410,22 +444,104 @@ export function HeroGame() {
   // *previous* state to find the king for Flight (since the king moves) and
   // the new state for Knight (king didn't move). Returns null for non-ability
   // moves so callers can `setAbilityAnim(triggerAbilityAnim(...))` blindly.
+  // Frost shatter: when one or more freezes expire (entry present in prev
+  // but not in next), fire a shatter animation + SFX at each previously-
+  // frozen square. Multiple simultaneous shatters share the same SFX hit.
+  const triggerFrostShatter = (prev: GameState, next: GameState) => {
+    if (prev.frozen.length === 0) return;
+    const nextIdxs = new Set(next.frozen.map((f) => f.idx));
+    const expired = prev.frozen.filter((f) => !nextIdxs.has(f.idx));
+    if (expired.length === 0) return;
+    sfx.playFrostShatter();
+    if (animationsEnabled) {
+      // Animate the most recently set freeze entry (last one expired) — only
+      // one shatter overlay can be on screen at a time via abilityAnim, so
+      // we pick one rather than queueing.
+      const f = expired[expired.length - 1];
+      setAbilityAnim({
+        kind: 'frost-shatter',
+        toSq: idxToSq(f.idx),
+        color: 'w',
+        key: `frost-shatter-${prev.ply}-${f.idx}-${Date.now()}`,
+      });
+    }
+  };
+
+  // Warlord ability: the engine clears the target piece on move commit, but
+  // we keep it visible as a doomed-piece overlay through the wind-up of the
+  // sword swing and only let it disappear at the swing midpoint (when the
+  // blade collides). Same overlay channel as ICBM doomedPieces.
+  const WARLORD_SWING_IMPACT_MS = 450;
+  const triggerWarlordDoom = (prev: GameState, result: MoveResult) => {
+    if (result.abilityUsed !== 'warlord') return;
+    const targetSq = result.uci.slice(2) as Square;
+    const targetIdx = sqToIdx(targetSq);
+    const victim = prev.board[targetIdx];
+    if (!victim) return;
+    const entry = { sq: targetSq, letter: victim.letter };
+    setDoomedPieces((prevD) => [...prevD, entry]);
+    window.setTimeout(() => {
+      setDoomedPieces((prevD) => prevD.filter((d) => d.sq !== targetSq));
+    }, WARLORD_SWING_IMPACT_MS);
+  };
+
+  // Drive the ICBM-landing sequence for any missiles whose landing ply has
+  // just arrived. Whistle plays immediately; explosion + the doomed sprite
+  // clearing follow after a half-second pause. Multiple simultaneous
+  // landings share the single abilityAnim slot — staggered so each still
+  // gets its own key bump.
+  const triggerMissileDetonations = (prev: GameState, next: GameState, uci: string) => {
+    const landings = prev.missiles.filter((m) => m.landsAtPly <= next.ply);
+    if (landings.length === 0) return;
+    sfx.playMissileWhistle();
+    // Determine what piece will get blown up. If a piece moved INTO the
+    // impact square this ply, the doomed sprite is the just-moved piece —
+    // not whatever was on the square before the move applied.
+    const doomed: { sq: Square; letter: string }[] = [];
+    for (const m of landings) {
+      const p = pieceAtImpactBeforeBlast(prev, uci, m.idx);
+      if (p) doomed.push({ sq: idxToSq(m.idx), letter: p.letter });
+    }
+    if (doomed.length > 0) setDoomedPieces(doomed);
+    landings.forEach((m, i) => {
+      const at = 500 + i * 220;
+      const sq = idxToSq(m.idx);
+      window.setTimeout(() => {
+        if (animationsEnabled) {
+          setAbilityAnim({
+            kind: 'icbm',
+            toSq: sq,
+            color: m.firedBy,
+            key: `icbm-${prev.ply}-${m.idx}-${Date.now()}`,
+          });
+        }
+        sfx.playExplosion();
+        setDoomedPieces((prevD) => prevD.filter((d) => d.sq !== sq));
+      }, at);
+    });
+  };
+
   const triggerAbilityAnim = (
     prev: GameState,
     next: GameState,
     result: MoveResult,
   ): AbilityAnim | null => {
-    if (!result.abilityUsed) return null;
+    const ab = result.abilityUsed;
+    // Only kinds with a rendered overlay; harem is passive and icbm has its
+    // own missile-marker UI, so they don't drive abilityAnim.
+    if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation') {
+      return null;
+    }
     const targetSq = result.uci.slice(2);
     const moverColor = prev.turn;
     let fromSq: Square | undefined;
-    if (result.abilityUsed === 'flight') {
+    if (ab === 'flight') {
       fromSq = kingSquareOf(prev.board, moverColor) ?? undefined;
-    } else if (result.abilityUsed === 'knight') {
+    } else if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
     }
     return {
-      kind: result.abilityUsed,
+      kind: ab,
       fromSq,
       toSq: targetSq,
       color: moverColor,
@@ -433,20 +549,36 @@ export function HeroGame() {
     };
   };
 
-  const commitMove = async (uci: string, beforeTurn: 'w' | 'b'): Promise<boolean> => {
+  const commitMove = async (uci: string, beforeTurn: 'w' | 'b', slides?: { from: Square; to: Square }[]): Promise<boolean> => {
     if (!game) return false;
     const res = applyMove(game, uci);
     if (!res) return false;
 
     if (res.result.abilityUsed === 'frost') sfx.playFreeze();
-    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    // Slice fires at swing-start; its internal climax is timed to land at the
+    // swing midpoint so the whistle leads INTO the blade's apex strike.
+    else if (res.result.abilityUsed === 'warlord') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
+    else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
+    else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
+    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
-    if (res.result.check && !res.result.checkmate) sfx.playCheck();
-    setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
+    // Suppress check feedback when the side now to move is the opponent and
+    // they are Twin-Jitsu — leaking "Check!" would tell them which decoy is
+    // their actual king. Their own client still announces it.
+    {
+      const nextTurn = res.state.turn;
+      const oppIsHidden = nextTurn !== myEngineColor && res.state.heroes[nextTurn].hero === 'twin-jitsu';
+      if (res.result.check && !res.result.checkmate && !oppIsHidden) sfx.playCheck();
+    }
+    if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
+    triggerMissileDetonations(game, res.state, uci);
+    triggerWarlordDoom(game, res.result);
+    triggerFrostShatter(game, res.state);
 
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
@@ -465,12 +597,48 @@ export function HeroGame() {
       ? tc.perMoveMs
       : (beforeTurn === 'b' ? blackMs + tc.incrementMs : blackMs);
 
-    const signed = await signMove(identity, gameId!, uci, res.result.fenAfter, ply, wMs, bMs);
+    const signed: Move = {
+      uci,
+      fenAfter: res.result.fenAfter,
+      ply,
+      whiteClockMs: wMs,
+      blackClockMs: bMs,
+    };
     setMoves((m) => [...m, signed]);
     setGame(res.state);
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setViewPly((p) => p + 1);
+    // Skip the slide if an ability fired — abilityAnim already provides the
+    // movement effect for Flight (and the others don't move pieces at all).
+    // Twin-Jitsu is the exception: the two endpoints swap, so we drive a
+    // pair of slides from each square into the other's spot.
+    if (slides && slides.length > 0 && !res.result.abilityUsed) {
+      setSlideAnim({ moves: slides, key: Date.now() });
+    } else if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
+      const a = uci.slice(2, 4) as Square;
+      const b = uci.slice(4, 6) as Square;
+      setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
+      // !G<from><to>[<promo>] — the puppeted piece moves from→to. Slide it
+      // like a normal board move so the forced motion is readable.
+      const from = uci.slice(2, 4) as Square;
+      const to = uci.slice(4, 6) as Square;
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
+    // Pop the destination on promotions and on Necromancer spawns (a new
+    // piece materialises). The uci's 5th char marks a promotion.
+    if (animationsEnabled) {
+      const popSquares: Square[] = [];
+      if (uci.length >= 5) popSquares.push(uci.slice(2, 4) as Square);
+      if (res.result.abilityUsed === 'necromancer') popSquares.push(uci.slice(2, 4) as Square);
+      // Mutation transforms the piece into its merged form — pop it to sell
+      // the change.
+      if (res.result.abilityUsed === 'mutation') popSquares.push(uci.slice(2, 4) as Square);
+      if (popSquares.length > 0) {
+        setPopAnim({ squares: popSquares, key: Date.now() });
+      }
+    }
     sessionRef.current.send({ type: 'move', move: signed });
     setDrawOfferedByOpp(false);
     setDrawOfferedByMe(false);
@@ -482,7 +650,10 @@ export function HeroGame() {
   };
 
   const applyLocalMove = async (
-    from: Square, to: Square, promotion?: 'Q' | 'R' | 'B' | 'N',
+    from: Square, to: Square,
+    // Standard Q/R/B/N + Mutation-hero merged Z (Q+N), C (R+N), A (B+N).
+    promotion?: 'Q' | 'R' | 'B' | 'N' | 'Z' | 'C' | 'A',
+    slides?: { from: Square; to: Square }[],
   ): Promise<boolean> => {
     if (!game || end) return false;
     if (!isMyTurn()) return false;
@@ -490,21 +661,21 @@ export function HeroGame() {
     const beforeTurn = game.turn;
     let uci = from + to;
     if (promotion) uci += promotion.toLowerCase();
-    return commitMove(uci, beforeTurn);
+    return commitMove(uci, beforeTurn, slides);
   };
 
-  const applyLocalAbility = async (hero: HeroKind, to: Square): Promise<boolean> => {
+  const applyLocalAbility = async (
+    hero: HeroKind, to: Square, from?: Square, promo?: string,
+  ): Promise<boolean> => {
     if (!game || end) return false;
     if (!isMyTurn()) return false;
     if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
-    return commitMove(abilityUci(hero, to), beforeTurn);
+    return commitMove(abilityUci(hero, to, from, promo), beforeTurn);
   };
 
-  const applyRemoteMove = async (move: SignedMove) => {
+  const applyRemoteMove = async (move: Move) => {
     if (end) return;
-    const ok = await verifyMove(opp.publicKeyHex, gameId!, move);
-    if (!ok) { console.warn('signature failed for move', move); return; }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
@@ -517,14 +688,32 @@ export function HeroGame() {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
     if (res.result.abilityUsed === 'frost') sfx.playFreeze();
-    else if (res.result.abilityUsed === 'knight') sfx.playSlice();
+    // Slice fires at swing-start; its internal climax is timed to land at the
+    // swing midpoint so the whistle leads INTO the blade's apex strike.
+    else if (res.result.abilityUsed === 'warlord') sfx.playSlice();
     else if (res.result.abilityUsed === 'necromancer') sfx.playSpawn();
     else if (res.result.abilityUsed === 'flight') sfx.playFly();
+    else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
+    else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
+    else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
+    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.check && !res.result.checkmate) sfx.playCheck();
-    setAbilityAnim(triggerAbilityAnim(prev, res.state, res.result));
+    if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(prev, res.state, res.result));
+    triggerMissileDetonations(prev, res.state, move.uci);
+    triggerWarlordDoom(prev, res.result);
+    triggerFrostShatter(prev, res.state);
+    if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
+      const a = move.uci.slice(2, 4) as Square;
+      const b = move.uci.slice(4, 6) as Square;
+      setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
+      const from = move.uci.slice(2, 4) as Square;
+      const to = move.uci.slice(4, 6) as Square;
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
     setStates((s) => [...s, res.state]);
@@ -546,6 +735,13 @@ export function HeroGame() {
   };
 
   const checkBoardEnd = (s: GameState) => {
+    // ICBM may have destroyed a king on this move — whichever side is missing
+    // its king is the loser. Check this before isCheckmate (which assumes
+    // both kings still exist).
+    const whiteKing = kingSquareOf(s.board, 'w');
+    const blackKing = kingSquareOf(s.board, 'b');
+    if (!whiteKing) { finalize({ outcome: 'black', reason: 'checkmate' }); return; }
+    if (!blackKing) { finalize({ outcome: 'white', reason: 'checkmate' }); return; }
     if (isCheckmate(s)) {
       const loser = s.turn === 'w' ? 'white' : 'black';
       finalize({ outcome: loser === 'white' ? 'black' : 'white', reason: 'checkmate' });
@@ -564,12 +760,11 @@ export function HeroGame() {
     if (state.outcome === myColor) sfx.playWin();
     const myResult: 1 | 0.5 | 0 =
       state.outcome === 'draw' ? 0.5 : state.outcome === myColor ? 1 : 0;
-    const summaries = await loadSummaries();
-    const gamesPlayed = summaries.length;
+    const { total: gamesPlayed } = await loadAggregateStats();
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
-    const partial: Omit<GameRecord, 'whiteSignature' | 'blackSignature'> = {
+    const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
       white: handoff.iAmWhite ? me : opp,
@@ -580,18 +775,11 @@ export function HeroGame() {
       reason: state.reason,
       moves,
     };
-    const mySig = await signRecord(identity, partial);
-    const record: GameRecord = {
-      ...partial,
-      whiteSignature: handoff.iAmWhite ? mySig : '',
-      blackSignature: handoff.iAmWhite ? '' : mySig,
-    };
     await saveGameRecord(record);
     await appendSummary({
       gameId: gameId!,
       timeControlId: tc.id,
       opponentHandle: opp.handle,
-      opponentPubKey: opp.publicKeyHex,
       myColor,
       outcome: state.outcome,
       reason: state.reason,
@@ -656,17 +844,24 @@ export function HeroGame() {
 
   const abilityTargetSet = useMemo<Set<Square>>(() => {
     if (!game || !atPresent || !abilityArmed) return new Set();
-    return new Set(abilityTargets(game).map((idx) => {
-      const file = idx % 8;
-      const rankFromTop = Math.floor(idx / 8);
-      const rank = 7 - rankFromTop;
-      return String.fromCharCode(97 + file) + String.fromCharCode(49 + rank);
-    }));
-  }, [game, atPresent, abilityArmed]);
+    // Goofball is two-click: while a from-square is pending, surface the
+    // destination squares for that picked piece instead of the from-squares.
+    if (game.heroes[myEngineColor].hero === 'goofball' && goofballFrom) {
+      return new Set(goofballLegalDestinations(game, sqToIdx(goofballFrom)).map(idxToSq));
+    }
+    // Twin-Jitsu is also two-click — same pattern.
+    if (game.heroes[myEngineColor].hero === 'twin-jitsu' && twinJitsuFrom) {
+      return new Set(twinJitsuLegalDestinations(game, sqToIdx(twinJitsuFrom)).map(idxToSq));
+    }
+    return new Set(abilityTargets(game).map(idxToSq));
+  }, [game, atPresent, abilityArmed, goofballFrom, twinJitsuFrom, myEngineColor]);
 
   const legalTargets = useMemo(() => {
     if (!game || !atPresent) return [];
     if (abilityArmed) {
+      // ICBM targets every square — drawing 64 green rings is noise. The
+      // ghost crosshair on hover is the affordance instead.
+      if (game.heroes[myEngineColor].hero === 'icbm') return [];
       // Ability target rings (green "special") — every legal ability target.
       return Array.from(abilityTargetSet).map((sq) => ({
         to: sq, isCapture: false, isMerge: true,
@@ -676,14 +871,42 @@ export function HeroGame() {
     return legalMovesFrom(game, selectedSquare).map((m) => ({
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
-  }, [selectedSquare, game, abilityArmed, abilityTargetSet, atPresent]);
+  }, [selectedSquare, game, abilityArmed, abilityTargetSet, atPresent, myEngineColor]);
 
   const lastMove = useMemo(() => {
     if (viewPly <= 0) return null;
     const uci = moves[viewPly - 1]?.uci;
-    if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    if (!uci) return null;
+    if (uci.startsWith('!')) {
+      const hero = uci[1];
+      if (hero === 'T') {
+        // Twin-Jitsu: only the swapped pieces that weren't the real king
+        // betray their original squares. Highlighting a king's origin would
+        // give away which decoy was actually the king before the swap.
+        const a = uci.slice(2, 4) as Square;
+        const b = uci.slice(4, 6) as Square;
+        const prev = states[viewPly - 1];
+        if (!prev) return null;
+        const pieceA = prev.board[sqToIdx(a)];
+        const pieceB = prev.board[sqToIdx(b)];
+        const aIsNonKing = !!pieceA && pieceA.letter.toUpperCase() !== 'K';
+        const bIsNonKing = !!pieceB && pieceB.letter.toUpperCase() !== 'K';
+        if (aIsNonKing && bIsNonKing) return { from: a, to: b };
+        if (aIsNonKing) return { from: a, to: a };
+        if (bIsNonKing) return { from: b, to: b };
+        return null;
+      }
+      if (hero === 'G') {
+        const from = uci.slice(2, 4) as Square;
+        const to = uci.slice(4, 6) as Square;
+        return { from, to };
+      }
+      const sq = uci.slice(2, 4) as Square;
+      return { from: sq, to: sq };
+    }
+    if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
     return { from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square };
-  }, [viewPly, moves]);
+  }, [viewPly, moves, states]);
 
   const navigateGameView = (forward: boolean, playSfx = true) => {
     setViewPly((p) => {
@@ -696,9 +919,13 @@ export function HeroGame() {
         if (r) {
           if (forward) {
             if (r.abilityUsed === 'frost') sfx.playFreeze();
-            else if (r.abilityUsed === 'knight') sfx.playSlice();
+            else if (r.abilityUsed === 'warlord') sfx.playSlice();
             else if (r.abilityUsed === 'necromancer') sfx.playSpawn();
             else if (r.abilityUsed === 'flight') sfx.playFly();
+            else if (r.abilityUsed === 'mutation') sfx.playMutate();
+            else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
+            else if (r.abilityUsed === 'goofball') sfx.playGoofball();
+            else if (r.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
             else if (r.castled) sfx.playCastle();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
@@ -716,7 +943,10 @@ export function HeroGame() {
         const prevState = states[p];
         const nextState = states[p + 1];
         if (r && prevState && nextState) {
-          setAbilityAnim(triggerAbilityAnim(prevState, nextState, r));
+          if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(prevState, nextState, r));
+          triggerMissileDetonations(prevState, nextState, r.uci);
+          triggerWarlordDoom(prevState, r);
+          triggerFrostShatter(prevState, nextState);
         }
       }
       return next;
@@ -749,21 +979,33 @@ export function HeroGame() {
     return (game.turn === 'w') === (c === 'white');
   };
 
-  const attemptMove = (from: Square, to: Square): boolean => {
+  const attemptMove = (from: Square, to: Square, viaClick = false): boolean => {
     if (!game) return false;
     const piece = game.board[sqIdx(from)];
     const isPawn = piece && piece.letter.toUpperCase() === 'P';
     const targetRank = parseInt(to[1], 10);
     const isPromoting = !!isPawn && (targetRank === 8 || targetRank === 1);
+    const slides = viaClick && animationsEnabled ? [{ from, to }] : undefined;
     if (isPromoting) {
-      const choice = window.prompt('Promote to (Q/R/B/N)?', 'Q');
-      const promo = (choice ?? 'Q').toUpperCase();
-      const valid = ['Q', 'R', 'B', 'N'].includes(promo) ? (promo as 'Q' | 'R' | 'B' | 'N') : 'Q';
-      void applyLocalMove(from, to, valid);
+      setPendingPromo({ from, to, slides });
     } else {
-      void applyLocalMove(from, to);
+      void applyLocalMove(from, to, undefined, slides);
     }
     return true;
+  };
+
+  const resolvePromotion = (letter: PromotionLetter) => {
+    if (!game || !pendingPromo) return;
+    // Mutation hero side accepts the +knight fused options (Z/C/A); all
+    // other heroes are limited to the standard four.
+    const myHero = game.heroes[myEngineColor].hero;
+    const allowed: PromotionLetter[] = myHero === 'mutation'
+      ? ['Q', 'R', 'B', 'N', 'Z', 'C', 'A']
+      : ['Q', 'R', 'B', 'N'];
+    const valid = allowed.includes(letter) ? letter : 'Q';
+    const { from, to, slides } = pendingPromo;
+    setPendingPromo(null);
+    void applyLocalMove(from, to, valid, slides);
   };
 
   const onSquareClick = (square: Square) => {
@@ -771,8 +1013,51 @@ export function HeroGame() {
     if (!atPresent) return;
     if (!isMyTurn()) { setSelectedSquare(null); setAbilityArmed(false); return; }
     if (abilityArmed) {
+      const armedHero = game.heroes[myEngineColor].hero;
+      if (armedHero === 'goofball') {
+        // Goofball is two-click: first click picks an opponent piece,
+        // second click picks where to send it.
+        if (!goofballFrom) {
+          if (abilityTargetSet.has(square)) {
+            setGoofballFrom(square);
+          } else {
+            // Click on a non-target cancels the arming.
+            setAbilityArmed(false);
+          }
+          return;
+        }
+        if (abilityTargetSet.has(square)) {
+          // Auto-promote forced pawn moves to queen for simplicity.
+          void applyLocalAbility('goofball', square, goofballFrom, 'Q');
+          setGoofballFrom(null);
+          return;
+        }
+        // Click off a legal destination resets the pick (back to picking a piece).
+        setGoofballFrom(null);
+        return;
+      }
+      if (armedHero === 'twin-jitsu') {
+        // Two-click swap: first click picks one of your own pieces, second
+        // click picks the partner. The order is symmetric in the engine but
+        // we surface from→to in the UCI to drive the slide animation.
+        if (!twinJitsuFrom) {
+          if (abilityTargetSet.has(square)) {
+            setTwinJitsuFrom(square);
+          } else {
+            setAbilityArmed(false);
+          }
+          return;
+        }
+        if (abilityTargetSet.has(square)) {
+          void applyLocalAbility('twin-jitsu', square, twinJitsuFrom);
+          setTwinJitsuFrom(null);
+          return;
+        }
+        setTwinJitsuFrom(null);
+        return;
+      }
       if (abilityTargetSet.has(square)) {
-        void applyLocalAbility(game.heroes[myEngineColor].hero, square);
+        void applyLocalAbility(armedHero, square);
         return;
       }
       // Click on a non-target square cancels the ability arming.
@@ -782,7 +1067,7 @@ export function HeroGame() {
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
     if (selectedSquare && target) {
-      attemptMove(selectedSquare, square);
+      attemptMove(selectedSquare, square, true);
       return;
     }
     const piece = game.board[sqIdx(square)];
@@ -823,7 +1108,9 @@ export function HeroGame() {
     ? eloDelta(rating, opp.rating, end.outcome === 'draw' ? 0.5 : end.outcome === myColor ? 1 : 0, 0)
     : 0;
 
-  const inCheck = !end && !!game && isInCheck(game, game.turn);
+  const inCheck = !end && !!game
+    && !(game.turn !== myEngineColor && game.heroes[game.turn].hero === 'twin-jitsu')
+    && isInCheck(game, game.turn);
 
   // King glows from the heroes picked.
   const kingGlows = useMemo(() => {
@@ -841,6 +1128,25 @@ export function HeroGame() {
   // Cooldown turn counts (for the abilities panel).
   const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
   const oppCooldownTurns = game ? turnsUntilReady(game, myEngineColor === 'w' ? 'b' : 'w') : 0;
+
+  // Twin-Jitsu mask split. Squares carrying my own masked pieces get the
+  // ghosted-king overlay (self-perspective); opponent's masked pieces render
+  // as solid king icons in their color (king-shaped decoys hiding the truth).
+  const { maskedSelfSqs, maskedAsKingSqs } = useMemo(() => {
+    const selfSqs: Square[] = [];
+    const oppSqs: Square[] = [];
+    if (viewedState) {
+      for (let i = 0; i < 64; i++) {
+        if (!viewedState.masked[i]) continue;
+        const p = viewedState.board[i];
+        if (!p) continue;
+        const sq = idxToSq(i);
+        if (p.color === myEngineColor) selfSqs.push(sq);
+        else oppSqs.push(sq);
+      }
+    }
+    return { maskedSelfSqs: selfSqs, maskedAsKingSqs: oppSqs };
+  }, [viewedState, myEngineColor]);
 
   const bothPicked = myHero != null && oppHero != null;
 
@@ -893,28 +1199,76 @@ export function HeroGame() {
           <MergeBoard
             board={boardForRender}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={atPresent ? selectedSquare : null}
+            selectedSquare={atPresent ? (goofballFrom ?? twinJitsuFrom ?? selectedSquare) : null}
             legalTargets={atPresent ? legalTargets : []}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            interactive={!end && isMyTurn() && atPresent}
-            draggable={!end && isMyTurn() && atPresent && !abilityArmed}
+            interactive={!end && isMyTurn() && atPresent && !pendingPromo}
+            draggable={!end && isMyTurn() && atPresent && !abilityArmed && !pendingPromo}
             kingGlows={kingGlows}
-            frozenSquare={
-              viewedState && viewedState.frozen && viewedState.ply < viewedState.frozen.expiresAtPly
-                ? idxToSq(viewedState.frozen.idx)
+            frozenSquares={
+              viewedState
+                ? viewedState.frozen
+                    .filter((f) => viewedState.ply < f.expiresAtPly)
+                    .map((f) => idxToSq(f.idx))
                 : null
             }
+            frozenCrackingSquares={
+              viewedState
+                ? viewedState.frozen
+                    .filter((f) => f.expiresAtPly - viewedState.ply === 1)
+                    .map((f) => idxToSq(f.idx))
+                : null
+            }
+            missiles={
+              viewedState
+                ? viewedState.missiles.map((m) => ({
+                    sq: idxToSq(m.idx),
+                    pliesLeft: Math.max(0, m.landsAtPly - viewedState.ply),
+                    firedBy: m.firedBy,
+                  }))
+                : undefined
+            }
+            ghostCrosshair={
+              abilityArmed && game && game.heroes[myEngineColor].hero === 'icbm'
+                ? { firedBy: myEngineColor }
+                : null
+            }
+            doomedPieces={doomedPieces.map((d) => ({
+              sq: d.sq,
+              letter: d.letter as any,
+            }))}
             abilityAnim={abilityAnim}
             lastMove={lastMove}
+            slideMoves={slideAnim?.moves}
+            slideKey={slideAnim?.key}
+            popSquares={popAnim?.squares}
+            popKey={popAnim?.key}
+            maskedSelfSquares={maskedSelfSqs}
+            maskedAsKingSquares={maskedAsKingSqs}
           />
+          {pendingPromo && game && (
+            <PromotionPicker
+              square={pendingPromo.to}
+              color={game.turn}
+              orientation={handoff.iAmWhite ? 'white' : 'black'}
+              options={
+                game.heroes[myEngineColor].hero === 'mutation'
+                  ? ['Q', 'R', 'B', 'N', 'Z', 'C', 'A']
+                  : ['Q', 'R', 'B', 'N']
+              }
+              onPick={resolvePromotion}
+              onCancel={() => setPendingPromo(null)}
+            />
+          )}
           {!bothPicked && (
             <div className="hero-picker-overlay">
               <HeroPicker
                 side={handoff.iAmWhite ? 'white' : 'black'}
                 myPick={myHero}
                 oppPick={oppHero}
+                pool={heroPoolForGame(gameId)}
                 onPick={handlePickHero}
               />
             </div>
@@ -994,6 +1348,33 @@ export function HeroGame() {
             disabled={!canRedoView}
           >
             Redo
+          </button>
+          <button
+            className="free-play-btn"
+            type="button"
+            disabled={moves.length === 0 || !bothPicked}
+            onClick={() => {
+              if (!bothPicked || !myHero || !oppHero) return;
+              const heroW: HeroKind = handoff.iAmWhite ? myHero : oppHero;
+              const heroB: HeroKind = handoff.iAmWhite ? oppHero : myHero;
+              const exp = buildGameExport({
+                variant: 'hero',
+                gameId: gameId!,
+                timeControlId: tc.id,
+                white: handoff.iAmWhite ? me : opp,
+                black: handoff.iAmWhite ? opp : me,
+                startedAt: startedAtRef.current,
+                endedAt: end ? Date.now() : null,
+                outcome: end?.outcome ?? null,
+                reason: end?.reason ?? null,
+                moves,
+                heroes: { w: heroW, b: heroB },
+              });
+              downloadGameExport(exp);
+            }}
+            title="Download this game as JSON for the Review page"
+          >
+            Export
           </button>
           {!end && bothPicked && (
             <>
