@@ -332,13 +332,13 @@ function DaySummaryTable({
         <tr>
           <th>Variant</th>
           <th>Time control</th>
-          <th>Date</th>
-          <th>Color</th>
           <th>Opponent</th>
+          <th>Color</th>
           <th>Result</th>
           <th>Δ</th>
           <th>Rating</th>
           <th>Reason</th>
+          <th>Date</th>
           <th></th>
         </tr>
       </thead>
@@ -353,11 +353,10 @@ function DaySummaryTable({
             <tr key={s.gameId}>
               <td>{VARIANT_LABEL[variant]}</td>
               <td>{tc?.label ?? s.timeControlId}</td>
-              <td className="muted small">{new Date(s.endedAt).toLocaleString()}</td>
-              <td>{s.myColor}</td>
               <td>
                 <span className="mono small">{s.opponentHandle}</span>
               </td>
+              <td>{s.myColor}</td>
               <td className={`result-${myResult === '1' ? 'win' : myResult === '0' ? 'loss' : 'draw'}`}>
                 {myResult}
               </td>
@@ -366,6 +365,7 @@ function DaySummaryTable({
               </td>
               <td>{s.ratingAfter}</td>
               <td className="muted small">{s.reason}</td>
+              <td className="muted small">{new Date(s.endedAt).toLocaleString()}</td>
               <td>
                 <div className="history-row-actions">
                   <button
