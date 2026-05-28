@@ -3,6 +3,7 @@ import type { DragEvent as ReactDragEvent } from 'react';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
 import { CustomSelect } from '../components/CustomSelect';
+import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import {
   initialState as mergeInitial,
   legalMovesFrom as mergeLegalFrom,
@@ -468,13 +469,27 @@ export function Sandbox() {
   // Twin-Jitsu is also two-click: first click picks one of the active side's
   // own pieces, second click picks the swap partner.
   const [twinJitsuFrom, setTwinJitsuFrom] = useState<number | null>(null);
+  // Goofball / Twin-Jitsu promotions pause the flow for a picker, just like
+  // a regular pawn move that reaches the back rank.
+  const [pendingAbilityPromo, setPendingAbilityPromo] = useState<{
+    hero: 'goofball' | 'twin-jitsu';
+    color: 'w' | 'b';
+    fromIdx: number;
+    toIdx: number;
+    pickerSquare: string;
+    pawnColor: 'w' | 'b';
+  } | null>(null);
   const [abilityAnim, setAbilityAnim] = useState<AbilityAnim | null>(null);
   // Knight-ability doomed-piece overlay: the engine clears the target on
   // commit, but we keep the sprite visible through the wind-up of the sword
   // swing and only drop it at collision (swing midpoint).
   const [doomedPieces, setDoomedPieces] = useState<{ sq: string; letter: string }[]>([]);
   useEffect(() => {
-    if (!abilityArmed) { setGoofballFrom(null); setTwinJitsuFrom(null); }
+    if (!abilityArmed) {
+      setGoofballFrom(null);
+      setTwinJitsuFrom(null);
+      setPendingAbilityPromo(null);
+    }
   }, [abilityArmed]);
 
   // Fullscreen mode for the board. Uses the HTML5 Fullscreen API on the
@@ -820,6 +835,100 @@ export function Sandbox() {
   // ICBM is compressed to an immediate detonation since sandbox has no ply
   // counter to fly missiles through; goofball walks two clicks (pick →
   // destination); harem is passive and never reaches here.
+
+  // Commit a resolved Goofball move. promoLetter is the uppercase Q/R/B/N
+  // chosen by the picker; undefined means no promotion (non-pawn or pawn
+  // not on a promo rank).
+  const commitGoofball = (
+    _color: 'w' | 'b', fromIdx: number, toIdx: number, targetSq: string,
+    promoLetter?: PromotionLetter,
+  ) => {
+    const piece = current.board[fromIdx];
+    if (!piece) { setGoofballFrom(null); setAbilityArmed(null); return; }
+    let placed: MergePiece = piece;
+    if (promoLetter) {
+      placed = {
+        color: piece.color,
+        letter: (piece.color === 'w' ? promoLetter : promoLetter.toLowerCase()) as PieceLetter,
+      };
+    }
+    const nextBoard = current.board.slice();
+    nextBoard[fromIdx] = null;
+    nextBoard[toIdx] = placed;
+    const nextFrozen = frozenAfterMove(current.frozenIdxs, fromIdx, toIdx);
+    const nextMasked = current.masked.slice();
+    nextMasked[fromIdx] = false;
+    nextMasked[toIdx] = false;
+    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+    sfx.playGoofball();
+    if (animationsEnabled) {
+      setSlideAnim({
+        moves: [{ from: heroIdxToSq(fromIdx), to: targetSq }],
+        key: Date.now(),
+      });
+    }
+    setGoofballFrom(null);
+    setAbilityArmed(null);
+  };
+
+  // Commit a resolved Twin-Jitsu swap. promoLetter applies to whichever
+  // endpoint pawn lands on its promo rank.
+  const commitTwinJitsu = (
+    _color: 'w' | 'b', fromIdx: number, toIdx: number, targetSq: string,
+    promoLetter?: PromotionLetter,
+  ) => {
+    const a = current.board[fromIdx];
+    const b = current.board[toIdx];
+    const nextBoard = current.board.slice();
+    nextBoard[fromIdx] = b;
+    nextBoard[toIdx] = a;
+    if (promoLetter) {
+      for (const slot of [fromIdx, toIdx]) {
+        const p = nextBoard[slot];
+        if (!p || p.letter.toUpperCase() !== 'P') continue;
+        const row = Math.floor(slot / 8);
+        const onPromo = (p.color === 'w' && row === 0) || (p.color === 'b' && row === 7);
+        if (!onPromo) continue;
+        nextBoard[slot] = {
+          color: p.color,
+          letter: (p.color === 'w' ? promoLetter : promoLetter.toLowerCase()) as PieceLetter,
+        };
+      }
+    }
+    // Swap freezes too: if either endpoint was frozen, the freeze stays
+    // on whichever square it sat on (the piece that was there moved out
+    // and a new one moved in — the freeze marker tracks the square).
+    const nextMasked = current.masked.slice();
+    nextMasked[fromIdx] = true;
+    nextMasked[toIdx] = true;
+    pushState({ ...current, board: nextBoard, frozenIdxs: current.frozenIdxs, enPassant: null, masked: nextMasked });
+    sfx.playTwinJitsu();
+    if (animationsEnabled) {
+      setSlideAnim({
+        moves: [
+          { from: heroIdxToSq(fromIdx), to: targetSq },
+          { from: targetSq, to: heroIdxToSq(fromIdx) },
+        ],
+        key: Date.now(),
+      });
+    }
+    setTwinJitsuFrom(null);
+    setAbilityArmed(null);
+  };
+
+  const resolveAbilityPromotion = (letter: PromotionLetter) => {
+    if (!pendingAbilityPromo) return;
+    const { hero, color, fromIdx, toIdx } = pendingAbilityPromo;
+    const valid: PromotionLetter = (['Q', 'R', 'B', 'N'] as PromotionLetter[]).includes(letter)
+      ? letter : 'Q';
+    setPendingAbilityPromo(null);
+    if (hero === 'goofball') {
+      commitGoofball(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
+    } else {
+      commitTwinJitsu(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
+    }
+  };
+
   const fireAbility = (color: 'w' | 'b', targetSq: string) => {
     const hero = color === 'w' ? heroW : heroB;
     const idx = mergeSqToIdx(targetSq);
@@ -841,30 +950,21 @@ export function Sandbox() {
       }
       const piece = current.board[goofballFrom];
       if (!piece) { setGoofballFrom(null); setAbilityArmed(null); return; }
-      const nextBoard = current.board.slice();
       const isPawn = piece.letter.toUpperCase() === 'P';
       const destRank = Math.floor(idx / 8); // 0 = rank 8, 7 = rank 1
-      let placed: MergePiece = piece;
       if (isPawn && (destRank === 0 || destRank === 7)) {
-        // Auto-promote forced pawn pushes to queen (matches HeroGame).
-        placed = { color: piece.color, letter: (piece.color === 'w' ? 'Q' : 'q') as PieceLetter };
-      }
-      nextBoard[goofballFrom] = null;
-      nextBoard[idx] = placed;
-      const nextFrozen = frozenAfterMove(current.frozenIdxs, goofballFrom, idx);
-      const nextMasked = current.masked.slice();
-      nextMasked[goofballFrom] = false;
-      nextMasked[idx] = false;
-      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
-      sfx.playGoofball();
-      if (animationsEnabled) {
-        setSlideAnim({
-          moves: [{ from: heroIdxToSq(goofballFrom), to: targetSq }],
-          key: Date.now(),
+        // Pause for the picker — same flow as a regular pawn promotion.
+        setPendingAbilityPromo({
+          hero: 'goofball',
+          color,
+          fromIdx: goofballFrom,
+          toIdx: idx,
+          pickerSquare: targetSq,
+          pawnColor: piece.color,
         });
+        return;
       }
-      setGoofballFrom(null);
-      setAbilityArmed(null);
+      commitGoofball(color, goofballFrom, idx, targetSq);
       return;
     }
 
@@ -879,30 +979,36 @@ export function Sandbox() {
         return;
       }
       if (!heroLegalAbilityTargets.has(idx)) { setTwinJitsuFrom(null); return; }
-      const a = current.board[twinJitsuFrom];
-      const b = current.board[idx];
-      const nextBoard = current.board.slice();
-      nextBoard[twinJitsuFrom] = b;
-      nextBoard[idx] = a;
-      // Swap freezes too: if either endpoint was frozen, the freeze stays
-      // on whichever square it sat on (the piece that was there moved out
-      // and a new one moved in — the freeze marker tracks the square).
-      const nextMasked = current.masked.slice();
-      nextMasked[twinJitsuFrom] = true;
-      nextMasked[idx] = true;
-      pushState({ ...current, board: nextBoard, frozenIdxs: current.frozenIdxs, enPassant: null, masked: nextMasked });
-      sfx.playTwinJitsu();
-      if (animationsEnabled) {
-        setSlideAnim({
-          moves: [
-            { from: heroIdxToSq(twinJitsuFrom), to: targetSq },
-            { from: targetSq, to: heroIdxToSq(twinJitsuFrom) },
-          ],
-          key: Date.now(),
-        });
+      // Detect pawn-to-back-rank in the swap. At most one of the two
+      // endpoints can land on a promo rank (a pawn can't be on its own
+      // promo rank pre-swap because it would've already promoted).
+      const aPiece = current.board[twinJitsuFrom];
+      const bPiece = current.board[idx];
+      // After swap: aPiece sits on `idx`, bPiece sits on `twinJitsuFrom`.
+      const aLandsRow = Math.floor(idx / 8);
+      const bLandsRow = Math.floor(twinJitsuFrom / 8);
+      let promoIdx: number | null = null;
+      let promoSq: string | null = null;
+      let promoColor: 'w' | 'b' | null = null;
+      if (aPiece && aPiece.letter.toUpperCase() === 'P'
+          && ((aPiece.color === 'w' && aLandsRow === 0) || (aPiece.color === 'b' && aLandsRow === 7))) {
+        promoIdx = idx; promoSq = targetSq; promoColor = aPiece.color;
+      } else if (bPiece && bPiece.letter.toUpperCase() === 'P'
+          && ((bPiece.color === 'w' && bLandsRow === 0) || (bPiece.color === 'b' && bLandsRow === 7))) {
+        promoIdx = twinJitsuFrom; promoSq = heroIdxToSq(twinJitsuFrom); promoColor = bPiece.color;
       }
-      setTwinJitsuFrom(null);
-      setAbilityArmed(null);
+      if (promoIdx != null && promoSq && promoColor) {
+        setPendingAbilityPromo({
+          hero: 'twin-jitsu',
+          color,
+          fromIdx: twinJitsuFrom,
+          toIdx: idx,
+          pickerSquare: promoSq,
+          pawnColor: promoColor,
+        });
+        return;
+      }
+      commitTwinJitsu(color, twinJitsuFrom, idx, targetSq);
       return;
     }
 
@@ -1325,6 +1431,21 @@ export function Sandbox() {
                 title="Exit fullscreen (Esc)"
                 aria-label="Exit fullscreen"
               >×</button>
+            )}
+            {pendingAbilityPromo && (
+              <PromotionPicker
+                square={pendingAbilityPromo.pickerSquare}
+                color={pendingAbilityPromo.pawnColor}
+                orientation={orientation}
+                options={['Q', 'R', 'B', 'N']}
+                onPick={resolveAbilityPromotion}
+                onCancel={() => {
+                  setPendingAbilityPromo(null);
+                  setGoofballFrom(null);
+                  setTwinJitsuFrom(null);
+                  setAbilityArmed(null);
+                }}
+              />
             )}
             {sandboxEnd && (
               <div

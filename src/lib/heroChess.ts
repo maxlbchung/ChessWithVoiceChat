@@ -533,27 +533,33 @@ function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece
 // ------------------------------------------------------------------
 export function isSquareAttacked(state: GameState, target: number, byColor: C2Color): boolean {
   const [tf, tr] = frOfIdx(target);
+  // Frozen pieces can't capture or move, so they don't attack anything.
+  // Their square still BLOCKS sliding rays — the piece is physically there.
   // Pawn
   const pawnDir = byColor === 'w' ? 1 : -1;
   for (const df of [-1, 1]) {
     const f = tf - df, r = tr - pawnDir;
     if (!onBoard(f, r)) continue;
-    const p = state.board[idxFR(f, r)];
-    if (p && p.color === byColor && p.letter.toUpperCase() === 'P') return true;
+    const idx = idxFR(f, r);
+    const p = state.board[idx];
+    if (p && p.color === byColor && p.letter.toUpperCase() === 'P' && !isFrozen(state, idx)) return true;
   }
   // King
   for (const [df, dr] of EIGHT_DIRS) {
     const f = tf + df, r = tr + dr;
     if (!onBoard(f, r)) continue;
-    const p = state.board[idxFR(f, r)];
-    if (p && p.color === byColor && p.letter.toUpperCase() === 'K') return true;
+    const idx = idxFR(f, r);
+    const p = state.board[idx];
+    if (p && p.color === byColor && p.letter.toUpperCase() === 'K' && !isFrozen(state, idx)) return true;
   }
   // Knight — N plus the merged forms (A/C/Z all carry knight movement).
   for (const [df, dr] of KNIGHT_OFFSETS) {
     const f = tf + df, r = tr + dr;
     if (!onBoard(f, r)) continue;
-    const p = state.board[idxFR(f, r)];
+    const idx = idxFR(f, r);
+    const p = state.board[idx];
     if (!p || p.color !== byColor) continue;
+    if (isFrozen(state, idx)) continue;
     const up = p.letter.toUpperCase();
     if (up === 'N' || up === 'A' || up === 'C' || up === 'Z') return true;
   }
@@ -561,9 +567,10 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
   for (const [df, dr] of ROOK_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
-      const p = state.board[idxFR(f, r)];
+      const idx = idxFR(f, r);
+      const p = state.board[idx];
       if (p) {
-        if (p.color === byColor) {
+        if (p.color === byColor && !isFrozen(state, idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'R' || up === 'Q' || up === 'C' || up === 'Z') return true;
         }
@@ -576,9 +583,10 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
   for (const [df, dr] of BISHOP_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
-      const p = state.board[idxFR(f, r)];
+      const idx = idxFR(f, r);
+      const p = state.board[idx];
       if (p) {
-        if (p.color === byColor) {
+        if (p.color === byColor && !isFrozen(state, idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'B' || up === 'Q' || up === 'A' || up === 'Z') return true;
         }
@@ -899,6 +907,24 @@ function applyAbility(
     next.board[targetIdx] = a;
     next.masked[fromIdx] = true;
     next.masked[targetIdx] = true;
+    // A pawn swapped onto its promotion rank promotes. The player picks the
+    // promotion piece in the UI; the chosen letter rides the UCI as `promo`.
+    // Default to queen if none provided (e.g. legacy callers or a swap that
+    // ends in stalemate filtering).
+    const promoLetter = (promo ? promo.toUpperCase() : 'Q') as PieceLetter;
+    for (const idx of [fromIdx, targetIdx]) {
+      const piece = next.board[idx];
+      if (!piece) continue;
+      const up = piece.letter.toUpperCase();
+      if (up !== 'P') continue;
+      const rankFromTop = Math.floor(idx / 8);
+      const onPromoRank = piece.color === 'w' ? rankFromTop === 0 : rankFromTop === 7;
+      if (!onPromoRank) continue;
+      next.board[idx] = {
+        color: piece.color,
+        letter: (piece.color === 'w' ? promoLetter : promoLetter.toLowerCase()) as PieceLetter,
+      };
+    }
     // Castling rights lost as if either endpoint had been "moved":
     // king-involving swap forfeits both sides; rook-on-home-corner swap
     // forfeits that wing.
@@ -1124,12 +1150,14 @@ export function parseAbility(
     return { hero, from, to, promo };
   }
   if (hero === 'twin-jitsu') {
-    // !T<from><to> — the swap endpoints. Symmetric, so order is arbitrary.
+    // !T<from><to>[<promo>] — the swap endpoints. Symmetric, so order is
+    // arbitrary; promo letter applies if a pawn lands on its back rank.
     if (uci.length < 6) return null;
     const from = uci.slice(2, 4);
     const to = uci.slice(4, 6);
+    const promo = uci.length >= 7 ? uci[6].toUpperCase() : undefined;
     if (from.length !== 2 || to.length !== 2) return null;
-    return { hero, from, to };
+    return { hero, from, to, promo };
   }
   const to = uci.slice(2, 4);
   if (to.length !== 2) return null;
@@ -1140,7 +1168,7 @@ export function abilityUci(hero: HeroKind, to: Square, from?: Square, promo?: st
     return `!G${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
   }
   if (hero === 'twin-jitsu') {
-    return `!T${from ?? ''}${to}`;
+    return `!T${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
   }
   return `!${HERO_TO_ABILITY_PREFIX[hero]}${to}`;
 }
@@ -1252,7 +1280,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       if (!parsed.from) return null;
       const fromIdx = sqToIdx(parsed.from);
       if (!twinJitsuLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
-      next = applyAbility(state, 'twin-jitsu', targetIdx, fromIdx);
+      next = applyAbility(state, 'twin-jitsu', targetIdx, fromIdx, parsed.promo);
     } else {
       if (!abilityTargets(state).includes(targetIdx)) return null;
       next = applyAbility(state, parsed.hero, targetIdx);

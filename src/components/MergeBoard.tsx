@@ -1135,6 +1135,7 @@ export function MergeBoard({
             if (r === 0) return null;
             const reducer = effectiveSize / 32;
             const markerId = `mb-arrow-${i}`;
+            const startMarkerId = `mb-arrow-start-${i}`;
             const stroke = a.preview ? (0.9 * effectiveSize) / 40 : effectiveSize / 40;
             const opacity = a.preview ? 0.5 : 0.65;
             const marker = (
@@ -1147,6 +1148,22 @@ export function MergeBoard({
                 orient="auto"
               >
                 <polygon points="0.3 0, 2 1.25, 0.3 2.5" fill={ARROW_COLOR} />
+              </marker>
+            );
+            // Rounded start cap drawn as a circle marker rather than via
+            // strokeLinecap="round" — a round linecap also rounds the END,
+            // which bulges out past the arrowhead. markerUnits defaults to
+            // strokeWidth, so r=0.5 gives a dot exactly the line's width.
+            const startMarker = (
+              <marker
+                id={startMarkerId}
+                markerWidth="2"
+                markerHeight="2"
+                refX="1"
+                refY="1"
+                orient="auto"
+              >
+                <circle cx="1" cy="1" r="0.5" fill={ARROW_COLOR} />
               </marker>
             );
 
@@ -1179,6 +1196,7 @@ export function MergeBoard({
               return (
                 <g key={`${a.from}-${a.to}-${a.preview ? 'p' : 'c'}`}>
                   {marker}
+                  {startMarker}
                   <polyline
                     points={points}
                     fill="none"
@@ -1186,7 +1204,7 @@ export function MergeBoard({
                     stroke={ARROW_COLOR}
                     strokeWidth={stroke}
                     strokeLinejoin="round"
-                    strokeLinecap="round"
+                    markerStart={`url(#${startMarkerId})`}
                     markerEnd={`url(#${markerId})`}
                   />
                 </g>
@@ -1200,6 +1218,7 @@ export function MergeBoard({
             return (
               <g key={`${a.from}-${a.to}-${a.preview ? 'p' : 'c'}`}>
                 {marker}
+                {startMarker}
                 <line
                   x1={from.x}
                   y1={from.y}
@@ -1208,6 +1227,7 @@ export function MergeBoard({
                   opacity={opacity}
                   stroke={ARROW_COLOR}
                   strokeWidth={stroke}
+                  markerStart={`url(#${startMarkerId})`}
                   markerEnd={`url(#${markerId})`}
                 />
               </g>

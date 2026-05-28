@@ -6,6 +6,7 @@ import { PlayerCard } from '../components/PlayerCard';
 import { ResultAvatar } from '../components/EndScreenAvatars';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import {
+  buildGameExport,
   buildReplay,
   downloadGameExport,
   GameImportError,
@@ -106,6 +107,33 @@ export function Review() {
     } catch (err) {
       if (err instanceof GameImportError) setError(err.message);
       else setError('Failed to load: ' + ((err as Error)?.message ?? String(err)));
+    }
+  };
+
+  // Download a stored game as JSON straight from the history list — mirrors
+  // the Profile page's per-row Export so users can review (or share) a match
+  // without first loading it into the replay view.
+  const exportFromLocalRecord = async (gameId: string) => {
+    try {
+      const rec = await loadGameRecord(gameId);
+      if (!rec) { setError('That game isn’t in your local history.'); return; }
+      const tc = getTimeControl(rec.timeControlId);
+      if (!tc) { setError('Unknown time control on that record.'); return; }
+      const exp = buildGameExport({
+        variant: tc.variant,
+        gameId: rec.gameId,
+        timeControlId: rec.timeControlId,
+        white: rec.white,
+        black: rec.black,
+        startedAt: rec.startedAt,
+        endedAt: rec.endedAt,
+        outcome: rec.outcome,
+        reason: rec.reason,
+        moves: rec.moves,
+      });
+      downloadGameExport(exp);
+    } catch (err) {
+      setError('Failed to export: ' + ((err as Error)?.message ?? String(err)));
     }
   };
 
@@ -230,15 +258,30 @@ export function Review() {
                       </td>
                       <td className="muted small">{new Date(s.endedAt).toLocaleString()}</td>
                       <td>
-                        <button
-                          className="link-btn"
-                          type="button"
-                          onClick={() => void loadFromLocalRecord(s.gameId)}
-                          disabled={variant === 'hero'}
-                          title={variant === 'hero' ? 'Hero matches can’t replay from local history' : 'Review this game'}
-                        >
-                          Review
-                        </button>
+                        {variant === 'hero' ? (
+                          <span className="muted small" title="Hero matches can’t replay from local history">
+                            —
+                          </span>
+                        ) : (
+                          <div className="history-row-actions">
+                            <button
+                              className="link-btn"
+                              type="button"
+                              onClick={() => void exportFromLocalRecord(s.gameId)}
+                              title="Download this game as JSON"
+                            >
+                              Export
+                            </button>
+                            <button
+                              className="link-btn"
+                              type="button"
+                              onClick={() => void loadFromLocalRecord(s.gameId)}
+                              title="Review this game"
+                            >
+                              Review
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

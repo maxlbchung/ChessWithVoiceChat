@@ -123,6 +123,17 @@ export function HeroGame() {
   const [pendingPromo, setPendingPromo] = useState<{
     from: Square; to: Square; slides?: { from: Square; to: Square }[];
   } | null>(null);
+  // Ability-driven promotions: Twin-Jitsu swap that lands a pawn on its back
+  // rank, or Goofball forcing an opponent pawn to promote. The picker square
+  // is the square where the pawn ends up; `color` is the side being promoted
+  // (own pawn for Twin-Jitsu, opponent's pawn for Goofball).
+  const [pendingAbilityPromo, setPendingAbilityPromo] = useState<{
+    hero: 'twin-jitsu' | 'goofball';
+    from: Square;
+    to: Square;
+    pickerSquare: Square;
+    color: 'w' | 'b';
+  } | null>(null);
   const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
   const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
   useEffect(() => {
@@ -705,11 +716,12 @@ export function HeroGame() {
     triggerMissileDetonations(prev, res.state, move.uci);
     triggerWarlordDoom(prev, res.result);
     triggerFrostShatter(prev, res.state);
-    if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
-      const a = move.uci.slice(2, 4) as Square;
-      const b = move.uci.slice(4, 6) as Square;
-      setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
-    } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
+    // Twin-Jitsu: deliberately skip the slide animation on the OPPONENT'S
+    // screen. The swap re-masks both endpoints, so showing two pieces
+    // sliding into each other's squares would leak which two squares
+    // changed (and reveal at least one endpoint mid-slide). The mover
+    // still sees their own slide in commitMove.
+    if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
       const from = move.uci.slice(2, 4) as Square;
       const to = move.uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
@@ -1008,6 +1020,16 @@ export function HeroGame() {
     void applyLocalMove(from, to, valid, slides);
   };
 
+  const resolveAbilityPromotion = (letter: PromotionLetter) => {
+    if (!pendingAbilityPromo) return;
+    const { hero, from, to } = pendingAbilityPromo;
+    const valid: PromotionLetter = (['Q', 'R', 'B', 'N'] as PromotionLetter[]).includes(letter)
+      ? letter
+      : 'Q';
+    setPendingAbilityPromo(null);
+    void applyLocalAbility(hero, to, from, valid);
+  };
+
   const onSquareClick = (square: Square) => {
     if (end || !game) return;
     if (!atPresent) return;
@@ -1027,8 +1049,23 @@ export function HeroGame() {
           return;
         }
         if (abilityTargetSet.has(square)) {
-          // Auto-promote forced pawn moves to queen for simplicity.
-          void applyLocalAbility('goofball', square, goofballFrom, 'Q');
+          // If the forced move would promote a pawn, ask the Goofball user
+          // which piece to promote into; otherwise fire immediately.
+          const piece = game.board[sqIdx(goofballFrom)];
+          const isPawn = piece && piece.letter.toUpperCase() === 'P';
+          const rank = parseInt(square[1], 10);
+          const promoting = !!isPawn && (rank === 8 || rank === 1);
+          if (promoting) {
+            setPendingAbilityPromo({
+              hero: 'goofball',
+              from: goofballFrom,
+              to: square,
+              pickerSquare: square,
+              color: piece!.color,
+            });
+          } else {
+            void applyLocalAbility('goofball', square, goofballFrom);
+          }
           setGoofballFrom(null);
           return;
         }
@@ -1049,7 +1086,33 @@ export function HeroGame() {
           return;
         }
         if (abilityTargetSet.has(square)) {
-          void applyLocalAbility('twin-jitsu', square, twinJitsuFrom);
+          // If either swapped piece is a pawn landing on its promotion rank,
+          // prompt the player for which piece to promote into.
+          const aPiece = game.board[sqIdx(twinJitsuFrom)];
+          const bPiece = game.board[sqIdx(square)];
+          // After swap, aPiece sits on `square` and bPiece sits on `twinJitsuFrom`.
+          const promoRankFor = (p: { color: 'w' | 'b' } | null | undefined) =>
+            p?.color === 'w' ? 8 : 1;
+          const aLandsRank = parseInt(square[1], 10);
+          const bLandsRank = parseInt(twinJitsuFrom[1], 10);
+          let promoSq: Square | null = null;
+          let promoColor: 'w' | 'b' | null = null;
+          if (aPiece && aPiece.letter.toUpperCase() === 'P' && aLandsRank === promoRankFor(aPiece)) {
+            promoSq = square; promoColor = aPiece.color;
+          } else if (bPiece && bPiece.letter.toUpperCase() === 'P' && bLandsRank === promoRankFor(bPiece)) {
+            promoSq = twinJitsuFrom; promoColor = bPiece.color;
+          }
+          if (promoSq && promoColor) {
+            setPendingAbilityPromo({
+              hero: 'twin-jitsu',
+              from: twinJitsuFrom,
+              to: square,
+              pickerSquare: promoSq,
+              color: promoColor,
+            });
+          } else {
+            void applyLocalAbility('twin-jitsu', square, twinJitsuFrom);
+          }
           setTwinJitsuFrom(null);
           return;
         }
@@ -1260,6 +1323,16 @@ export function HeroGame() {
               }
               onPick={resolvePromotion}
               onCancel={() => setPendingPromo(null)}
+            />
+          )}
+          {pendingAbilityPromo && (
+            <PromotionPicker
+              square={pendingAbilityPromo.pickerSquare}
+              color={pendingAbilityPromo.color}
+              orientation={handoff.iAmWhite ? 'white' : 'black'}
+              options={['Q', 'R', 'B', 'N']}
+              onPick={resolveAbilityPromotion}
+              onCancel={() => setPendingAbilityPromo(null)}
             />
           )}
           {!bothPicked && (
