@@ -76,12 +76,12 @@ export function Review() {
         setError('That game isn’t in your local history.');
         return;
       }
-      // We don't store heroes alongside the record, so Hero matches loaded from
-      // local history can't be replayed unless the user exports + imports.
       const tc = getTimeControl(rec.timeControlId);
       if (!tc) { setError('Unknown time control on that record.'); return; }
-      if (tc.variant === 'hero') {
-        setError('Hero matches in local history don’t store hero picks — export the JSON from the live game and paste it here.');
+      // Hero replay needs the W/B picks to rebuild the starting position.
+      // Records saved before hero-pick storage don't carry them.
+      if (tc.variant === 'hero' && !rec.heroes) {
+        setError('This hero match was saved before hero picks were stored — export the JSON from a newer live game to review it.');
         return;
       }
       const exp: ExportedGame = {
@@ -99,6 +99,7 @@ export function Review() {
         outcome: rec.outcome,
         reason: rec.reason,
         moves: rec.moves,
+        ...(rec.heroes ? { heroes: rec.heroes } : {}),
       };
       const replay = buildReplay(exp);
       setLoaded({ exp, replay });
@@ -119,6 +120,12 @@ export function Review() {
       if (!rec) { setError('That game isn’t in your local history.'); return; }
       const tc = getTimeControl(rec.timeControlId);
       if (!tc) { setError('Unknown time control on that record.'); return; }
+      // A hero export without its picks can't be re-imported, so don't offer
+      // a broken file for records that predate hero-pick storage.
+      if (tc.variant === 'hero' && !rec.heroes) {
+        setError('This hero match was saved before hero picks were stored, so it can’t be exported for replay.');
+        return;
+      }
       const exp = buildGameExport({
         variant: tc.variant,
         gameId: rec.gameId,
@@ -130,6 +137,7 @@ export function Review() {
         outcome: rec.outcome,
         reason: rec.reason,
         moves: rec.moves,
+        heroes: rec.heroes,
       });
       downloadGameExport(exp);
     } catch (err) {
@@ -146,20 +154,25 @@ export function Review() {
     }
   };
 
-  // Arrow-key history scrubbing.
+  // Arrow-key history scrubbing. Left/Right step one ply; Up/Down jump to
+  // the start/end — matching the moves list reading top-to-bottom.
   useEffect(() => {
     if (!loaded) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
       e.preventDefault();
       const total = totalPlyOf(loaded.replay);
       setViewPly((p) => {
-        const next = e.key === 'ArrowRight' ? Math.min(total, p + 1) : Math.max(0, p - 1);
+        let next = p;
+        if (e.key === 'ArrowRight') next = Math.min(total, p + 1);
+        else if (e.key === 'ArrowLeft') next = Math.max(0, p - 1);
+        else if (e.key === 'ArrowUp') next = 0;
+        else if (e.key === 'ArrowDown') next = total;
         if (next !== p) {
           sfx.cutoffChessSfx();
-          if (e.key === 'ArrowRight') sfx.playMove();
+          if (next > p) sfx.playMove();
           else sfx.playMoveReversed();
         }
         return next;
@@ -230,7 +243,7 @@ export function Review() {
           <section className="review-import-card">
             <h2>From your local history</h2>
             <p className="muted small">
-              Hero matches don’t replay from local history — export the JSON live to review them.
+              Hero matches played before this update don’t store their hero picks — those can’t be replayed.
             </p>
             <table className="history-table">
               <thead>
@@ -258,30 +271,24 @@ export function Review() {
                       </td>
                       <td className="muted small">{new Date(s.endedAt).toLocaleString()}</td>
                       <td>
-                        {variant === 'hero' ? (
-                          <span className="muted small" title="Hero matches can’t replay from local history">
-                            —
-                          </span>
-                        ) : (
-                          <div className="history-row-actions">
-                            <button
-                              className="link-btn"
-                              type="button"
-                              onClick={() => void exportFromLocalRecord(s.gameId)}
-                              title="Download this game as JSON"
-                            >
-                              Export
-                            </button>
-                            <button
-                              className="link-btn"
-                              type="button"
-                              onClick={() => void loadFromLocalRecord(s.gameId)}
-                              title="Review this game"
-                            >
-                              Review
-                            </button>
-                          </div>
-                        )}
+                        <div className="history-row-actions">
+                          <button
+                            className="link-btn"
+                            type="button"
+                            onClick={() => void exportFromLocalRecord(s.gameId)}
+                            title="Download this game as JSON"
+                          >
+                            Export
+                          </button>
+                          <button
+                            className="link-btn"
+                            type="button"
+                            onClick={() => void loadFromLocalRecord(s.gameId)}
+                            title="Review this game"
+                          >
+                            Review
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

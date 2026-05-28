@@ -1,3 +1,5 @@
+import type { HeroKind } from './heroChess';
+
 export type Color = 'white' | 'black';
 
 export type GameOutcome = 'white' | 'black' | 'draw';
@@ -41,6 +43,10 @@ export type GameRecord = {
   outcome: GameOutcome;
   reason: GameEndReason;
   moves: Move[];
+  // Hero matches only — the W/B hero picks, needed to rebuild the starting
+  // position when replaying or exporting from local history. Absent on
+  // non-hero records and on hero records saved before this field existed.
+  heroes?: { w: HeroKind; b: HeroKind };
 };
 
 export type LocalGameSummary = {

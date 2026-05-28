@@ -54,9 +54,9 @@ export function Profile() {
     );
   }
 
-  // Pull a stored record and trigger a JSON download. Hero matches aren't
-  // exportable from local history because the hero picks aren't persisted —
-  // those rows show "—" instead of buttons.
+  // Pull a stored record and trigger a JSON download. Hero matches saved
+  // before hero-pick storage can't be exported for replay (the export would
+  // be missing its heroes and fail to re-import).
   const exportGame = async (gameId: string) => {
     const rec = await loadGameRecord(gameId);
     if (!rec) {
@@ -66,6 +66,10 @@ export function Profile() {
     const tc = getTimeControl(rec.timeControlId);
     if (!tc) {
       alert('Unknown time control on that record.');
+      return;
+    }
+    if (tc.variant === 'hero' && !rec.heroes) {
+      alert('This hero match was saved before hero picks were stored, so it can’t be exported for replay.');
       return;
     }
     const exp = buildGameExport({
@@ -79,6 +83,7 @@ export function Profile() {
       outcome: rec.outcome,
       reason: rec.reason,
       moves: rec.moves,
+      heroes: rec.heroes,
     });
     downloadGameExport(exp);
   };
@@ -333,9 +338,6 @@ function DaySummaryTable({
           const delta = s.ratingAfter - s.ratingBefore;
           const myResult =
             s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
-          // Hero matches don't store hero picks in the local record, so
-          // review-from-history can't reconstruct them.
-          const canReview = tc?.variant !== 'hero';
           return (
             <tr key={s.gameId}>
               <td>{tc?.label ?? s.timeControlId}</td>
@@ -352,29 +354,23 @@ function DaySummaryTable({
               <td>{s.ratingAfter}</td>
               <td className="muted small">{s.reason}</td>
               <td>
-                {canReview ? (
-                  <div className="history-row-actions">
-                    <button
-                      className="link-btn"
-                      type="button"
-                      onClick={() => onExport(s.gameId)}
-                      title="Download this game as JSON"
-                    >
-                      Export
-                    </button>
-                    <Link
-                      className="link-btn"
-                      to={`/review?game=${encodeURIComponent(s.gameId)}`}
-                      title="Open this game in the Review page"
-                    >
-                      Review
-                    </Link>
-                  </div>
-                ) : (
-                  <span className="muted small" title="Hero matches can’t replay from local history">
-                    —
-                  </span>
-                )}
+                <div className="history-row-actions">
+                  <button
+                    className="link-btn"
+                    type="button"
+                    onClick={() => onExport(s.gameId)}
+                    title="Download this game as JSON"
+                  >
+                    Export
+                  </button>
+                  <Link
+                    className="link-btn"
+                    to={`/review?game=${encodeURIComponent(s.gameId)}`}
+                    title="Open this game in the Review page"
+                  >
+                    Review
+                  </Link>
+                </div>
               </td>
             </tr>
           );

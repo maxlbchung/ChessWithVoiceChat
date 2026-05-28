@@ -776,6 +776,11 @@ export function HeroGame() {
     const before = rating;
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
+    // Persist the hero picks so the match can be replayed/exported from
+    // local history later. myHero/oppHero mirror the engine's W/B setup
+    // (see the initialState call above); both are set once a game is live.
+    const heroW = handoff.iAmWhite ? myHero : oppHero;
+    const heroB = handoff.iAmWhite ? oppHero : myHero;
     const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
@@ -786,6 +791,7 @@ export function HeroGame() {
       outcome: state.outcome,
       reason: state.reason,
       moves,
+      ...(heroW && heroB ? { heroes: { w: heroW, b: heroB } } : {}),
     };
     await saveGameRecord(record);
     await appendSummary({
