@@ -9,7 +9,7 @@ import {
   type AggregateStats,
 } from '../lib/storage';
 import type { LocalGameSummary } from '../lib/types';
-import { getTimeControl } from '../lib/timeControls';
+import { getTimeControl, type GameVariant } from '../lib/timeControls';
 import { fileToAvatarDataUrl } from '../lib/avatar';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 
@@ -308,6 +308,14 @@ function DateNav({
   );
 }
 
+const VARIANT_LABEL: Record<GameVariant, string> = {
+  normal: 'Normal',
+  merge: 'Merge',
+  two: 'Guerrilla',
+  cash: 'Cash Money',
+  hero: 'Hero',
+};
+
 function DaySummaryTable({
   summaries,
   onExport,
@@ -322,7 +330,9 @@ function DaySummaryTable({
     <table className="history-table">
       <thead>
         <tr>
-          <th>Time</th>
+          <th>Variant</th>
+          <th>Time control</th>
+          <th>Date</th>
           <th>Color</th>
           <th>Opponent</th>
           <th>Result</th>
@@ -335,12 +345,15 @@ function DaySummaryTable({
       <tbody>
         {summaries.map((s) => {
           const tc = getTimeControl(s.timeControlId);
+          const variant = tc?.variant ?? 'normal';
           const delta = s.ratingAfter - s.ratingBefore;
           const myResult =
             s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
           return (
             <tr key={s.gameId}>
+              <td>{VARIANT_LABEL[variant]}</td>
               <td>{tc?.label ?? s.timeControlId}</td>
+              <td className="muted small">{new Date(s.endedAt).toLocaleString()}</td>
               <td>{s.myColor}</td>
               <td>
                 <span className="mono small">{s.opponentHandle}</span>
