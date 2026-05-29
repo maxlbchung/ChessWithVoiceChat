@@ -6,6 +6,8 @@ import {
   loadDaySummaries,
   loadGameRecord,
   loadHistoryIndex,
+  loadPinnedSummaries,
+  togglePinnedGame,
   type AggregateStats,
 } from '../lib/storage';
 import type { LocalGameSummary } from '../lib/types';
@@ -27,13 +29,22 @@ export function Profile() {
   const [viewIdx, setViewIdx] = useState(0);
   const [daySummaries, setDaySummaries] = useState<LocalGameSummary[]>([]);
   const [aggregate, setAggregate] = useState<AggregateStats>({ wins: 0, losses: 0, draws: 0, total: 0 });
+  // Pinned games — a starred shortlist shown above history, persisted on its
+  // own key so it survives day-bucket navigation and reloads.
+  const [pinned, setPinned] = useState<LocalGameSummary[]>([]);
+  const pinnedIds = useMemo(() => new Set(pinned.map((p) => p.gameId)), [pinned]);
 
   useEffect(() => {
-    Promise.all([loadHistoryIndex(), loadAggregateStats()]).then(([d, a]) => {
+    Promise.all([loadHistoryIndex(), loadAggregateStats(), loadPinnedSummaries()]).then(([d, a, p]) => {
       setDates(d);
       setAggregate(a);
+      setPinned(p);
     });
   }, []);
+
+  const togglePin = async (summary: LocalGameSummary) => {
+    setPinned(await togglePinnedGame(summary));
+  };
 
   // Load the currently-viewed day's bucket whenever the cursor moves.
   useEffect(() => {
@@ -195,6 +206,20 @@ export function Profile() {
       </section>
 
       <section className="history-section">
+        <h2>Pinned games</h2>
+        {pinned.length === 0 ? (
+          <div className="muted">No pinned games yet — use the Pin button in your history below to keep games here.</div>
+        ) : (
+          <DaySummaryTable
+            summaries={pinned}
+            pinnedIds={pinnedIds}
+            onExport={(id) => void exportGame(id)}
+            onTogglePin={(s) => void togglePin(s)}
+          />
+        )}
+      </section>
+
+      <section className="history-section">
         <h2>Game history</h2>
         {dates.length === 0 ? (
           <div className="muted">No games yet — go play one.</div>
@@ -214,7 +239,9 @@ export function Profile() {
             />
             <DaySummaryTable
               summaries={daySummaries}
+              pinnedIds={pinnedIds}
               onExport={(id) => void exportGame(id)}
+              onTogglePin={(s) => void togglePin(s)}
             />
           </>
         )}
@@ -318,10 +345,14 @@ const VARIANT_LABEL: Record<GameVariant, string> = {
 
 function DaySummaryTable({
   summaries,
+  pinnedIds,
   onExport,
+  onTogglePin,
 }: {
   summaries: LocalGameSummary[];
+  pinnedIds: Set<string>;
   onExport: (gameId: string) => void;
+  onTogglePin: (summary: LocalGameSummary) => void;
 }) {
   if (summaries.length === 0) {
     return <div className="muted">No games on this day.</div>;
@@ -340,6 +371,7 @@ function DaySummaryTable({
           <th>Reason</th>
           <th>Date</th>
           <th></th>
+          <th>Pin</th>
         </tr>
       </thead>
       <tbody>
@@ -349,6 +381,7 @@ function DaySummaryTable({
           const delta = s.ratingAfter - s.ratingBefore;
           const myResult =
             s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
+          const isPinned = pinnedIds.has(s.gameId);
           return (
             <tr key={s.gameId}>
               <td>{VARIANT_LABEL[variant]}</td>
@@ -384,6 +417,16 @@ function DaySummaryTable({
                     Review
                   </Link>
                 </div>
+              </td>
+              <td>
+                <button
+                  className="link-btn"
+                  type="button"
+                  onClick={() => onTogglePin(s)}
+                  title={isPinned ? 'Remove from pinned games' : 'Pin to the top of your profile'}
+                >
+                  {isPinned ? '★ Unpin' : '☆ Pin'}
+                </button>
               </td>
             </tr>
           );

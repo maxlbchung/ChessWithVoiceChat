@@ -27,6 +27,14 @@ const INDEX_KEY = 'chess.summaries.v2.index';
 const DAY_KEY_PREFIX = 'chess.summaries.v2.day.';
 const AGGREGATE_KEY = 'chess.summaries.v2.aggregate';
 
+// Pinned games: a flat list of LocalGameSummary the user has starred so they
+// stay one click away regardless of which day bucket they live in. Newest pin
+// first. We store the whole summary (not just the gameId) so the Pinned table
+// can render without walking day buckets; the backing record blob is still
+// keyed by gameId for export/review and may age out under the day cap, in
+// which case export/review fail gracefully.
+const PINNED_KEY = 'chess.summaries.v2.pinned';
+
 // How many days of history we keep. When a new day pushes us past this, the
 // oldest day's bucket, its summaries, and each of those summaries' backing
 // record entries are dropped together. A year of casual play, easy to reason
@@ -157,6 +165,28 @@ export async function loadRecentSummaries(limit: number): Promise<LocalGameSumma
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pinned games — independent of the day buckets; a small starred shortlist.
+// ---------------------------------------------------------------------------
+
+export async function loadPinnedSummaries(): Promise<LocalGameSummary[]> {
+  return (await get<LocalGameSummary[]>(PINNED_KEY)) ?? [];
+}
+
+// Toggle a game's pinned state and return the updated list (newest pin first).
+// Idempotent per call: pinning an already-pinned game unpins it.
+export async function togglePinnedGame(summary: LocalGameSummary): Promise<LocalGameSummary[]> {
+  const list = await loadPinnedSummaries();
+  const idx = list.findIndex((s) => s.gameId === summary.gameId);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+  } else {
+    list.unshift(summary);
+  }
+  await set(PINNED_KEY, list);
+  return list;
 }
 
 // ---------------------------------------------------------------------------
