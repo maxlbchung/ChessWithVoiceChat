@@ -8,6 +8,8 @@ import { MergeBoard } from '../components/MergeBoard';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { HeroPicker } from '../components/HeroPicker';
 import { HeroAbilities } from '../components/HeroAbilities';
+import { MobileGameLayout } from '../components/MobileGameLayout';
+import { useMobileLayout } from '../lib/useMobileLayout';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
@@ -219,6 +221,7 @@ export function HeroGame() {
   };
 
   const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const mobile = useMobileLayout();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -1285,21 +1288,18 @@ export function HeroGame() {
 
   const bothPicked = myHero != null && oppHero != null;
 
-  return (
-    <div className="game-layout hero-game-layout">
-      {disconnectMs != null && (
-        <div className="disconnect-banner">
-          Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
-          {' '}
-          <span className="small">
-            (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
-            {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
-          </span>
-        </div>
-      )}
+  const banner = disconnectMs != null && (
+    <div className="disconnect-banner">
+      Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
+      {' '}
+      <span className="small">
+        (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
+        {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
+      </span>
+    </div>
+  );
 
-      <div className="hero-side-column">
-        {bothPicked && myHero && oppHero ? (
+  const menuNode = bothPicked && myHero && oppHero ? (
           <HeroAbilities
             perspective={handoff.iAmWhite ? 'white' : 'black'}
             myHero={myHero}
@@ -1316,20 +1316,22 @@ export function HeroGame() {
           <div className="hero-side-placeholder muted small">
             Pick your hero to begin.
           </div>
-        )}
-      </div>
+        );
 
-      <div className="board-column">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(oppColor)}
-        />
+  const oppCard = (
+    <PlayerCard
+      avatarDataUrl={oppDisplayAvatar}
+      handle={oppDisplayHandle}
+      rating={opp.rating}
+      voiceState={oppVoiceState}
+      volume={oppVolume}
+      ms={oppColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(oppColor)}
+    />
+  );
+
+  const boardNode = (
         <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
             board={boardForRender}
@@ -1442,19 +1444,22 @@ export function HeroGame() {
             </div>
           )}
         </div>
-        <PlayerCard
-          avatarDataUrl={avatar}
-          handle={`${me.handle} (you)`}
-          rating={me.rating}
-          voiceState={myVoiceState}
-          volume={myVolume}
-          ms={myColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(myColor)}
-        />
-      </div>
+  );
 
-      <aside className="side-panel">
+  const myCard = (
+    <PlayerCard
+      avatarDataUrl={avatar}
+      handle={`${me.handle} (you)`}
+      rating={me.rating}
+      voiceState={myVoiceState}
+      volume={myVolume}
+      ms={myColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(myColor)}
+    />
+  );
+
+  const metaNode = (
         <div className="game-meta">
           <div className="game-meta-title">Hero · {tc.label}</div>
           <div className="muted small">
@@ -1476,7 +1481,9 @@ export function HeroGame() {
             voiceActive={voiceActive}
           />
         </div>
+  );
 
+  const controlsNode = (
         <div className="history-nav-row">
           <button
             className="free-play-btn"
@@ -1569,7 +1576,9 @@ export function HeroGame() {
             </>
           )}
         </div>
+  );
 
+  const movesNode = (
         <div className="moves-panel">
           {movesDisplay.length === 0 ? (
             <div className="muted small">No moves yet.</div>
@@ -1579,8 +1588,9 @@ export function HeroGame() {
             ))
           )}
         </div>
+  );
 
-        {end && (
+  const resultNode = end ? (
           <div className="game-result-strip">
             <div className="game-result-info">
               <div className="result-line">
@@ -1640,9 +1650,9 @@ export function HeroGame() {
               </button>
             </div>
           </div>
-        )}
+  ) : null;
 
-        {chatEnabled && (
+  const chatNode = chatEnabled ? (
           <div className="chat-panel">
             <div className="chat-log" ref={chatLogRef}>
               {chatLog.map((m, i) => (
@@ -1672,9 +1682,42 @@ export function HeroGame() {
               <button className="secondary-btn" data-no-sfx type="submit">Send</button>
             </form>
           </div>
-        )}
-      </aside>
+  ) : null;
 
+  if (mobile) {
+    return (
+      <MobileGameLayout
+        banner={banner}
+        topCard={oppCard}
+        board={boardNode}
+        bottomCard={myCard}
+        menu={menuNode}
+        footer={resultNode}
+      >
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {chatNode}
+      </MobileGameLayout>
+    );
+  }
+
+  return (
+    <div className="game-layout hero-game-layout">
+      {banner}
+      <div className="hero-side-column">{menuNode}</div>
+      <div className="board-column">
+        {oppCard}
+        {boardNode}
+        {myCard}
+      </div>
+      <aside className="side-panel">
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {resultNode}
+        {chatNode}
+      </aside>
       {game && <span style={{ display: 'none' }}>{toFen(game)}</span>}
     </div>
   );

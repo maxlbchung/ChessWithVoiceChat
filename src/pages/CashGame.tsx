@@ -4,6 +4,8 @@ import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
+import { MobileGameLayout } from '../components/MobileGameLayout';
+import { useMobileLayout } from '../lib/useMobileLayout';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
 import { CashShop } from '../components/CashShop';
@@ -159,6 +161,7 @@ export function CashGame() {
   };
 
   const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const mobile = useMobileLayout();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -783,31 +786,30 @@ export function CashGame() {
   // letter unions overlap but TS still needs the cast.
   const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
 
-  return (
-    <div className="game-layout">
-      {disconnectMs != null && (
-        <div className="disconnect-banner">
-          Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
-          {' '}
-          <span className="small">
-            (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
-            {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
-          </span>
-        </div>
-      )}
+  const banner = disconnectMs != null && (
+    <div className="disconnect-banner">
+      Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
+      {' '}
+      <span className="small">
+        (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
+        {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
+      </span>
+    </div>
+  );
 
-      <div className="board-column with-cash-shop">
-        <div className="cash-side-shop">
-          <CashShop
-            whiteGold={viewedState.gold.w}
-            blackGold={viewedState.gold.b}
-            perspective={handoff.iAmWhite ? 'white' : 'black'}
-            canBuy={gameStarted && isMyTurn() && !end && atPresent}
-            selectedLetter={atPresent ? selectedShop : null}
-            affordable={affordableSet}
-            onSelect={handleSelectShop}
-          />
-        </div>
+  const shopNode = (
+    <CashShop
+      whiteGold={viewedState.gold.w}
+      blackGold={viewedState.gold.b}
+      perspective={handoff.iAmWhite ? 'white' : 'black'}
+      canBuy={gameStarted && isMyTurn() && !end && atPresent}
+      selectedLetter={atPresent ? selectedShop : null}
+      affordable={affordableSet}
+      onSelect={handleSelectShop}
+    />
+  );
+
+  const boardNode = (
         <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
             board={boardForRender}
@@ -869,29 +871,35 @@ export function CashGame() {
             </div>
           )}
         </div>
-      </div>
+  );
 
-      <aside className="side-panel">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(oppColor)}
-        />
-        <PlayerCard
-          avatarDataUrl={avatar}
-          handle={`${me.handle} (you)`}
-          rating={me.rating}
-          voiceState={myVoiceState}
-          volume={myVolume}
-          ms={myColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(myColor)}
-        />
+  const oppCard = (
+    <PlayerCard
+      avatarDataUrl={oppDisplayAvatar}
+      handle={oppDisplayHandle}
+      rating={opp.rating}
+      voiceState={oppVoiceState}
+      volume={oppVolume}
+      ms={oppColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(oppColor)}
+    />
+  );
+
+  const myCard = (
+    <PlayerCard
+      avatarDataUrl={avatar}
+      handle={`${me.handle} (you)`}
+      rating={me.rating}
+      voiceState={myVoiceState}
+      volume={myVolume}
+      ms={myColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(myColor)}
+    />
+  );
+
+  const metaNode = (
         <div className="game-meta">
           <div className="game-meta-title">Cash Money · {tc.label}</div>
           <div className="muted small">
@@ -913,7 +921,9 @@ export function CashGame() {
             voiceActive={voiceActive}
           />
         </div>
+  );
 
+  const controlsNode = (
         <div className="history-nav-row">
           <button
             className="free-play-btn"
@@ -1001,7 +1011,9 @@ export function CashGame() {
             </>
           )}
         </div>
+  );
 
+  const movesNode = (
         <div className="moves-panel">
           {movesDisplay.length === 0 ? (
             <div className="muted small">No moves yet.</div>
@@ -1011,8 +1023,9 @@ export function CashGame() {
             ))
           )}
         </div>
+  );
 
-        {end && (
+  const resultNode = end ? (
           <div className="game-result-strip">
             <div className="game-result-info">
               <div className="result-line">
@@ -1072,9 +1085,9 @@ export function CashGame() {
               </button>
             </div>
           </div>
-        )}
+  ) : null;
 
-        {chatEnabled && (
+  const chatNode = chatEnabled ? (
           <div className="chat-panel">
             <div className="chat-log" ref={chatLogRef}>
               {chatLog.map((m, i) => (
@@ -1104,10 +1117,44 @@ export function CashGame() {
               <button className="secondary-btn" data-no-sfx type="submit">Send</button>
             </form>
           </div>
-        )}
-      </aside>
+  ) : null;
 
-      <span style={{ display: 'none' }}>{toFen(game)}</span>
+  void toFen;
+
+  if (mobile) {
+    return (
+      <MobileGameLayout
+        banner={banner}
+        topCard={oppCard}
+        board={boardNode}
+        bottomCard={myCard}
+        menu={shopNode}
+        footer={resultNode}
+      >
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {chatNode}
+      </MobileGameLayout>
+    );
+  }
+
+  return (
+    <div className="game-layout">
+      {banner}
+      <div className="board-column with-cash-shop">
+        <div className="cash-side-shop">{shopNode}</div>
+        {boardNode}
+      </div>
+      <aside className="side-panel">
+        {oppCard}
+        {myCard}
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {resultNode}
+        {chatNode}
+      </aside>
     </div>
   );
 }

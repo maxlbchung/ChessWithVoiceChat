@@ -1,12 +1,17 @@
 import { create } from 'zustand';
 import { setMasterVolume } from '../lib/sfx';
 
+// 'auto' follows a viewport media query; 'on'/'off' force the layout regardless
+// of screen size (handy for testing the mobile layout on a desktop).
+export type MobileLayoutMode = 'auto' | 'on' | 'off';
+
 type Settings = {
   volume: number;            // 0..1, applied to the SFX master gain
   showOpponentNames: boolean;
   showOpponentAvatars: boolean;
   chatEnabled: boolean;
   animationsEnabled: boolean;
+  mobileLayout: MobileLayoutMode;
 };
 
 const STORAGE_KEY = 'vcc.settings.v1';
@@ -17,6 +22,7 @@ const DEFAULTS: Settings = {
   showOpponentAvatars: true,
   chatEnabled: true,
   animationsEnabled: true,
+  mobileLayout: 'auto',
 };
 
 function load(): Settings {
@@ -40,6 +46,7 @@ type SettingsStore = Settings & {
   setShowOpponentAvatars: (v: boolean) => void;
   setChatEnabled: (v: boolean) => void;
   setAnimationsEnabled: (v: boolean) => void;
+  setMobileLayout: (v: MobileLayoutMode) => void;
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -70,6 +77,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     setAnimationsEnabled(v) {
       save({ ...get(), animationsEnabled: v });
       set({ animationsEnabled: v });
+    },
+    setMobileLayout(v) {
+      save({ ...get(), mobileLayout: v });
+      set({ mobileLayout: v });
     },
   };
 });

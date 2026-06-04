@@ -1,4 +1,4 @@
-import { useSettingsStore } from '../store/settingsStore';
+import { useSettingsStore, type MobileLayoutMode } from '../store/settingsStore';
 
 export function Settings() {
   const {
@@ -7,11 +7,13 @@ export function Settings() {
     showOpponentAvatars,
     chatEnabled,
     animationsEnabled,
+    mobileLayout,
     setVolume,
     setShowOpponentNames,
     setShowOpponentAvatars,
     setChatEnabled,
     setAnimationsEnabled,
+    setMobileLayout,
   } = useSettingsStore();
 
   return (
@@ -76,6 +78,27 @@ export function Settings() {
 
         <div className="settings-row">
           <div className="settings-label">
+            <div className="settings-title">Mobile mode</div>
+            <div className="muted small">
+              Restructures the game screen into a single column — board with
+              player blocks above and below, and the shop / ability menu under
+              it. "Auto" turns on for small screens.
+            </div>
+          </div>
+          <Segmented
+            value={mobileLayout}
+            onChange={setMobileLayout}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            label="Mobile mode"
+          />
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-label">
             <div className="settings-title">Animations</div>
             <div className="muted small">
               Smooth peice movement, ability effects, merge animation.
@@ -88,6 +111,35 @@ export function Settings() {
           />
         </div>
       </section>
+    </div>
+  );
+}
+
+function Segmented({
+  value,
+  onChange,
+  options,
+  label,
+}: {
+  value: MobileLayoutMode;
+  onChange: (v: MobileLayoutMode) => void;
+  options: { value: MobileLayoutMode; label: string }[];
+  label: string;
+}) {
+  return (
+    <div className="settings-segmented" role="radiogroup" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          role="radio"
+          aria-checked={value === opt.value}
+          className={`settings-segment ${value === opt.value ? 'on' : ''}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

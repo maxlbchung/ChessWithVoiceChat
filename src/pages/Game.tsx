@@ -8,6 +8,8 @@ import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
+import { MobileGameLayout } from '../components/MobileGameLayout';
+import { useMobileLayout } from '../lib/useMobileLayout';
 import { useSettingsStore } from '../store/settingsStore';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
@@ -155,6 +157,7 @@ export function Game() {
   // turned them off in settings. The real values still travel over the wire
   // and are persisted in the game record; this only affects display.
   const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const mobile = useMobileLayout();
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -911,19 +914,18 @@ export function Game() {
     ? eloDelta(rating, opp.rating, end.outcome === 'draw' ? 0.5 : end.outcome === myColor ? 1 : 0, 0)
     : 0;
 
-  return (
-    <div className="game-layout">
-      {disconnectMs != null && (
-        <div className="disconnect-banner">
-          Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
-          {' '}
-          <span className="small">
-            (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
-            {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
-          </span>
-        </div>
-      )}
-      <div className="board-column">
+  const banner = disconnectMs != null && (
+    <div className="disconnect-banner">
+      Opponent disconnected — forfeit in {Math.ceil(disconnectMs / 1000)}s…
+      {' '}
+      <span className="small">
+        (disconnect {disconnectCount} of {MAX_GRACE_DISCONNECTS + 1}
+        {disconnectCount === MAX_GRACE_DISCONNECTS ? ' — next one is instant' : ''})
+      </span>
+    </div>
+  );
+
+  const boardNode = (
         <div className={`board-wrap ${!atPresent ? 'viewing-history' : ''}`}>
           <MergeBoard
             board={displayBoard}
@@ -985,29 +987,35 @@ export function Game() {
             </div>
           )}
         </div>
-      </div>
+  );
 
-      <aside className="side-panel">
-        <PlayerCard
-          avatarDataUrl={oppDisplayAvatar}
-          handle={oppDisplayHandle}
-          rating={opp.rating}
-          voiceState={oppVoiceState}
-          volume={oppVolume}
-          ms={oppColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(oppColor)}
-        />
-        <PlayerCard
-          avatarDataUrl={avatar}
-          handle={`${me.handle} (you)`}
-          rating={me.rating}
-          voiceState={myVoiceState}
-          volume={myVolume}
-          ms={myColor === 'white' ? whiteMs : blackMs}
-          lowMs={lowMs}
-          active={isActiveSide(myColor)}
-        />
+  const oppCard = (
+    <PlayerCard
+      avatarDataUrl={oppDisplayAvatar}
+      handle={oppDisplayHandle}
+      rating={opp.rating}
+      voiceState={oppVoiceState}
+      volume={oppVolume}
+      ms={oppColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(oppColor)}
+    />
+  );
+
+  const myCard = (
+    <PlayerCard
+      avatarDataUrl={avatar}
+      handle={`${me.handle} (you)`}
+      rating={me.rating}
+      voiceState={myVoiceState}
+      volume={myVolume}
+      ms={myColor === 'white' ? whiteMs : blackMs}
+      lowMs={lowMs}
+      active={isActiveSide(myColor)}
+    />
+  );
+
+  const metaNode = (
         <div className="game-meta">
           <div className="game-meta-title">{tc.label}</div>
           <div className="muted small">
@@ -1028,7 +1036,9 @@ export function Game() {
             voiceActive={voiceActive}
           />
         </div>
+  );
 
+  const controlsNode = (
         <div className="history-nav-row">
           <button
             className="free-play-btn"
@@ -1116,7 +1126,9 @@ export function Game() {
             </>
           )}
         </div>
+  );
 
+  const movesNode = (
         <div className="moves-panel">
           {movesPgn.length === 0 ? (
             <div className="muted small">No moves yet.</div>
@@ -1126,8 +1138,9 @@ export function Game() {
             ))
           )}
         </div>
+  );
 
-        {end && (
+  const resultNode = end ? (
           <div className="game-result-strip">
             <div className="game-result-info">
               <div className="result-line">
@@ -1187,9 +1200,9 @@ export function Game() {
               </button>
             </div>
           </div>
-        )}
+  ) : null;
 
-        {chatEnabled && (
+  const chatNode = chatEnabled ? (
           <div className="chat-panel">
             <div className="chat-log" ref={chatLogRef}>
               {chatLog.map((m, i) => (
@@ -1219,9 +1232,40 @@ export function Game() {
               <button className="secondary-btn" data-no-sfx type="submit">Send</button>
             </form>
           </div>
-        )}
-      </aside>
+  ) : null;
 
+  if (mobile) {
+    return (
+      <MobileGameLayout
+        banner={banner}
+        topCard={oppCard}
+        board={boardNode}
+        bottomCard={myCard}
+        footer={resultNode}
+      >
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {chatNode}
+      </MobileGameLayout>
+    );
+  }
+
+  return (
+    <div className="game-layout">
+      {banner}
+      <div className="board-column">
+        {boardNode}
+      </div>
+      <aside className="side-panel">
+        {oppCard}
+        {myCard}
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {resultNode}
+        {chatNode}
+      </aside>
     </div>
   );
 }
