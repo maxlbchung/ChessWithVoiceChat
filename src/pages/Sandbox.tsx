@@ -30,10 +30,12 @@ import {
 } from '../lib/cashChess';
 import {
   initialState as heroInitial,
+  backRanksForGame,
   legalMovesFrom as heroLegalFrom,
   abilityTargets as heroAbilityTargets,
   goofballLegalDestinations,
-  twinJitsuLegalDestinations,
+  twinJutsuLegalDestinations,
+  flightLegalDestinations,
   isInCheck as heroIsInCheck,
   isCheckmate as heroIsCheckmate,
   HERO_INFO,
@@ -63,7 +65,7 @@ type SandboxState = {
   // cleared on every other state mutation. Without this, the engines'
   // `legalMovesFrom` see `enPassant: null` and never offer en-passant.
   enPassant: string | null;
-  // Twin-Jitsu mask flags per square. True iff the piece on that square is
+  // Twin-Jutsu mask flags per square. True iff the piece on that square is
   // hidden from the opponent (rendered as a king icon). Sandbox treats this
   // purely visually: moves / placements clear the flag on the touched squares,
   // and the swap ability re-masks both endpoints.
@@ -101,7 +103,12 @@ function initialBoard(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind)
   if (variant === 'merge') return mergeInitial().board.slice() as (MergePiece | null)[];
   if (variant === 'two') return twoInitial().board.slice() as unknown as (MergePiece | null)[];
   if (variant === 'cash') return cashInitial().board.slice() as unknown as (MergePiece | null)[];
-  return heroInitial(heroW, heroB).board.slice() as unknown as (MergePiece | null)[];
+  // Twin-Jutsu sides start on a randomly shuffled back rank, mirroring real
+  // games. Sandbox is freeform, so an ephemeral random seed is fine.
+  return heroInitial(
+    heroW, heroB,
+    backRanksForGame(heroW, heroB, Math.random().toString(36).slice(2)),
+  ).board.slice() as unknown as (MergePiece | null)[];
 }
 
 function emptyBoard(): (MergePiece | null)[] {
@@ -125,10 +132,10 @@ function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): 
   const board = initialBoard(variant, heroW, heroB);
   const masked = new Array(64).fill(false);
   if (variant === 'hero') {
-    if (heroW === 'twin-jitsu') {
+    if (heroW === 'twin-jutsu') {
       for (let i = 0; i < 64; i++) if (board[i]?.color === 'w') masked[i] = true;
     }
-    if (heroB === 'twin-jitsu') {
+    if (heroB === 'twin-jutsu') {
       for (let i = 0; i < 64; i++) if (board[i]?.color === 'b') masked[i] = true;
     }
   }
@@ -466,13 +473,16 @@ export function Sandbox() {
   // Goofball is a two-click ability: first click picks the opponent piece
   // being puppeted, second click picks where it goes. Stored as a board idx.
   const [goofballFrom, setGoofballFrom] = useState<number | null>(null);
-  // Twin-Jitsu is also two-click: first click picks one of the active side's
+  // Twin-Jutsu is also two-click: first click picks one of the active side's
   // own pieces, second click picks the swap partner.
-  const [twinJitsuFrom, setTwinJitsuFrom] = useState<number | null>(null);
-  // Goofball / Twin-Jitsu promotions pause the flow for a picker, just like
-  // a regular pawn move that reaches the back rank.
+  const [twinJutsuFrom, setTwinJutsuFrom] = useState<number | null>(null);
+  // Flight is two-click too: first click picks one of the active side's own
+  // pieces, second click picks the empty destination square.
+  const [flightFrom, setFlightFrom] = useState<number | null>(null);
+  // Goofball / Twin-Jutsu / Flight promotions pause the flow for a picker,
+  // just like a regular pawn move that reaches the back rank.
   const [pendingAbilityPromo, setPendingAbilityPromo] = useState<{
-    hero: 'goofball' | 'twin-jitsu';
+    hero: 'goofball' | 'twin-jutsu' | 'flight';
     color: 'w' | 'b';
     fromIdx: number;
     toIdx: number;
@@ -487,7 +497,8 @@ export function Sandbox() {
   useEffect(() => {
     if (!abilityArmed) {
       setGoofballFrom(null);
-      setTwinJitsuFrom(null);
+      setTwinJutsuFrom(null);
+      setFlightFrom(null);
       setPendingAbilityPromo(null);
     }
   }, [abilityArmed]);
@@ -871,9 +882,9 @@ export function Sandbox() {
     setAbilityArmed(null);
   };
 
-  // Commit a resolved Twin-Jitsu swap. promoLetter applies to whichever
+  // Commit a resolved Twin-Jutsu swap. promoLetter applies to whichever
   // endpoint pawn lands on its promo rank.
-  const commitTwinJitsu = (
+  const commitTwinJutsu = (
     _color: 'w' | 'b', fromIdx: number, toIdx: number, targetSq: string,
     promoLetter?: PromotionLetter,
   ) => {
@@ -902,7 +913,7 @@ export function Sandbox() {
     nextMasked[fromIdx] = true;
     nextMasked[toIdx] = true;
     pushState({ ...current, board: nextBoard, frozenIdxs: current.frozenIdxs, enPassant: null, masked: nextMasked });
-    sfx.playTwinJitsu();
+    sfx.playTwinJutsu();
     if (animationsEnabled) {
       setSlideAnim({
         moves: [
@@ -912,7 +923,45 @@ export function Sandbox() {
         key: Date.now(),
       });
     }
-    setTwinJitsuFrom(null);
+    setTwinJutsuFrom(null);
+    setAbilityArmed(null);
+  };
+
+  // Commit a resolved Flight teleport. promoLetter applies when the flyer
+  // is a pawn landing on its promo rank.
+  const commitFlight = (
+    color: 'w' | 'b', fromIdx: number, toIdx: number, targetSq: string,
+    promoLetter?: PromotionLetter,
+  ) => {
+    const piece = current.board[fromIdx];
+    if (!piece) { setFlightFrom(null); setAbilityArmed(null); return; }
+    let placed: MergePiece = piece;
+    if (promoLetter) {
+      placed = {
+        color: piece.color,
+        letter: (piece.color === 'w' ? promoLetter : promoLetter.toLowerCase()) as PieceLetter,
+      };
+    }
+    const nextBoard = current.board.slice();
+    nextBoard[fromIdx] = null;
+    nextBoard[toIdx] = placed;
+    const nextFrozen = frozenAfterMove(current.frozenIdxs, fromIdx, toIdx);
+    const nextMasked = current.masked.slice();
+    nextMasked[fromIdx] = false;
+    nextMasked[toIdx] = false;
+    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+    sfx.playFly();
+    if (animationsEnabled) {
+      setAbilityAnim({
+        kind: 'flight',
+        fromSq: heroIdxToSq(fromIdx),
+        toSq: targetSq,
+        color,
+        flyerLetter: piece.letter,
+        key: `flight-${Date.now()}`,
+      });
+    }
+    setFlightFrom(null);
     setAbilityArmed(null);
   };
 
@@ -924,8 +973,10 @@ export function Sandbox() {
     setPendingAbilityPromo(null);
     if (hero === 'goofball') {
       commitGoofball(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
+    } else if (hero === 'flight') {
+      commitFlight(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
     } else {
-      commitTwinJitsu(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
+      commitTwinJutsu(color, fromIdx, toIdx, heroIdxToSq(toIdx), valid);
     }
   };
 
@@ -968,25 +1019,25 @@ export function Sandbox() {
       return;
     }
 
-    // Twin-Jitsu: two-click swap. First click picks one of the active side's
+    // Twin-Jutsu: two-click swap. First click picks one of the active side's
     // own pieces, second click picks the swap partner. Both endpoints end up
     // masked after.
-    if (hero === 'twin-jitsu') {
-      if (twinJitsuFrom == null) {
+    if (hero === 'twin-jutsu') {
+      if (twinJutsuFrom == null) {
         if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
-        setTwinJitsuFrom(idx);
+        setTwinJutsuFrom(idx);
         sfx.playSelect();
         return;
       }
-      if (!heroLegalAbilityTargets.has(idx)) { setTwinJitsuFrom(null); return; }
+      if (!heroLegalAbilityTargets.has(idx)) { setTwinJutsuFrom(null); return; }
       // Detect pawn-to-back-rank in the swap. At most one of the two
       // endpoints can land on a promo rank (a pawn can't be on its own
       // promo rank pre-swap because it would've already promoted).
-      const aPiece = current.board[twinJitsuFrom];
+      const aPiece = current.board[twinJutsuFrom];
       const bPiece = current.board[idx];
-      // After swap: aPiece sits on `idx`, bPiece sits on `twinJitsuFrom`.
+      // After swap: aPiece sits on `idx`, bPiece sits on `twinJutsuFrom`.
       const aLandsRow = Math.floor(idx / 8);
-      const bLandsRow = Math.floor(twinJitsuFrom / 8);
+      const bLandsRow = Math.floor(twinJutsuFrom / 8);
       let promoIdx: number | null = null;
       let promoSq: string | null = null;
       let promoColor: 'w' | 'b' | null = null;
@@ -995,20 +1046,54 @@ export function Sandbox() {
         promoIdx = idx; promoSq = targetSq; promoColor = aPiece.color;
       } else if (bPiece && bPiece.letter.toUpperCase() === 'P'
           && ((bPiece.color === 'w' && bLandsRow === 0) || (bPiece.color === 'b' && bLandsRow === 7))) {
-        promoIdx = twinJitsuFrom; promoSq = heroIdxToSq(twinJitsuFrom); promoColor = bPiece.color;
+        promoIdx = twinJutsuFrom; promoSq = heroIdxToSq(twinJutsuFrom); promoColor = bPiece.color;
       }
       if (promoIdx != null && promoSq && promoColor) {
         setPendingAbilityPromo({
-          hero: 'twin-jitsu',
+          hero: 'twin-jutsu',
           color,
-          fromIdx: twinJitsuFrom,
+          fromIdx: twinJutsuFrom,
           toIdx: idx,
           pickerSquare: promoSq,
           pawnColor: promoColor,
         });
         return;
       }
-      commitTwinJitsu(color, twinJitsuFrom, idx, targetSq);
+      commitTwinJutsu(color, twinJutsuFrom, idx, targetSq);
+      return;
+    }
+
+    // Flight: two-click teleport. First click picks one of the active side's
+    // own pieces, second click picks the empty destination square.
+    if (hero === 'flight') {
+      if (flightFrom == null) {
+        if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
+        setFlightFrom(idx);
+        sfx.playSelect();
+        return;
+      }
+      if (!heroLegalAbilityTargets.has(idx)) {
+        // Click off a legal destination resets to the pick-a-piece state.
+        setFlightFrom(null);
+        return;
+      }
+      const piece = current.board[flightFrom];
+      if (!piece) { setFlightFrom(null); setAbilityArmed(null); return; }
+      const isPawn = piece.letter.toUpperCase() === 'P';
+      const destRow = Math.floor(idx / 8); // 0 = rank 8, 7 = rank 1
+      if (isPawn && ((piece.color === 'w' && destRow === 0) || (piece.color === 'b' && destRow === 7))) {
+        // Pause for the picker — same flow as a regular pawn promotion.
+        setPendingAbilityPromo({
+          hero: 'flight',
+          color,
+          fromIdx: flightFrom,
+          toIdx: idx,
+          pickerSquare: targetSq,
+          pawnColor: piece.color,
+        });
+        return;
+      }
+      commitFlight(color, flightFrom, idx, targetSq);
       return;
     }
 
@@ -1067,23 +1152,6 @@ export function Sandbox() {
         setAbilityAnim({ kind: 'necromancer', toSq: targetSq, color, key: `necro-${Date.now()}` });
         // Pop the freshly spawned pawn in so it matches HeroGame's behaviour.
         setPopAnim({ squares: [targetSq], key: Date.now() });
-      }
-    } else if (hero === 'flight') {
-      const kingFromIdx = current.board.findIndex(
-        (p) => p && p.color === color && p.letter.toUpperCase() === 'K',
-      );
-      if (kingFromIdx < 0) return;
-      if (kingFromIdx === idx) return;
-      const fromSq = heroIdxToSq(kingFromIdx);
-      const nextBoard = current.board.slice();
-      const king = nextBoard[kingFromIdx];
-      nextBoard[kingFromIdx] = null;
-      nextBoard[idx] = king;
-      const nextFrozen = frozenAfterMove(current.frozenIdxs, kingFromIdx, idx);
-      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null });
-      sfx.playFly();
-      if (animationsEnabled) {
-        setAbilityAnim({ kind: 'flight', fromSq, toSq: targetSq, color, key: `flight-${Date.now()}` });
       }
     } else if (hero === 'mutation') {
       // B → A, R → C, Q → Z (preserve case). Anything else falls through.
@@ -1229,26 +1297,41 @@ export function Sandbox() {
     let toIdx = -1;
     let emptied = 0;
     let arrived = 0;
+    const changedWithPiece: number[] = [];
     for (let i = 0; i < 64; i++) {
       const a = prev.board[i];
       const b = current.board[i];
       const same = (!a && !b) || (a && b && a.color === b.color && a.letter === b.letter);
       if (same) continue;
       if (!b) { emptied++; fromIdx = i; }
-      else { arrived++; toIdx = i; }
+      else { arrived++; toIdx = i; changedWithPiece.push(i); }
     }
     if (emptied === 1 && arrived === 1) {
       return { from: heroIdxToSq(fromIdx), to: heroIdxToSq(toIdx) };
+    }
+    // Twin-Jutsu swap: both endpoints still hold a piece, so the generic
+    // from/to diff above doesn't match. Only tint an endpoint whose piece was
+    // already revealed (unmasked) before the swap — tinting a hidden piece's
+    // square would leak which decoys swapped. Two hidden pieces swapping
+    // shows no tint at all.
+    if (emptied === 0 && arrived === 2) {
+      const revealed = changedWithPiece.filter((i) => prev.board[i] && !prev.masked[i]);
+      if (revealed.length === 2) return { from: heroIdxToSq(revealed[0]), to: heroIdxToSq(revealed[1]) };
+      if (revealed.length === 1) {
+        const sq = heroIdxToSq(revealed[0]);
+        return { from: sq, to: sq };
+      }
+      return null;
     }
     return null;
   }, [viewPly, history, current]);
 
   // Engine-driven set of legal ability target indices for the armed side.
   // Empty when no ability is armed or the engine can't determine targets.
-  // Flight excludes attacked squares; Knight/Necromancer require an own king;
-  // Frost excludes kings. For Goofball, once a from-square has been picked
-  // (goofballFrom != null), the set flips from "enemy pieces with at least
-  // one legal move" to "legal destinations for the picked piece".
+  // Knight/Necromancer require an own king; Frost excludes kings. For the
+  // two-click abilities (Goofball / Twin-Jutsu / Flight), once a from-square
+  // has been picked the set flips from "pickable pieces" to "legal
+  // destinations for the picked piece".
   const heroLegalAbilityTargets = useMemo<Set<number>>(() => {
     if (variant !== 'hero' || !abilityArmed) return new Set();
     try {
@@ -1262,14 +1345,17 @@ export function Sandbox() {
       if (armedHero === 'goofball' && goofballFrom != null) {
         return new Set(goofballLegalDestinations(state as any, goofballFrom));
       }
-      if (armedHero === 'twin-jitsu' && twinJitsuFrom != null) {
-        return new Set(twinJitsuLegalDestinations(state as any, twinJitsuFrom));
+      if (armedHero === 'twin-jutsu' && twinJutsuFrom != null) {
+        return new Set(twinJutsuLegalDestinations(state as any, twinJutsuFrom));
+      }
+      if (armedHero === 'flight' && flightFrom != null) {
+        return new Set(flightLegalDestinations(state as any, flightFrom));
       }
       return new Set(heroAbilityTargets(state as any));
     } catch {
       return new Set();
     }
-  }, [variant, abilityArmed, current, goofballFrom, twinJitsuFrom]);
+  }, [variant, abilityArmed, current, goofballFrom, twinJutsuFrom, flightFrom]);
 
   // Advisory indicators on the board. Three modes:
   //   1. Cash shop armed → squares with own pawns of the armed color.
@@ -1314,7 +1400,7 @@ export function Sandbox() {
 
   // For each side, can their hero ability fire? Defers to the engine's
   // `abilityTargets`, which encodes the full legality (own king present,
-  // adjacency, Flight's "not attacked" rule, etc.).
+  // adjacency, a flyable piece for Flight, etc.).
   const heroAvailable = useMemo(() => {
     const check = (color: 'w' | 'b'): boolean => {
       try {
@@ -1375,7 +1461,8 @@ export function Sandbox() {
               orientation={orientation}
               selectedSquare={
                 abilityArmed && goofballFrom != null ? heroIdxToSq(goofballFrom)
-                : abilityArmed && twinJitsuFrom != null ? heroIdxToSq(twinJitsuFrom)
+                : abilityArmed && twinJutsuFrom != null ? heroIdxToSq(twinJutsuFrom)
+                : abilityArmed && flightFrom != null ? heroIdxToSq(flightFrom)
                 : selectedSq
               }
               legalTargets={legalTargets}
@@ -1442,7 +1529,7 @@ export function Sandbox() {
                 onCancel={() => {
                   setPendingAbilityPromo(null);
                   setGoofballFrom(null);
-                  setTwinJitsuFrom(null);
+                  setTwinJutsuFrom(null);
                   setAbilityArmed(null);
                 }}
               />
@@ -1533,7 +1620,7 @@ export function Sandbox() {
                     else if (h === 'harem') sfx.playHarem();
                     else if (h === 'icbm') sfx.playMissileLaunch();
                     else if (h === 'goofball') sfx.playGoofball();
-                    else if (h === 'twin-jitsu') sfx.playTwinJitsu();
+                    else if (h === 'twin-jutsu') sfx.playTwinJutsu();
                   }
                   setHeroW(h);
                 }}
@@ -1547,7 +1634,7 @@ export function Sandbox() {
                     else if (h === 'harem') sfx.playHarem();
                     else if (h === 'icbm') sfx.playMissileLaunch();
                     else if (h === 'goofball') sfx.playGoofball();
-                    else if (h === 'twin-jitsu') sfx.playTwinJitsu();
+                    else if (h === 'twin-jutsu') sfx.playTwinJutsu();
                   }
                   setHeroB(h);
                 }}

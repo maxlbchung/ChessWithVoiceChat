@@ -47,6 +47,10 @@ export type GameRecord = {
   // position when replaying or exporting from local history. Absent on
   // non-hero records and on hero records saved before this field existed.
   heroes?: { w: HeroKind; b: HeroKind };
+  // Hero matches only — per-side back-rank overrides (Twin-Jutsu starts
+  // shuffled). Absent for games where neither side shuffled and on records
+  // from before the shuffle existed; both mean the standard arrangement.
+  heroBackRanks?: { w?: string; b?: string };
 };
 
 export type LocalGameSummary = {
@@ -63,7 +67,7 @@ export type LocalGameSummary = {
 
 export type WireMessage =
   | { type: 'hello'; handle: string; rating: number }
-  | { type: 'hero-pick'; hero: 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jitsu' }
+  | { type: 'hero-pick'; hero: 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu' }
   | {
       type: 'lobby-confirm';
       gameId: string;

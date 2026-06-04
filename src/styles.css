@@ -1966,7 +1966,7 @@ a { color: inherit; text-decoration: none; }
   flex: 0 1 auto;
 }
 
-/* Twin-Jitsu: ghosted king sits over the player's own masked piece, tinted
+/* Twin-Jutsu: ghosted king sits over the player's own masked piece, tinted
    with the side's hero glow colour (set as --mask-glow inline). Faint
    enough to read as a hint while the real piece stays dominant; the halo
    uses the same hue so it pairs visually with the actual king's aura. */

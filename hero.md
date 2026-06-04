@@ -1,6 +1,6 @@
 # Heroes
 
-Each side in Hero mode picks a "hero king" with a unique ability. Pieces and the king move normally; the hero ability is an *extra* action you can fire on your turn instead of making a board move (one ply, same time clock). Some are active with cooldowns, one is one-shot, one is passive.
+Each side in Hero mode picks a "hero king" with a unique ability. Pieces and the king move normally; the hero ability is an *extra* action you can fire on your turn instead of making a board move (one ply, same time clock). Most are active with cooldowns, one is passive.
 
 Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 
@@ -10,13 +10,13 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 | ------------- | --------------- | --------------------------------------------------------- |
 | **Frost**       | 2 turns         | Freeze a piece — can't move, can't be captured            |
 | **Warlord**     | 1 turn          | Kill an adjacent enemy without moving your king. Starts with an extra rank of pawns and no queen |
-| **Necromancer** | 5 turns         | Spawn a pawn next to your king                            |
-| **Flight**      | 5 turns         | Teleport your king to any safe empty square               |
+| **Necromancer** | 3 turns         | Spawn a pawn next to your king                            |
+| **Flight**      | 5 turns         | Fly any of your pieces to any empty square                |
 | **Harem**       | *passive*       | Your bishops + rooks start as queens                      |
 | **Mutation**    | 5 turns         | Starts with bishops instead of knights; mutate B/R/Q to also move like a knight |
 | **ICBM**        | 10-turn warmup, then none | Drop a bomb that lands in 5 plies and demolishes a square |
-| **Goofball**    | 3 turns         | Force the opponent to make a legal move on their next ply |
-| **Twin-Jitsu**  | 3 turns         | All your pieces look like kings to the opponent until they move. Active swaps two of your pieces and re-masks both. |
+| **Goofball**    | *none*          | Force the opponent to make a legal move on their next ply |
+| **Twin-Jutsu**  | 3 turns         | All your pieces look like kings to the opponent until they move. Back rank starts shuffled (opposite-color bishops; no castling). Active swaps two of your pieces and re-masks both. |
 
 > A "turn" means one of *your own* moves. Under the hood the engine stores cooldowns in plies (`turns × 2`).
 
@@ -37,15 +37,17 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - Useful for clearing checks and exposed back-rank pressure without committing the king.
 
 ### Necromancer — `#9b4dca`
-- **Active**, 5-turn cooldown.
+- **Active**, 3-turn cooldown.
 - Spawns one of your own pawns on an empty square adjacent to your king.
 - Spawn square must be empty.
 - The spawned pawn moves and promotes normally from wherever it lands. A pawn spawned on its home rank still has its initial double-step option; a pawn spawned on the 7th/8th rank can promote on its next move.
 
 ### Flight — `#87ceeb`
 - **Active**, 5-turn cooldown.
-- Moves your king to any unoccupied square that is **not currently attacked** by the opponent.
-- The king's castling rights for both sides are forfeited when Flight fires.
+- Two-click ability: first click picks **any of your pieces**, second click flies it to **any unoccupied square**.
+- Cannot leave you in check after the teleport (engine filters those destinations — which also means the king can't fly onto an attacked square).
+- A **pawn flown to its back rank promotes** — the UI prompts for the piece (free play auto-queens).
+- Castling rights are forfeited as if the flyer had moved normally: flying the king loses both wings; flying a rook off its home corner loses that wing.
 
 ### Harem — `#ff4fa3`
 - **Passive** — no firable ability.
@@ -75,15 +77,16 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
   - Firing plays the launch SFX (two electronic beeps + ascending whistle). Landing plays the descending whistle + earthquake explosion, with the doomed piece visible through the half-second whistle window before it vanishes.
 
 ### Goofball — `#f7d000`
-- **Active**, 3-turn cooldown.
+- **Active**, no cooldown.
 - Two-click ability: first click picks an **enemy** piece, second click picks a legal destination *from that enemy's perspective*. The forced move is then applied as the opponent's move.
 - Cannot pick an enemy piece with no legal moves.
 - Cannot pick a destination that would leave you (the Goofball user) in check after the forced opponent move — the engine filters those out.
 - Promotion: if the forced move is a pawn promotion, the engine accepts a promotion letter in the ability UCI; the UI prompts for it.
 
-### Twin-Jitsu — `#bda0ff`
+### Twin-Jutsu — `#bda0ff`
 - **Passive + active**.
 - **Passive — mask**: at game start, every one of your pieces (including pawns) renders as a king icon on the opponent's screen. The opponent has no way to tell the real king from the decoys until each piece reveals. A piece reveals the moment it moves (or is captured); the king reveals when it moves too. From your own screen, masked pieces render normally with a translucent king ghost overlaid so you remember which are still hidden.
+- **Passive — shuffled start**: your back rank starts in a random arrangement (bishops constrained to opposite square colors, Chess960-style) so the standard setup can't give your masked pieces away by their starting squares. A shuffled side cannot castle. Online games derive the shuffle deterministically from the shared gameId, so both peers build the identical board; replays store the arrangement on the record.
 - **Engine note**: the masking is purely visual on the opponent's side, *plus* check announcements are suppressed for the opponent — they're never told when they put your king in check. The engine still enforces legality normally; they just have to figure out which of the king icons is the actual king on their own.
 - **Active — swap**, 3-turn cooldown. Two-click ability: first click picks one of your own pieces, second click picks the swap partner. At least one of the two endpoints must still be masked (or be the real king); a swap between two already-revealed non-king pieces is rejected.
 - After the swap **both** endpoints are re-masked — even a previously-revealed piece becomes hidden again. Doesn't reveal identity.

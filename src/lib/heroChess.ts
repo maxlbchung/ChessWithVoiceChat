@@ -1,7 +1,7 @@
 // Hero — standard chess but each side picks a "hero king" with a special
 // ability. Pieces and king move normally (no castling for simplicity, since
-// the king has its own special moves). Abilities use a turn and have either a
-// cooldown (Frost / Knight / Necromancer) or are one-shot (Flight).
+// the king has its own special moves). Abilities use a turn and recharge on
+// a per-hero cooldown.
 //
 // Heroes:
 //   Frost       — Freeze any non-king piece for the opponent's next move
@@ -10,15 +10,15 @@
 //                 your king does not move.                   cooldown: 10 turns
 //   Necromancer — Spawn an own pawn on an empty square adjacent
 //                 to your king.                              cooldown: 10 turns
-//   Flight      — Move the king to any unoccupied square not attacked by
-//                 the opponent.                              once per match
+//   Flight      — Fly any of your pieces to any unoccupied
+//                 square (pawns promote on the back rank).   cooldown: 5 turns
 //
 // Ability moves piggy-back on the existing signed-move pipeline by using
 // pseudo-UCI strings:
-//   !F<sq>  — Frost freeze
-//   !K<sq>  — Knight destroy
-//   !N<sq>  — Necromancer spawn
-//   !L<sq>  — Flight teleport
+//   !F<sq>            — Frost freeze
+//   !K<sq>            — Knight destroy
+//   !N<sq>            — Necromancer spawn
+//   !L<from><to>[<p>] — Flight teleport (optional promotion letter)
 
 export type C2Color = 'w' | 'b';
 
@@ -31,8 +31,17 @@ export type PieceLetter =
 export type Piece = { color: C2Color; letter: PieceLetter };
 export type Square = string;
 
-export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jitsu';
-export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jitsu'];
+export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu';
+export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jutsu'];
+
+// 'twin-jutsu' was misspelled 'twin-jitsu' before the rename. Old saved
+// records, exported JSON files, and stale peers can still carry the old id —
+// run anything from those boundaries through here. Returns null for values
+// that aren't a hero kind at all.
+export function normalizeHeroKind(v: unknown): HeroKind | null {
+  if (v === 'twin-jitsu') return 'twin-jutsu';
+  return typeof v === 'string' && (HERO_KINDS as string[]).includes(v) ? (v as HeroKind) : null;
+}
 
 // Online matches present a randomized subset of size POOL_SIZE so the roster
 // stays fresh. Free-play / sandbox use the full HERO_KINDS list.
@@ -63,6 +72,55 @@ export function heroPoolForGame(gameId: string, size: number = ONLINE_POOL_SIZE)
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr.slice(0, size);
+}
+
+// Twin-Jutsu starts with a shuffled back rank: with every piece masked as a
+// king, the standard arrangement would give each piece's identity away by its
+// starting square. Deterministic from the seed — online play hashes the
+// shared gameId so both peers build the same board; local play passes a
+// fresh random seed. Bishops are re-rolled onto opposite square colors,
+// Chess960-style. A shuffled side loses castling (see initialState).
+export function shuffledBackRank(seed: string): string {
+  // FNV-1a hash → Mulberry32 PRNG, same scheme as heroPoolForGame.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  let s = h >>> 0;
+  const rand = () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const arr = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
+  // Re-shuffle until the bishops sit on opposite square colors. The PRNG
+  // stream continues across attempts, so the result stays deterministic
+  // per seed.
+  do {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  } while (arr.indexOf('B') % 2 === arr.lastIndexOf('B') % 2);
+  return arr.join('');
+}
+
+// Per-side back-rank overrides for initialState. Online hero games derive
+// these from the shared gameId; finished games persist them on the record so
+// replays rebuild the same start — old records without the field replay on
+// the standard arrangement.
+export type BackRanks = { w?: string; b?: string };
+
+// Back ranks for a fresh game: shuffle each Twin-Jutsu side from the seed,
+// leave every other hero on its standard arrangement.
+export function backRanksForGame(heroW: HeroKind, heroB: HeroKind, seed: string): BackRanks {
+  return {
+    w: heroW === 'twin-jutsu' ? shuffledBackRank(seed + ':w') : undefined,
+    b: heroB === 'twin-jutsu' ? shuffledBackRank(seed + ':b') : undefined,
+  };
 }
 
 export type HeroInfo = {
@@ -99,12 +157,12 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     name: 'Necromancer',
     blurb: 'Spawn a pawn on an empty square next to your king.',
     glowColor: '#9b4dca',
-    cooldownTurns: 5,
+    cooldownTurns: 3,
   },
   flight: {
     kind: 'flight',
     name: 'Flight',
-    blurb: 'Move your king to any safe, unoccupied square.',
+    blurb: 'Fly one of your pieces to any empty square. Pawns landing on the back rank promote.',
     glowColor: '#87ceeb',
     cooldownTurns: 5,
   },
@@ -137,12 +195,12 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     name: 'Goofball',
     blurb: 'Make a legal move for your opponent on their behalf.',
     glowColor: '#f7d000',
-    cooldownTurns: 3,
+    cooldownTurns: 0,
   },
-  'twin-jitsu': {
-    kind: 'twin-jitsu',
-    name: 'Twin-Jitsu',
-    blurb: 'All your pieces look like kings to the opponent until they move. Active swap shuffles two of your pieces and re-masks both.',
+  'twin-jutsu': {
+    kind: 'twin-jutsu',
+    name: 'Twin-Jutsu',
+    blurb: 'All your pieces look like kings to the opponent until they move, and your back rank starts shuffled (no castling). Active swap shuffles two of your pieces and re-masks both.',
     glowColor: '#000000',
     cooldownTurns: 3,
   },
@@ -152,7 +210,8 @@ export type AbilitySide = {
   hero: HeroKind;
   // Ply at which this side's ability becomes available again (0 = ready).
   cooldownUntilPly: number;
-  // True after Flight has been used (Flight is one-shot; other heroes ignore).
+  // Legacy one-shot-Flight flag. Flight is cooldown-based now, but the field
+  // stays (always false) because it rides the serialized position key.
   flightUsed: boolean;
 };
 
@@ -177,11 +236,11 @@ export type GameState = {
   // Queued ICBM strikes — both sides see them. Each fires (and is removed)
   // when state.ply reaches landsAtPly. Multiple may be in flight at once.
   missiles: Missile[];
-  // Twin-Jitsu mask flags per board square. True iff the piece on that square
+  // Twin-Jutsu mask flags per board square. True iff the piece on that square
   // is hidden from the opponent (rendered as a king icon on the opponent's
-  // screen). Set at game start for every piece of a Twin-Jitsu side; cleared
+  // screen). Set at game start for every piece of a Twin-Jutsu side; cleared
   // when a piece moves off / arrives on a square; re-set on both endpoints of
-  // a Twin-Jitsu swap. Empty for games where neither side is Twin-Jitsu.
+  // a Twin-Jutsu swap. Empty for games where neither side is Twin-Jutsu.
   masked: boolean[];
 };
 
@@ -265,7 +324,7 @@ const KNIGHT_OFFSETS: [number, number][] = [
 // Initial position — standard chess. Heroes are picked outside the engine and
 // passed in.
 // ------------------------------------------------------------------
-export function initialState(heroW: HeroKind, heroB: HeroKind): GameState {
+export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackRanks): GameState {
   const board: (Piece | null)[] = new Array(64).fill(null);
   // Harem swaps every R and B on that side's back rank for queens. Castling
   // is impossible for a Harem side anyway (no rook on a/h), so we drop the
@@ -284,8 +343,10 @@ export function initialState(heroW: HeroKind, heroB: HeroKind): GameState {
     if (hero === 'warlord') return warlordBackRank;
     return standardBackRank;
   };
-  const whiteBack = backRankFor(heroW);
-  const blackBack = backRankFor(heroB);
+  // A caller-supplied back rank (Twin-Jutsu shuffle) overrides the hero's
+  // standard arrangement for that side.
+  const whiteBack = backRanks?.w ? (backRanks.w.split('') as PieceLetter[]) : backRankFor(heroW);
+  const blackBack = backRanks?.b ? (backRanks.b.split('') as PieceLetter[]) : backRankFor(heroB);
   for (let f = 0; f < 8; f++) {
     const bp = blackBack[f];
     if (bp != null) board[idxFR(f, 7)] = { color: 'b', letter: bp.toLowerCase() as PieceLetter };
@@ -302,12 +363,18 @@ export function initialState(heroW: HeroKind, heroB: HeroKind): GameState {
   if (heroB === 'warlord') {
     for (let f = 0; f < 8; f++) board[idxFR(f, 5)] = { color: 'b', letter: 'p' };
   }
+  // A side on a non-standard back rank (Harem's all-queens row, or a
+  // Twin-Jutsu shuffle) can't castle — its king/rooks aren't on the squares
+  // the castling rules assume. Old replays without an override keep their
+  // standard rank, so their castling moves stay legal.
+  const wStandard = !backRanks?.w || backRanks.w === 'RNBQKBNR';
+  const bStandard = !backRanks?.b || backRanks.b === 'RNBQKBNR';
   const state: GameState = {
     board,
     turn: 'w',
     castling: {
-      wK: heroW !== 'harem', wQ: heroW !== 'harem',
-      bK: heroB !== 'harem', bQ: heroB !== 'harem',
+      wK: heroW !== 'harem' && wStandard, wQ: heroW !== 'harem' && wStandard,
+      bK: heroB !== 'harem' && bStandard, bQ: heroB !== 'harem' && bStandard,
     },
     enPassant: null,
     halfmove: 0,
@@ -324,12 +391,12 @@ export function initialState(heroW: HeroKind, heroB: HeroKind): GameState {
     missiles: [],
     masked: new Array(64).fill(false),
   };
-  // Twin-Jitsu: mask every piece of that side at game-start. Pieces unmask
+  // Twin-Jutsu: mask every piece of that side at game-start. Pieces unmask
   // when they move (or are captured); the swap ability re-masks both endpoints.
-  if (heroW === 'twin-jitsu') {
+  if (heroW === 'twin-jutsu') {
     for (let i = 0; i < 64; i++) if (board[i]?.color === 'w') state.masked[i] = true;
   }
-  if (heroB === 'twin-jitsu') {
+  if (heroB === 'twin-jutsu') {
     for (let i = 0; i < 64; i++) if (board[i]?.color === 'b') state.masked[i] = true;
   }
   state.positionHistory.push(positionKey(state));
@@ -673,13 +740,16 @@ export function abilityTargets(state: GameState): number[] {
       if (state.board[idx] == null) out.push(idx);
     }
   } else if (hero === 'flight') {
-    // Flight: any empty square not attacked by the enemy.
-    const enemy: C2Color = color === 'w' ? 'b' : 'w';
+    // Flight is two-click. First-click list: any of your own (unfrozen)
+    // pieces with at least one empty square to fly to that doesn't leave
+    // you in check. Second-click filtering is in flightLegalDestinations.
     for (let i = 0; i < 64; i++) {
-      if (state.board[i] != null) continue;
-      if (isSquareAttacked(state, i, enemy)) continue;
-      out.push(i);
+      const p = state.board[i];
+      if (!p || p.color !== color) continue;
+      if (isFrozen(state, i)) continue;
+      if (flightLegalDestinations(state, i).length > 0) out.push(i);
     }
+    return out;
   } else if (hero === 'mutation') {
     // Only B / R / Q can be mutated. Knights already have knight movement;
     // pawns and kings are excluded by design; A / C / Z are merged forms.
@@ -693,14 +763,14 @@ export function abilityTargets(state: GameState): number[] {
   } else if (hero === 'icbm') {
     // Any square. No restrictions — including own pieces or empty squares.
     for (let i = 0; i < 64; i++) out.push(i);
-  } else if (hero === 'twin-jitsu') {
+  } else if (hero === 'twin-jutsu') {
     // First-click list: any of your pieces that has at least one valid
     // partner (and the resulting swap doesn't leave you in check). The
-    // second-click filtering is in twinJitsuLegalDestinations.
+    // second-click filtering is in twinJutsuLegalDestinations.
     for (let i = 0; i < 64; i++) {
       const p = state.board[i];
       if (!p || p.color !== color) continue;
-      if (twinJitsuLegalDestinations(state, i).length > 0) out.push(i);
+      if (twinJutsuLegalDestinations(state, i).length > 0) out.push(i);
     }
     return out;
   } else if (hero === 'goofball') {
@@ -725,16 +795,16 @@ export function abilityTargets(state: GameState): number[] {
   });
 }
 
-// Given the user has armed Twin-Jitsu and picked their own piece at `fromIdx`,
+// Given the user has armed Twin-Jutsu and picked their own piece at `fromIdx`,
 // which other own-piece squares are legal swap partners? Rules:
 //  - Both endpoints belong to the active side.
 //  - At least one endpoint must be currently masked OR the real king (a king
 //    counts whether or not it's still masked).
 //  - The post-swap position must not leave the mover in check.
-export function twinJitsuLegalDestinations(state: GameState, fromIdx: number): number[] {
+export function twinJutsuLegalDestinations(state: GameState, fromIdx: number): number[] {
   const color = state.turn;
   if (!abilityReady(state, color)) return [];
-  if (state.heroes[color].hero !== 'twin-jitsu') return [];
+  if (state.heroes[color].hero !== 'twin-jutsu') return [];
   const fromPiece = state.board[fromIdx];
   if (!fromPiece || fromPiece.color !== color) return [];
   const fromIsKing = fromPiece.letter.toUpperCase() === 'K';
@@ -747,7 +817,7 @@ export function twinJitsuLegalDestinations(state: GameState, fromIdx: number): n
     const isKing = p.letter.toUpperCase() === 'K';
     const isMasked = state.masked[i];
     if (!fromMasked && !fromIsKing && !isMasked && !isKing) continue;
-    const after = applyAbility(state, 'twin-jitsu', i, fromIdx);
+    const after = applyAbility(state, 'twin-jutsu', i, fromIdx);
     if (isInCheck(after, color)) continue;
     out.push(i);
   }
@@ -775,6 +845,27 @@ export function goofballLegalDestinations(state: GameState, fromIdx: number): nu
     const after = applyAbility(state, 'goofball', toIdx, fromIdx, m.promotion);
     if (isInCheck(after, color)) continue;
     out.push(toIdx);
+  }
+  return out;
+}
+
+// Given the user has armed Flight and picked their own piece at `fromIdx`,
+// which destination squares are legal? Any empty square, as long as the
+// teleport doesn't leave the mover in check (which also covers the king
+// itself: it can't fly onto an attacked square).
+export function flightLegalDestinations(state: GameState, fromIdx: number): number[] {
+  const color = state.turn;
+  if (!abilityReady(state, color)) return [];
+  if (state.heroes[color].hero !== 'flight') return [];
+  const p = state.board[fromIdx];
+  if (!p || p.color !== color) return [];
+  if (isFrozen(state, fromIdx)) return [];
+  const out: number[] = [];
+  for (let i = 0; i < 64; i++) {
+    if (state.board[i] != null) continue;
+    const after = applyAbility(state, 'flight', i, fromIdx);
+    if (isInCheck(after, color)) continue;
+    out.push(i);
   }
   return out;
 }
@@ -883,21 +974,47 @@ function applyAbility(
     }
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
   } else if (hero === 'flight') {
-    const k = findKing(state, color);
-    if (k !== -1) {
-      next.board[targetIdx] = next.board[k];
-      next.board[k] = null;
-      next.masked[k] = false;
+    // Two-click teleport: fly the piece at fromIdx to the (empty) target.
+    if (fromIdx == null) return state;
+    const flyer = next.board[fromIdx];
+    if (flyer) {
+      next.board[targetIdx] = flyer;
+      next.board[fromIdx] = null;
+      next.masked[fromIdx] = false;
       next.masked[targetIdx] = false;
+      // A pawn flown onto its promotion rank promotes. The player picks the
+      // piece in the UI; the chosen letter rides the UCI as `promo`.
+      // Default to queen if none provided.
+      if (flyer.letter.toUpperCase() === 'P') {
+        const rankFromTop = Math.floor(targetIdx / 8);
+        const onPromoRank = flyer.color === 'w' ? rankFromTop === 0 : rankFromTop === 7;
+        if (onPromoRank) {
+          const promoLetter = (promo ? promo.toUpperCase() : 'Q') as PieceLetter;
+          next.board[targetIdx] = {
+            color: flyer.color,
+            letter: (flyer.color === 'w' ? promoLetter : promoLetter.toLowerCase()) as PieceLetter,
+          };
+        }
+      }
+      // Castling rights as if the flyer had moved normally: a king flight
+      // forfeits both wings; a rook leaving (or landing on) a home corner
+      // forfeits that wing.
+      if (flyer.letter.toUpperCase() === 'K') {
+        if (color === 'w') { next.castling.wK = false; next.castling.wQ = false; }
+        else { next.castling.bK = false; next.castling.bQ = false; }
+      }
+      for (const idx of [fromIdx, targetIdx]) {
+        if (idx === 56) next.castling.wQ = false;
+        if (idx === 63) next.castling.wK = false;
+        if (idx === 0)  next.castling.bQ = false;
+        if (idx === 7)  next.castling.bK = false;
+      }
     }
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
-    // The king moved — castling rights for this side are gone.
-    if (color === 'w') { next.castling.wK = false; next.castling.wQ = false; }
-    else { next.castling.bK = false; next.castling.bQ = false; }
-  } else if (hero === 'twin-jitsu') {
+  } else if (hero === 'twin-jutsu') {
     // Two-click swap: swap the pieces at fromIdx and targetIdx (both must be
     // the active side's pieces; at least one must be masked or be the real
-    // king — enforced by twinJitsuLegalDestinations). After the swap, both
+    // king — enforced by twinJutsuLegalDestinations). After the swap, both
     // endpoints are re-masked so the opponent loses identity information
     // even on pieces that had previously been revealed.
     if (fromIdx == null) return state;
@@ -1033,7 +1150,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     }
   }
 
-  // Twin-Jitsu unmask: the moving piece reveals at its destination, and the
+  // Twin-Jutsu unmask: the moving piece reveals at its destination, and the
   // origin square (now empty) carries no mask either. En-passant capture
   // also clears the captured pawn's square.
   next.masked[mv.from] = false;
@@ -1122,36 +1239,29 @@ function anyLegalAbility(state: GameState): boolean {
 // ------------------------------------------------------------------
 // Harem is passive — no entry. Mutation uses M; ICBM uses I; Goofball uses G.
 const ABILITY_PREFIX_TO_HERO: Record<string, HeroKind> = {
-  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jitsu',
+  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jutsu',
 };
 const HERO_TO_ABILITY_PREFIX: Partial<Record<HeroKind, string>> = {
-  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jitsu': 'T',
+  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jutsu': 'T',
 };
 
 export function isAbilityUci(uci: string): boolean {
   return uci.length >= 4 && uci[0] === '!';
 }
-// Most abilities carry just a `to` square. Goofball additionally carries
-// a `from` square (the opponent piece being forced to move) and an
-// optional promotion letter.
+// Most abilities carry just a `to` square. Goofball, Twin-Jutsu and Flight
+// additionally carry a `from` square (the piece being moved / swapped) and
+// an optional promotion letter.
 export function parseAbility(
   uci: string,
 ): { hero: HeroKind; to: Square; from?: Square; promo?: string } | null {
   if (!isAbilityUci(uci)) return null;
   const hero = ABILITY_PREFIX_TO_HERO[uci[1]];
   if (!hero) return null;
-  if (hero === 'goofball') {
-    // !G<from><to>[<promo>] — 6 or 7 chars total.
-    if (uci.length < 6) return null;
-    const from = uci.slice(2, 4);
-    const to = uci.slice(4, 6);
-    const promo = uci.length >= 7 ? uci[6].toUpperCase() : undefined;
-    if (from.length !== 2 || to.length !== 2) return null;
-    return { hero, from, to, promo };
-  }
-  if (hero === 'twin-jitsu') {
-    // !T<from><to>[<promo>] — the swap endpoints. Symmetric, so order is
-    // arbitrary; promo letter applies if a pawn lands on its back rank.
+  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight') {
+    // !G/!T/!L<from><to>[<promo>] — 6 or 7 chars total. Goofball forces an
+    // opponent move; Twin-Jutsu swaps two own pieces (symmetric, order is
+    // arbitrary); Flight teleports an own piece. The promo letter applies
+    // when a pawn lands on its back rank.
     if (uci.length < 6) return null;
     const from = uci.slice(2, 4);
     const to = uci.slice(4, 6);
@@ -1164,11 +1274,8 @@ export function parseAbility(
   return { hero, to };
 }
 export function abilityUci(hero: HeroKind, to: Square, from?: Square, promo?: string): string {
-  if (hero === 'goofball') {
-    return `!G${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
-  }
-  if (hero === 'twin-jitsu') {
-    return `!T${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
+  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight') {
+    return `!${HERO_TO_ABILITY_PREFIX[hero]}${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
   }
   return `!${HERO_TO_ABILITY_PREFIX[hero]}${to}`;
 }
@@ -1186,11 +1293,11 @@ export function pieceAtImpactBeforeBlast(
   if (isAbilityUci(uci)) {
     const parsed = parseAbility(uci);
     if (!parsed) return state.board[impactIdx] ?? null;
-    // Goofball moves an opponent piece from `from` to `to`. We have to
-    // look at BOTH squares — `from` empties out, `to` gets the moved
-    // (optionally promoted) piece — so the renderer sees the right
-    // doomed sprite when a missile lands on either.
-    if (parsed.hero === 'goofball' && parsed.from) {
+    // Goofball moves an opponent piece from `from` to `to`; Flight moves an
+    // own piece the same way. We have to look at BOTH squares — `from`
+    // empties out, `to` gets the moved (optionally promoted) piece — so the
+    // renderer sees the right doomed sprite when a missile lands on either.
+    if ((parsed.hero === 'goofball' || parsed.hero === 'flight') && parsed.from) {
       const fromIdx = sqToIdx(parsed.from);
       const toIdx = sqToIdx(parsed.to);
       if (fromIdx === impactIdx) return null;
@@ -1207,9 +1314,9 @@ export function pieceAtImpactBeforeBlast(
       }
       return state.board[impactIdx] ?? null;
     }
-    // Twin-Jitsu swaps two of the active side's pieces. A missile that lands
+    // Twin-Jutsu swaps two of the active side's pieces. A missile that lands
     // on either endpoint hits whatever just swapped INTO that square.
-    if (parsed.hero === 'twin-jitsu' && parsed.from) {
+    if (parsed.hero === 'twin-jutsu' && parsed.from) {
       const fromIdx = sqToIdx(parsed.from);
       const toIdx = sqToIdx(parsed.to);
       if (fromIdx === impactIdx) return state.board[toIdx] ?? null;
@@ -1220,10 +1327,6 @@ export function pieceAtImpactBeforeBlast(
     if (targetIdx !== impactIdx) return state.board[impactIdx] ?? null;
     // The ability lands on the same square as the missile. What ends up on
     // that square depends on the ability.
-    if (parsed.hero === 'flight') {
-      const kingSq = kingSquareOf(state.board, state.turn);
-      return kingSq ? state.board[sqToIdx(kingSq)] : null;
-    }
     if (parsed.hero === 'necromancer') {
       const letter = (state.turn === 'w' ? 'P' : 'p') as PieceLetter;
       return { color: state.turn, letter };
@@ -1276,11 +1379,16 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       // Track whether the forced opp move was a capture so SFX still play.
       captured = !!state.board[targetIdx];
       next = applyAbility(state, 'goofball', targetIdx, fromIdx, parsed.promo);
-    } else if (parsed.hero === 'twin-jitsu') {
+    } else if (parsed.hero === 'twin-jutsu') {
       if (!parsed.from) return null;
       const fromIdx = sqToIdx(parsed.from);
-      if (!twinJitsuLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
-      next = applyAbility(state, 'twin-jitsu', targetIdx, fromIdx, parsed.promo);
+      if (!twinJutsuLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
+      next = applyAbility(state, 'twin-jutsu', targetIdx, fromIdx, parsed.promo);
+    } else if (parsed.hero === 'flight') {
+      if (!parsed.from) return null;
+      const fromIdx = sqToIdx(parsed.from);
+      if (!flightLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
+      next = applyAbility(state, 'flight', targetIdx, fromIdx, parsed.promo);
     } else {
       if (!abilityTargets(state).includes(targetIdx)) return null;
       next = applyAbility(state, parsed.hero, targetIdx);
@@ -1414,9 +1522,9 @@ export function toFen(state: GameState): string {
   if (state.castling.bK) cas += 'k';
   if (state.castling.bQ) cas += 'q';
   if (cas === '') cas = '-';
-  // Twin-Jitsu mask bits, encoded as a 16-char hex string (4 bits/char ×16 =
+  // Twin-Jutsu mask bits, encoded as a 16-char hex string (4 bits/char ×16 =
   // 64 squares). Emitted as '-' when no piece is masked so the FEN stays
-  // compact for non-Twin-Jitsu games.
+  // compact for non-Twin-Jutsu games.
   let masked = '-';
   if (state.masked && state.masked.some(Boolean)) {
     let hex = '';

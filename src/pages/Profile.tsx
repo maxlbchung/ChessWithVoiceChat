@@ -95,6 +95,7 @@ export function Profile() {
       reason: rec.reason,
       moves: rec.moves,
       heroes: rec.heroes,
+      heroBackRanks: rec.heroBackRanks,
     });
     downloadGameExport(exp);
   };

@@ -33,8 +33,11 @@ import {
   abilityTargets,
   abilityUci,
   applyMove,
+  backRanksForGame,
   goofballLegalDestinations,
-  twinJitsuLegalDestinations,
+  twinJutsuLegalDestinations,
+  flightLegalDestinations,
+  normalizeHeroKind,
   HERO_INFO,
   heroPoolForGame,
   idxToSq,
@@ -123,12 +126,13 @@ export function HeroGame() {
   const [pendingPromo, setPendingPromo] = useState<{
     from: Square; to: Square; slides?: { from: Square; to: Square }[];
   } | null>(null);
-  // Ability-driven promotions: Twin-Jitsu swap that lands a pawn on its back
-  // rank, or Goofball forcing an opponent pawn to promote. The picker square
-  // is the square where the pawn ends up; `color` is the side being promoted
-  // (own pawn for Twin-Jitsu, opponent's pawn for Goofball).
+  // Ability-driven promotions: Twin-Jutsu swap or Flight teleport that lands
+  // a pawn on its back rank, or Goofball forcing an opponent pawn to promote.
+  // The picker square is the square where the pawn ends up; `color` is the
+  // side being promoted (own pawn for Twin-Jutsu/Flight, opponent's pawn for
+  // Goofball).
   const [pendingAbilityPromo, setPendingAbilityPromo] = useState<{
-    hero: 'twin-jitsu' | 'goofball';
+    hero: 'twin-jutsu' | 'goofball' | 'flight';
     from: Square;
     to: Square;
     pickerSquare: Square;
@@ -152,11 +156,14 @@ export function HeroGame() {
   // being puppeted, second click picks where it goes. Cleared whenever
   // armed flips off or after firing.
   const [goofballFrom, setGoofballFrom] = useState<Square | null>(null);
-  // Twin-Jitsu is the other two-click ability: first click picks one of your
+  // Twin-Jutsu is the other two-click ability: first click picks one of your
   // own pieces, second click picks a swap partner.
-  const [twinJitsuFrom, setTwinJitsuFrom] = useState<Square | null>(null);
+  const [twinJutsuFrom, setTwinJutsuFrom] = useState<Square | null>(null);
+  // Flight is also two-click: first click picks one of your own pieces,
+  // second click picks the (empty) square it flies to.
+  const [flightFrom, setFlightFrom] = useState<Square | null>(null);
   useEffect(() => {
-    if (!abilityArmed) { setGoofballFrom(null); setTwinJitsuFrom(null); }
+    if (!abilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); }
   }, [abilityArmed]);
   // Transient ability animation overlay state. Bumped to a fresh key every
   // time we want the animation to re-fire (CSS keyframes restart on remount).
@@ -229,7 +236,9 @@ export function HeroGame() {
     if (game || myHero == null || oppHero == null) return;
     const heroW = handoff.iAmWhite ? myHero : oppHero;
     const heroB = handoff.iAmWhite ? oppHero : myHero;
-    const init = initialState(heroW, heroB);
+    // Twin-Jutsu back ranks are shuffled deterministically from the shared
+    // gameId, so both peers build the identical board without negotiation.
+    const init = initialState(heroW, heroB, backRanksForGame(heroW, heroB, gameId!));
     setGame(init);
     setStates([init]);
     setResults([]);
@@ -285,7 +294,9 @@ export function HeroGame() {
         }
         return;
       }
-      if (msg.type === 'hero-pick') { setOppHero(msg.hero); return; }
+      // normalizeHeroKind: a peer on a pre-rename build still sends the old
+      // 'twin-jitsu' id.
+      if (msg.type === 'hero-pick') { setOppHero(normalizeHeroKind(msg.hero) ?? msg.hero); return; }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
       if (msg.type === 'draw-offer') { setDrawOfferedByOpp(true); return; }
@@ -543,12 +554,24 @@ export function HeroGame() {
     if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation') {
       return null;
     }
-    const targetSq = result.uci.slice(2);
     const moverColor = prev.turn;
-    let fromSq: Square | undefined;
     if (ab === 'flight') {
-      fromSq = kingSquareOf(prev.board, moverColor) ?? undefined;
-    } else if (ab === 'warlord') {
+      // !L<from><to>[<promo>] — fly the selected piece from → to.
+      const fromSq = result.uci.slice(2, 4) as Square;
+      const toSq = result.uci.slice(4, 6) as Square;
+      const flyer = prev.board[sqToIdx(fromSq)];
+      return {
+        kind: ab,
+        fromSq,
+        toSq,
+        color: moverColor,
+        flyerLetter: flyer?.letter,
+        key: `${prev.ply}-${result.uci}-${Date.now()}`,
+      };
+    }
+    const targetSq = result.uci.slice(2);
+    let fromSq: Square | undefined;
+    if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
     }
     return {
@@ -574,16 +597,16 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
-    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
+    else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     // Suppress check feedback when the side now to move is the opponent and
-    // they are Twin-Jitsu — leaking "Check!" would tell them which decoy is
+    // they are Twin-Jutsu — leaking "Check!" would tell them which decoy is
     // their actual king. Their own client still announces it.
     {
       const nextTurn = res.state.turn;
-      const oppIsHidden = nextTurn !== myEngineColor && res.state.heroes[nextTurn].hero === 'twin-jitsu';
+      const oppIsHidden = nextTurn !== myEngineColor && res.state.heroes[nextTurn].hero === 'twin-jutsu';
       if (res.result.check && !res.result.checkmate && !oppIsHidden) sfx.playCheck();
     }
     if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
@@ -622,11 +645,11 @@ export function HeroGame() {
     setViewPly((p) => p + 1);
     // Skip the slide if an ability fired — abilityAnim already provides the
     // movement effect for Flight (and the others don't move pieces at all).
-    // Twin-Jitsu is the exception: the two endpoints swap, so we drive a
+    // Twin-Jutsu is the exception: the two endpoints swap, so we drive a
     // pair of slides from each square into the other's spot.
     if (slides && slides.length > 0 && !res.result.abilityUsed) {
       setSlideAnim({ moves: slides, key: Date.now() });
-    } else if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
+    } else if (res.result.abilityUsed === 'twin-jutsu' && animationsEnabled) {
       const a = uci.slice(2, 4) as Square;
       const b = uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
@@ -641,7 +664,7 @@ export function HeroGame() {
     // piece materialises). The uci's 5th char marks a promotion.
     if (animationsEnabled) {
       const popSquares: Square[] = [];
-      if (uci.length >= 5) popSquares.push(uci.slice(2, 4) as Square);
+      if (uci.length >= 5 && /^[a-h][1-8][a-h][1-8]/.test(uci)) popSquares.push(uci.slice(2, 4) as Square);
       if (res.result.abilityUsed === 'necromancer') popSquares.push(uci.slice(2, 4) as Square);
       // Mutation transforms the piece into its merged form — pop it to sell
       // the change.
@@ -707,7 +730,7 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
-    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
+    else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -716,7 +739,7 @@ export function HeroGame() {
     triggerMissileDetonations(prev, res.state, move.uci);
     triggerWarlordDoom(prev, res.result);
     triggerFrostShatter(prev, res.state);
-    // Twin-Jitsu: deliberately skip the slide animation on the OPPONENT'S
+    // Twin-Jutsu: deliberately skip the slide animation on the OPPONENT'S
     // screen. The swap re-masks both endpoints, so showing two pieces
     // sliding into each other's squares would leak which two squares
     // changed (and reveal at least one endpoint mid-slide). The mover
@@ -781,6 +804,9 @@ export function HeroGame() {
     // (see the initialState call above); both are set once a game is live.
     const heroW = handoff.iAmWhite ? myHero : oppHero;
     const heroB = handoff.iAmWhite ? oppHero : myHero;
+    // Re-derive the shuffled Twin-Jutsu back ranks (deterministic from
+    // gameId) so replays of this record rebuild the same starting board.
+    const backRanks = heroW && heroB ? backRanksForGame(heroW, heroB, gameId!) : undefined;
     const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
@@ -792,6 +818,7 @@ export function HeroGame() {
       reason: state.reason,
       moves,
       ...(heroW && heroB ? { heroes: { w: heroW, b: heroB } } : {}),
+      ...(backRanks && (backRanks.w || backRanks.b) ? { heroBackRanks: backRanks } : {}),
     };
     await saveGameRecord(record);
     await appendSummary({
@@ -867,12 +894,16 @@ export function HeroGame() {
     if (game.heroes[myEngineColor].hero === 'goofball' && goofballFrom) {
       return new Set(goofballLegalDestinations(game, sqToIdx(goofballFrom)).map(idxToSq));
     }
-    // Twin-Jitsu is also two-click — same pattern.
-    if (game.heroes[myEngineColor].hero === 'twin-jitsu' && twinJitsuFrom) {
-      return new Set(twinJitsuLegalDestinations(game, sqToIdx(twinJitsuFrom)).map(idxToSq));
+    // Twin-Jutsu is also two-click — same pattern.
+    if (game.heroes[myEngineColor].hero === 'twin-jutsu' && twinJutsuFrom) {
+      return new Set(twinJutsuLegalDestinations(game, sqToIdx(twinJutsuFrom)).map(idxToSq));
+    }
+    // Flight too: once a piece is picked, surface its destination squares.
+    if (game.heroes[myEngineColor].hero === 'flight' && flightFrom) {
+      return new Set(flightLegalDestinations(game, sqToIdx(flightFrom)).map(idxToSq));
     }
     return new Set(abilityTargets(game).map(idxToSq));
-  }, [game, atPresent, abilityArmed, goofballFrom, twinJitsuFrom, myEngineColor]);
+  }, [game, atPresent, abilityArmed, goofballFrom, twinJutsuFrom, flightFrom, myEngineColor]);
 
   const legalTargets = useMemo(() => {
     if (!game || !atPresent) return [];
@@ -898,23 +929,23 @@ export function HeroGame() {
     if (uci.startsWith('!')) {
       const hero = uci[1];
       if (hero === 'T') {
-        // Twin-Jitsu: only the swapped pieces that weren't the real king
-        // betray their original squares. Highlighting a king's origin would
-        // give away which decoy was actually the king before the swap.
+        // Twin-Jutsu: tinting a hidden piece's square would leak which decoys
+        // swapped. Only tint an endpoint whose piece was already revealed
+        // (unmasked) before the swap — the opponent knew what stood there.
+        // Two hidden pieces swapping shows no tint at all.
         const a = uci.slice(2, 4) as Square;
         const b = uci.slice(4, 6) as Square;
         const prev = states[viewPly - 1];
         if (!prev) return null;
-        const pieceA = prev.board[sqToIdx(a)];
-        const pieceB = prev.board[sqToIdx(b)];
-        const aIsNonKing = !!pieceA && pieceA.letter.toUpperCase() !== 'K';
-        const bIsNonKing = !!pieceB && pieceB.letter.toUpperCase() !== 'K';
-        if (aIsNonKing && bIsNonKing) return { from: a, to: b };
-        if (aIsNonKing) return { from: a, to: a };
-        if (bIsNonKing) return { from: b, to: b };
+        const aRevealed = !!prev.board[sqToIdx(a)] && !prev.masked[sqToIdx(a)];
+        const bRevealed = !!prev.board[sqToIdx(b)] && !prev.masked[sqToIdx(b)];
+        if (aRevealed && bRevealed) return { from: a, to: b };
+        if (aRevealed) return { from: a, to: a };
+        if (bRevealed) return { from: b, to: b };
         return null;
       }
-      if (hero === 'G') {
+      if (hero === 'G' || hero === 'L') {
+        // Goofball / Flight both move a visible piece from → to.
         const from = uci.slice(2, 4) as Square;
         const to = uci.slice(4, 6) as Square;
         return { from, to };
@@ -943,7 +974,7 @@ export function HeroGame() {
             else if (r.abilityUsed === 'mutation') sfx.playMutate();
             else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
             else if (r.abilityUsed === 'goofball') sfx.playGoofball();
-            else if (r.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
+            else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
             else if (r.castled) sfx.playCastle();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
@@ -1079,13 +1110,13 @@ export function HeroGame() {
         setGoofballFrom(null);
         return;
       }
-      if (armedHero === 'twin-jitsu') {
+      if (armedHero === 'twin-jutsu') {
         // Two-click swap: first click picks one of your own pieces, second
         // click picks the partner. The order is symmetric in the engine but
         // we surface from→to in the UCI to drive the slide animation.
-        if (!twinJitsuFrom) {
+        if (!twinJutsuFrom) {
           if (abilityTargetSet.has(square)) {
-            setTwinJitsuFrom(square);
+            setTwinJutsuFrom(square);
           } else {
             setAbilityArmed(false);
           }
@@ -1094,35 +1125,70 @@ export function HeroGame() {
         if (abilityTargetSet.has(square)) {
           // If either swapped piece is a pawn landing on its promotion rank,
           // prompt the player for which piece to promote into.
-          const aPiece = game.board[sqIdx(twinJitsuFrom)];
+          const aPiece = game.board[sqIdx(twinJutsuFrom)];
           const bPiece = game.board[sqIdx(square)];
-          // After swap, aPiece sits on `square` and bPiece sits on `twinJitsuFrom`.
+          // After swap, aPiece sits on `square` and bPiece sits on `twinJutsuFrom`.
           const promoRankFor = (p: { color: 'w' | 'b' } | null | undefined) =>
             p?.color === 'w' ? 8 : 1;
           const aLandsRank = parseInt(square[1], 10);
-          const bLandsRank = parseInt(twinJitsuFrom[1], 10);
+          const bLandsRank = parseInt(twinJutsuFrom[1], 10);
           let promoSq: Square | null = null;
           let promoColor: 'w' | 'b' | null = null;
           if (aPiece && aPiece.letter.toUpperCase() === 'P' && aLandsRank === promoRankFor(aPiece)) {
             promoSq = square; promoColor = aPiece.color;
           } else if (bPiece && bPiece.letter.toUpperCase() === 'P' && bLandsRank === promoRankFor(bPiece)) {
-            promoSq = twinJitsuFrom; promoColor = bPiece.color;
+            promoSq = twinJutsuFrom; promoColor = bPiece.color;
           }
           if (promoSq && promoColor) {
             setPendingAbilityPromo({
-              hero: 'twin-jitsu',
-              from: twinJitsuFrom,
+              hero: 'twin-jutsu',
+              from: twinJutsuFrom,
               to: square,
               pickerSquare: promoSq,
               color: promoColor,
             });
           } else {
-            void applyLocalAbility('twin-jitsu', square, twinJitsuFrom);
+            void applyLocalAbility('twin-jutsu', square, twinJutsuFrom);
           }
-          setTwinJitsuFrom(null);
+          setTwinJutsuFrom(null);
           return;
         }
-        setTwinJitsuFrom(null);
+        setTwinJutsuFrom(null);
+        return;
+      }
+      if (armedHero === 'flight') {
+        // Two-click teleport: first click picks one of your own pieces,
+        // second click picks the empty square it flies to.
+        if (!flightFrom) {
+          if (abilityTargetSet.has(square)) {
+            setFlightFrom(square);
+          } else {
+            setAbilityArmed(false);
+          }
+          return;
+        }
+        if (abilityTargetSet.has(square)) {
+          // A pawn flying onto its promotion rank promotes — ask which piece.
+          const piece = game.board[sqIdx(flightFrom)];
+          const isPawn = piece && piece.letter.toUpperCase() === 'P';
+          const rank = parseInt(square[1], 10);
+          const promoting = !!isPawn && (piece!.color === 'w' ? rank === 8 : rank === 1);
+          if (promoting) {
+            setPendingAbilityPromo({
+              hero: 'flight',
+              from: flightFrom,
+              to: square,
+              pickerSquare: square,
+              color: piece!.color,
+            });
+          } else {
+            void applyLocalAbility('flight', square, flightFrom);
+          }
+          setFlightFrom(null);
+          return;
+        }
+        // Click off a legal destination resets the pick (back to picking a piece).
+        setFlightFrom(null);
         return;
       }
       if (abilityTargetSet.has(square)) {
@@ -1178,7 +1244,7 @@ export function HeroGame() {
     : 0;
 
   const inCheck = !end && !!game
-    && !(game.turn !== myEngineColor && game.heroes[game.turn].hero === 'twin-jitsu')
+    && !(game.turn !== myEngineColor && game.heroes[game.turn].hero === 'twin-jutsu')
     && isInCheck(game, game.turn);
 
   // King glows from the heroes picked.
@@ -1198,7 +1264,7 @@ export function HeroGame() {
   const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
   const oppCooldownTurns = game ? turnsUntilReady(game, myEngineColor === 'w' ? 'b' : 'w') : 0;
 
-  // Twin-Jitsu mask split. Squares carrying my own masked pieces get the
+  // Twin-Jutsu mask split. Squares carrying my own masked pieces get the
   // ghosted-king overlay (self-perspective); opponent's masked pieces render
   // as solid king icons in their color (king-shaped decoys hiding the truth).
   const { maskedSelfSqs, maskedAsKingSqs } = useMemo(() => {
@@ -1268,7 +1334,7 @@ export function HeroGame() {
           <MergeBoard
             board={boardForRender}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={atPresent ? (goofballFrom ?? twinJitsuFrom ?? selectedSquare) : null}
+            selectedSquare={atPresent ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? selectedSquare) : null}
             legalTargets={atPresent ? legalTargets : []}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
@@ -1448,6 +1514,7 @@ export function HeroGame() {
                 reason: end?.reason ?? null,
                 moves,
                 heroes: { w: heroW, b: heroB },
+                heroBackRanks: backRanksForGame(heroW, heroB, gameId!),
               });
               downloadGameExport(exp);
             }}

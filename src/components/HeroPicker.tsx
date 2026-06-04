@@ -61,7 +61,9 @@ export function HeroPicker({ side, myPick, oppPick, inline, pool, onPick }: Prop
                       ? `${info.initialCooldownTurns}-turn warmup`
                       : info.initialCooldownTurns != null
                         ? `${info.initialCooldownTurns}-turn warmup, then ${info.cooldownTurns}-turn cooldown`
-                        : `${info.cooldownTurns}-turn cooldown`}
+                        : info.cooldownTurns === 0
+                          ? 'no cooldown'
+                          : `${info.cooldownTurns}-turn cooldown`}
               </div>
             </button>
           );

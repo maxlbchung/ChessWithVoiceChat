@@ -100,6 +100,7 @@ export function Review() {
         reason: rec.reason,
         moves: rec.moves,
         ...(rec.heroes ? { heroes: rec.heroes } : {}),
+        ...(rec.heroBackRanks ? { heroBackRanks: rec.heroBackRanks } : {}),
       };
       const replay = buildReplay(exp);
       setLoaded({ exp, replay });
@@ -138,6 +139,7 @@ export function Review() {
         reason: rec.reason,
         moves: rec.moves,
         heroes: rec.heroes,
+        heroBackRanks: rec.heroBackRanks,
       });
       downloadGameExport(exp);
     } catch (err) {
@@ -549,10 +551,10 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
   if (uci) {
     if (uci.startsWith('!')) {
       // Hero ability UCIs: !<letter><sq>[<dest>][<promo>] — pick the most
-      // visually informative tint per kind. Twin-Jitsu/Goofball encode two
-      // squares; the others encode one target.
+      // visually informative tint per kind. Twin-Jutsu/Goofball/Flight encode
+      // two squares; the others encode one target.
       const hero = uci[1];
-      if (hero === 'T' || hero === 'G') {
+      if (hero === 'T' || hero === 'G' || hero === 'L') {
         const a = uci.slice(2, 4);
         const b = uci.slice(4, 6);
         lastMove = { from: a, to: b };

@@ -1,5 +1,6 @@
 import { get, set, del } from 'idb-keyval';
 import type { LocalGameSummary, GameRecord, Move, GameOutcome } from './types';
+import { normalizeHeroKind } from './heroChess';
 import { STARTING_ELO } from './elo';
 
 const RATING_KEY = 'chess.rating.v1';
@@ -298,7 +299,15 @@ export async function loadGameRecord(gameId: string): Promise<GameRecord | undef
       fenAfter: anyM.fenAfter ?? '',
     };
   });
-  return { ...stored, moves };
+  // Hero records saved before the Twin-Jutsu rename carry the old
+  // 'twin-jitsu' id on disk — map it forward so replay/export still work.
+  const heroes = stored.heroes
+    ? {
+        w: normalizeHeroKind(stored.heroes.w) ?? stored.heroes.w,
+        b: normalizeHeroKind(stored.heroes.b) ?? stored.heroes.b,
+      }
+    : undefined;
+  return { ...stored, moves, heroes };
 }
 
 export async function deleteGameRecord(gameId: string): Promise<void> {

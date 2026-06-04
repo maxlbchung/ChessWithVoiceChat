@@ -28,7 +28,7 @@ import {
 import {
   applyMove as heroApply,
   initialState as heroInitial,
-  HERO_KINDS,
+  normalizeHeroKind,
   type GameState as HeroState,
   type MoveResult as HeroResult,
   type HeroKind,
@@ -74,6 +74,9 @@ export type ExportedGame = {
   moves: ExportedMove[];
   // Required when variant === 'hero'
   heroes?: { w: HeroKind; b: HeroKind };
+  // Hero matches only — per-side back-rank overrides (Twin-Jutsu starts
+  // shuffled). Absent means the standard arrangement for both sides.
+  heroBackRanks?: { w?: string; b?: string };
 };
 
 export type BuildExportInput = {
@@ -88,6 +91,7 @@ export type BuildExportInput = {
   reason: GameEndReason | null;
   moves: Move[];
   heroes?: { w: HeroKind; b: HeroKind };
+  heroBackRanks?: { w?: string; b?: string };
 };
 
 export function buildGameExport(input: BuildExportInput): ExportedGame {
@@ -112,6 +116,9 @@ export function buildGameExport(input: BuildExportInput): ExportedGame {
     reason: input.reason,
     moves: compactMoves,
     ...(input.heroes ? { heroes: input.heroes } : {}),
+    ...(input.heroBackRanks && (input.heroBackRanks.w || input.heroBackRanks.b)
+      ? { heroBackRanks: input.heroBackRanks }
+      : {}),
   };
 }
 
@@ -201,10 +208,26 @@ export function parseGameImport(text: string): ExportedGame {
     const h = o.heroes;
     if (!h || typeof h !== 'object') throw new GameImportError('Hero match is missing heroes.');
     const hh = h as Record<string, unknown>;
-    if (!isHeroKind(hh.w) || !isHeroKind(hh.b)) {
+    // normalizeHeroKind also maps the pre-rename 'twin-jitsu' id forward, so
+    // exports from before the Twin-Jutsu rename still import.
+    const w = normalizeHeroKind(hh.w);
+    const b = normalizeHeroKind(hh.b);
+    if (!w || !b) {
       throw new GameImportError('Hero match has unknown hero kind.');
     }
-    heroes = { w: hh.w, b: hh.b };
+    heroes = { w, b };
+  }
+
+  // Optional shuffled-start back ranks (Twin-Jutsu). Reject malformed values
+  // outright — replaying on the wrong arrangement would just fail later with
+  // a confusing "illegal move" error.
+  let heroBackRanks: { w?: string; b?: string } | undefined;
+  if (variant === 'hero' && o.heroBackRanks != null) {
+    if (typeof o.heroBackRanks !== 'object') throw new GameImportError('Hero match has an invalid starting back rank.');
+    const hb = o.heroBackRanks as Record<string, unknown>;
+    const w = parseBackRank(hb.w);
+    const b = parseBackRank(hb.b);
+    if (w || b) heroBackRanks = { w, b };
   }
 
   return {
@@ -223,17 +246,23 @@ export function parseGameImport(text: string): ExportedGame {
     reason: isReason(o.reason) ? o.reason : null,
     moves,
     heroes,
+    heroBackRanks,
   };
+}
+
+// A stored back rank is 8 of RNBQK with exactly one king. Absent → standard.
+function parseBackRank(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v !== 'string' || !/^[RNBQK]{8}$/.test(v) || v.split('K').length !== 2) {
+    throw new GameImportError('Hero match has an invalid starting back rank.');
+  }
+  return v;
 }
 
 function isPlayerInfo(v: unknown): v is PlayerInfo {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
   return typeof o.handle === 'string' && typeof o.rating === 'number';
-}
-
-function isHeroKind(v: unknown): v is HeroKind {
-  return typeof v === 'string' && (HERO_KINDS as string[]).includes(v);
 }
 
 function isOutcome(v: unknown): v is GameOutcome {
@@ -347,7 +376,8 @@ export function buildReplay(exp: ExportedGame): Replay {
     return { variant: 'cash', states, results };
   }
   if (!exp.heroes) throw new GameImportError('Hero match is missing heroes.');
-  const states: HeroState[] = [heroInitial(exp.heroes.w, exp.heroes.b)];
+  // heroBackRanks rebuilds a shuffled Twin-Jutsu start; absent → standard.
+  const states: HeroState[] = [heroInitial(exp.heroes.w, exp.heroes.b, exp.heroBackRanks)];
   const results: HeroResult[] = [];
   for (let i = 0; i < exp.moves.length; i++) {
     const res = heroApply(states[states.length - 1], exp.moves[i].uci);

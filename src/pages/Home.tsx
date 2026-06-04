@@ -38,6 +38,7 @@ import {
 } from '../lib/cashChess';
 import {
   initialState as heroInitial,
+  backRanksForGame as heroBackRanksForGame,
   applyMove as heroApply,
   kingSquareOf as heroKingSquareOf,
   legalMovesFrom as heroLegal,
@@ -45,7 +46,8 @@ import {
   abilityReady as heroAbilityReady,
   abilityUci as heroAbilityUci,
   goofballLegalDestinations as heroGoofballLegalDestinations,
-  twinJitsuLegalDestinations as heroTwinJitsuLegalDestinations,
+  twinJutsuLegalDestinations as heroTwinJutsuLegalDestinations,
+  flightLegalDestinations as heroFlightLegalDestinations,
   turnsUntilReady as heroTurnsUntilReady,
   sqToIdx as heroSqToIdx,
   idxToSq as heroIdxToSq,
@@ -121,6 +123,11 @@ export function Home() {
   // resets the engine. abilityArmed signals "next click is a target".
   const [heroW, setHeroW] = useState<HeroKind>('frost');
   const [heroB, setHeroB] = useState<HeroKind>('warlord');
+  // Fresh hero game: a Twin-Jutsu side starts on a randomly shuffled back
+  // rank. Free play isn't recorded or replayed, so an ephemeral random seed
+  // is fine (online games derive theirs from the shared gameId instead).
+  const freshHeroInitial = () =>
+    heroInitial(heroW, heroB, heroBackRanksForGame(heroW, heroB, Math.random().toString(36).slice(2)));
   const [heroStates, setHeroStates] = useState<HeroState[]>(() => [heroInitial('frost', 'warlord')]);
   const [heroResults, setHeroResults] = useState<HeroResult[]>([]);
   const [heroAbilityArmed, setHeroAbilityArmed] = useState(false);
@@ -128,10 +135,12 @@ export function Home() {
   // piece, second click picks where to send it. Cleared whenever the
   // ability is disarmed.
   const [goofballFrom, setGoofballFrom] = useState<string | null>(null);
-  // Twin-Jitsu is also two-click (pick piece → pick swap partner).
-  const [twinJitsuFrom, setTwinJitsuFrom] = useState<string | null>(null);
+  // Twin-Jutsu is also two-click (pick piece → pick swap partner).
+  const [twinJutsuFrom, setTwinJutsuFrom] = useState<string | null>(null);
+  // Flight is two-click too (pick piece → pick empty destination square).
+  const [flightFrom, setFlightFrom] = useState<string | null>(null);
   useEffect(() => {
-    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJitsuFrom(null); }
+    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); }
   }, [heroAbilityArmed]);
   // Transient ability animation overlay (hero free play). Bumped to a fresh
   // key each time it should re-fire.
@@ -174,7 +183,7 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
-    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
     // Clear any stale hero ability animation — without this, switching away
@@ -190,7 +199,7 @@ export function Home() {
   // Changing a hero pick re-inits the hero engine from scratch.
   useEffect(() => {
     if (freeVariant !== 'hero') return;
-    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
     setHeroAbilityAnim(null);
@@ -360,11 +369,15 @@ export function Home() {
     if (heroViewState.heroes[heroViewState.turn].hero === 'goofball' && goofballFrom) {
       return new Set(heroGoofballLegalDestinations(heroViewState, heroSqToIdx(goofballFrom)).map(heroIdxToSq));
     }
-    if (heroViewState.heroes[heroViewState.turn].hero === 'twin-jitsu' && twinJitsuFrom) {
-      return new Set(heroTwinJitsuLegalDestinations(heroViewState, heroSqToIdx(twinJitsuFrom)).map(heroIdxToSq));
+    if (heroViewState.heroes[heroViewState.turn].hero === 'twin-jutsu' && twinJutsuFrom) {
+      return new Set(heroTwinJutsuLegalDestinations(heroViewState, heroSqToIdx(twinJutsuFrom)).map(heroIdxToSq));
+    }
+    // Flight too: once a piece is picked, surface its destination squares.
+    if (heroViewState.heroes[heroViewState.turn].hero === 'flight' && flightFrom) {
+      return new Set(heroFlightLegalDestinations(heroViewState, heroSqToIdx(flightFrom)).map(heroIdxToSq));
     }
     return new Set(heroAbilityTargets(heroViewState).map((idx) => heroIdxToSq(idx)));
-  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length, goofballFrom, twinJitsuFrom]);
+  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length, goofballFrom, twinJutsuFrom, flightFrom]);
 
   const heroLegalTargets = useMemo(() => {
     if (freeVariant !== 'hero') return [];
@@ -402,9 +415,10 @@ export function Home() {
       if (buy) return { from: buy.to, to: buy.to };
     }
     // Hero abilities (UCIs prefixed with '!'): show the green tint by
-    // default. Twin-Jitsu only tints the original square(s) of any swapped
-    // piece that wasn't the real king — highlighting a king's origin would
-    // give away which decoy was the real king before the swap.
+    // default. Twin-Jutsu only tints an endpoint whose piece was already
+    // revealed (unmasked) before the swap — tinting a hidden piece's square
+    // would leak which decoys swapped. Two hidden pieces swapping shows no
+    // tint at all.
     if (freeVariant === 'hero' && uci.startsWith('!')) {
       const hero = uci[1];
       if (hero === 'T') {
@@ -412,16 +426,15 @@ export function Home() {
         const b = uci.slice(4, 6);
         const prev = heroStates[freeViewPly - 1];
         if (!prev) return null;
-        const pieceA = prev.board[heroSqToIdx(a)];
-        const pieceB = prev.board[heroSqToIdx(b)];
-        const aIsNonKing = !!pieceA && pieceA.letter.toUpperCase() !== 'K';
-        const bIsNonKing = !!pieceB && pieceB.letter.toUpperCase() !== 'K';
-        if (aIsNonKing && bIsNonKing) return { from: a, to: b };
-        if (aIsNonKing) return { from: a, to: a };
-        if (bIsNonKing) return { from: b, to: b };
+        const aRevealed = !!prev.board[heroSqToIdx(a)] && !prev.masked[heroSqToIdx(a)];
+        const bRevealed = !!prev.board[heroSqToIdx(b)] && !prev.masked[heroSqToIdx(b)];
+        if (aRevealed && bRevealed) return { from: a, to: b };
+        if (aRevealed) return { from: a, to: a };
+        if (bRevealed) return { from: b, to: b };
         return null;
       }
-      if (hero === 'G') {
+      if (hero === 'G' || hero === 'L') {
+        // Goofball / Flight both move a visible piece from → to.
         return { from: uci.slice(2, 4), to: uci.slice(4, 6) };
       }
       const sq = uci.slice(2, 4);
@@ -619,7 +632,7 @@ export function Home() {
     else if (res.result.abilityUsed === 'mutation') sfx.playMutate();
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
-    else if (res.result.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
+    else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -629,21 +642,34 @@ export function Home() {
       const ab = res.result.abilityUsed;
       // harem is passive and icbm has its own missile UI; skip overlay.
       if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
-        const targetSq = res.result.uci.slice(2);
         const moverColor = base.turn;
-        let fromSq: string | undefined;
         if (ab === 'flight') {
-          fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
-        } else if (ab === 'warlord') {
-          fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
+          // !L<from><to>[<promo>] — fly the selected piece from → to.
+          const fromSq = res.result.uci.slice(2, 4);
+          const toSq = res.result.uci.slice(4, 6);
+          const flyer = base.board[heroSqToIdx(fromSq)];
+          setHeroAbilityAnim({
+            kind: ab,
+            fromSq,
+            toSq,
+            color: moverColor,
+            flyerLetter: flyer?.letter,
+            key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+          });
+        } else {
+          const targetSq = res.result.uci.slice(2);
+          let fromSq: string | undefined;
+          if (ab === 'warlord') {
+            fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
+          }
+          setHeroAbilityAnim({
+            kind: ab,
+            fromSq,
+            toSq: targetSq,
+            color: moverColor,
+            key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+          });
         }
-        setHeroAbilityAnim({
-          kind: ab,
-          fromSq,
-          toSq: targetSq,
-          color: moverColor,
-          key: `${base.ply}-${res.result.uci}-${Date.now()}`,
-        });
       }
     }
     // ICBM detonations on this ply (any missile whose landing ply has
@@ -718,11 +744,11 @@ export function Home() {
     setFreeSelected(null);
     setHeroAbilityArmed(false);
     // Skip slide on ability moves — abilityAnim already shows the movement
-    // effect for Flight, and the others don't move a piece at all. Twin-Jitsu
+    // effect for Flight, and the others don't move a piece at all. Twin-Jutsu
     // does swap two pieces, so we drive a pair of slides at each endpoint.
     if (slides && slides.length > 0 && !res.result.abilityUsed && animationsEnabled) {
       setSlideAnim({ moves: slides, key: Date.now() });
-    } else if (res.result.abilityUsed === 'twin-jitsu' && animationsEnabled) {
+    } else if (res.result.abilityUsed === 'twin-jutsu' && animationsEnabled) {
       const a = uci.slice(2, 4);
       const b = uci.slice(4, 6);
       setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
@@ -984,21 +1010,41 @@ export function Home() {
         setGoofballFrom(null);
         return;
       }
-      if (armedHero === 'twin-jitsu') {
-        if (!twinJitsuFrom) {
+      if (armedHero === 'twin-jutsu') {
+        if (!twinJutsuFrom) {
           if (heroAbilityTargetSet.has(square)) {
-            setTwinJitsuFrom(square);
+            setTwinJutsuFrom(square);
           } else {
             setHeroAbilityArmed(false);
           }
           return;
         }
         if (heroAbilityTargetSet.has(square)) {
-          applyHeroAbility(square, twinJitsuFrom);
-          setTwinJitsuFrom(null);
+          applyHeroAbility(square, twinJutsuFrom);
+          setTwinJutsuFrom(null);
           return;
         }
-        setTwinJitsuFrom(null);
+        setTwinJutsuFrom(null);
+        return;
+      }
+      if (armedHero === 'flight') {
+        // Two-click teleport: pick one of your pieces, then an empty square.
+        // Pawns flown to the back rank auto-queen in free play (same
+        // convention as Goofball above).
+        if (!flightFrom) {
+          if (heroAbilityTargetSet.has(square)) {
+            setFlightFrom(square);
+          } else {
+            setHeroAbilityArmed(false);
+          }
+          return;
+        }
+        if (heroAbilityTargetSet.has(square)) {
+          applyHeroAbility(square, flightFrom);
+          setFlightFrom(null);
+          return;
+        }
+        setFlightFrom(null);
         return;
       }
       if (heroAbilityTargetSet.has(square)) {
@@ -1088,7 +1134,7 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
-    setHeroStates([heroInitial(heroW, heroB)]);
+    setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
     setFreeViewPly(0);
@@ -1179,7 +1225,7 @@ export function Home() {
               else if (r.abilityUsed === 'mutation') sfx.playMutate();
               else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
               else if (r.abilityUsed === 'goofball') sfx.playGoofball();
-              else if (r.abilityUsed === 'twin-jitsu') sfx.playTwinJitsu();
+              else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
               else if (r.castled) sfx.playCastle();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
@@ -1199,21 +1245,34 @@ export function Home() {
         if (r && r.abilityUsed && prevState && nextState) {
           const ab = r.abilityUsed;
           if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
-            const targetSq = r.uci.slice(2);
             const moverColor = prevState.turn;
-            let fromSq: string | undefined;
             if (ab === 'flight') {
-              fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
-            } else if (ab === 'warlord') {
-              fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
+              // !L<from><to>[<promo>] — fly the selected piece from → to.
+              const fromSq = r.uci.slice(2, 4);
+              const toSq = r.uci.slice(4, 6);
+              const flyer = prevState.board[heroSqToIdx(fromSq)];
+              setHeroAbilityAnim({
+                kind: ab,
+                fromSq,
+                toSq,
+                color: moverColor,
+                flyerLetter: flyer?.letter,
+                key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+              });
+            } else {
+              const targetSq = r.uci.slice(2);
+              let fromSq: string | undefined;
+              if (ab === 'warlord') {
+                fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
+              }
+              setHeroAbilityAnim({
+                kind: ab,
+                fromSq,
+                toSq: targetSq,
+                color: moverColor,
+                key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+              });
             }
-            setHeroAbilityAnim({
-              kind: ab,
-              fromSq,
-              toSq: targetSq,
-              color: moverColor,
-              key: `${prevState.ply}-${r.uci}-${Date.now()}`,
-            });
           }
         }
         // Replay missile detonations on this scrubbed-into ply.
@@ -1566,7 +1625,7 @@ export function Home() {
                         else if (next === 'harem') sfx.playHarem();
                         else if (next === 'icbm') sfx.playMissileLaunch();
                         else if (next === 'goofball') sfx.playGoofball();
-                        else if (next === 'twin-jitsu') sfx.playTwinJitsu();
+                        else if (next === 'twin-jutsu') sfx.playTwinJutsu();
                       }
                       setHeroW(next);
                     }}
@@ -1590,7 +1649,7 @@ export function Home() {
                         else if (next === 'harem') sfx.playHarem();
                         else if (next === 'icbm') sfx.playMissileLaunch();
                         else if (next === 'goofball') sfx.playGoofball();
-                        else if (next === 'twin-jitsu') sfx.playTwinJitsu();
+                        else if (next === 'twin-jutsu') sfx.playTwinJutsu();
                       }
                       setHeroB(next);
                     }}
@@ -1743,7 +1802,7 @@ export function Home() {
                 <MergeBoard
                   board={heroViewState.board as unknown as (MergePiece | null)[]}
                   orientation={freeOrientation}
-                  selectedSquare={heroAbilityArmed ? (goofballFrom ?? twinJitsuFrom ?? null) : freeSelected}
+                  selectedSquare={heroAbilityArmed ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? null) : freeSelected}
                   legalTargets={heroLegalTargets}
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleHeroDrop}
@@ -1785,7 +1844,7 @@ export function Home() {
                   popKey={popAnim?.key}
                   mergeAnim={mergeAnim}
                   clearAnnotationsKey={freeAnnotationsClearKey}
-                  // Twin-Jitsu masks: in local play the same screen hosts both
+                  // Twin-Jutsu masks: in local play the same screen hosts both
                   // sides, so we take the current turn as "self" — that side
                   // sees its own masked pieces with the translucent overlay
                   // while the other side's masked pieces render as kings.

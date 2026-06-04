@@ -86,8 +86,8 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Hero" open={open.hero} onToggle={() => toggle('hero')}>
         <div className="muted small time-mode-blurb">
-          Pick a hero king with a unique ability — Frost freezes, Knight
-          destroys adjacent, Necromancer spawns pawns, Flight teleports once.
+          Pick a hero king with a unique ability — Frost freezes, Warlord
+          destroys adjacent, Necromancer spawns pawns, Flight teleports pieces.
           Using an ability takes your turn.
         </div>
         {renderGrid(timeControlsForVariant('hero'))}

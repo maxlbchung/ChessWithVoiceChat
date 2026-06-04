@@ -91,12 +91,12 @@ type Props = {
   // Parent uses it on board-shape changes (variant switch, reset, clear)
   // where prior annotations would refer to stale squares.
   clearAnnotationsKey?: string | number;
-  // Twin-Jitsu: squares whose true piece should be rendered as a king icon
+  // Twin-Jutsu: squares whose true piece should be rendered as a king icon
   // in the piece's color (the opponent doesn't know what's there). The hero
   // king glow is suppressed on these squares so a decoy can't be told apart
   // from the real king by aura alone.
   maskedAsKingSquares?: Square[] | null;
-  // Twin-Jitsu: squares where the local player owns the masked piece. The
+  // Twin-Jutsu: squares where the local player owns the masked piece. The
   // real piece renders normally and a translucent king sits on top so the
   // owner can see which of their pieces are still hidden from the opponent.
   maskedSelfSquares?: Square[] | null;
@@ -123,15 +123,18 @@ export type MergeAnim = {
 
 export type AbilityAnim = {
   kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm';
-  // Flight: king's old square. Warlord: king's square (pivot for swing).
+  // Flight: flyer's old square. Warlord: king's square (pivot for swing).
   // Necromancer / Frost / Mutation: unused.
   fromSq?: Square;
-  // Flight: king's new square. Knight: destroyed piece's square.
+  // Flight: flyer's new square. Knight: destroyed piece's square.
   // Necromancer: spawn square. Frost: frozen piece's square.
   // Mutation: mutated piece's square (centre of the radiation burst).
   toSq: Square;
-  // Side that used the ability — drives the rendered king's color for Flight.
+  // Side that used the ability — drives the rendered sprite's color for Flight.
   color: 'w' | 'b';
+  // Flight: board letter of the flyer (e.g. 'Q' / 'q' / 'a'). Falls back to
+  // the side's king when absent (legacy king-only flight).
+  flyerLetter?: string;
   // Unique per ability event so React remounts the overlay (CSS animation
   // re-fires from 0%). Typically a `${ply}-${uci}` string.
   key: string;
@@ -565,7 +568,7 @@ export function MergeBoard({
           const isDragOver = dragOver === sq;
           const isHighlighted = highlights.has(sq);
           const isLastMove = !!lastMove && (lastMove.from === sq || lastMove.to === sq);
-          // Twin-Jitsu masking. Opponent-perspective masks render the piece as
+          // Twin-Jutsu masking. Opponent-perspective masks render the piece as
           // a king icon in its color; self-perspective masks render normally
           // with a translucent king overlay so the owner sees what's hidden.
           const isMaskedAsKing = maskedAsKingSet.has(sq);
@@ -713,7 +716,7 @@ export function MergeBoard({
                   : popSet.has(sq)
                   ? `pop-${popKey}-${sq}`
                   : `piece-${sq}`;
-                // Twin-Jitsu masked-as-king: swap the real piece's letter for
+                // Twin-Jutsu masked-as-king: swap the real piece's letter for
                 // a king of the same color before handing it to PieceSprite.
                 // Slides / pops still fire because animation drivers key off
                 // sq, not the letter. Glow is already suppressed above.
@@ -1517,7 +1520,11 @@ function AbilityOverlay({
   const to = centerOf(anim.toSq);
   if (anim.kind === 'flight' && anim.fromSq) {
     const from = centerOf(anim.fromSq);
-    const kingKey = anim.color === 'w' ? 'wK' : 'bK';
+    // Any piece can fly now — render the flyer's sprite (merged letters fall
+    // back to their primary key), defaulting to the king for legacy anims.
+    const kingKey: PieceKey = anim.flyerLetter
+      ? lettersToPieceKeys(anim.flyerLetter as PieceLetter)[0]
+      : (anim.color === 'w' ? 'wK' : 'bK');
     return (
       <div
         className="ability-flight"

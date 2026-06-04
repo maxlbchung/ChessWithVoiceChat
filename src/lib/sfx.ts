@@ -1231,10 +1231,10 @@ export function playGoofball() {
   buildGoofball(ensureChessBus(), getCtx().currentTime);
 }
 
-// Smoke bomb (hero: twin-jitsu) — quick "pft" ignition pop followed by a
+// Smoke bomb (hero: twin-jutsu) — quick "pft" ignition pop followed by a
 // longer hissing release of "gas" that sweeps downward in frequency as the
 // cloud dissipates. A subtle low thunk underneath gives the pop bottom.
-function buildTwinJitsuPoof(dest: AudioNode, t: number) {
+function buildTwinJutsuPoof(dest: AudioNode, t: number) {
   const ac: BaseAudioContext = dest.context;
 
   // === POP: short ignition burst ===
@@ -1290,8 +1290,8 @@ function buildTwinJitsuPoof(dest: AudioNode, t: number) {
   // === BODY: subtle low thunk for weight ===
   blip({ dest, startAt: t, freq: 90, freqEnd: 60, durMs: 110, type: 'sine', peak: 0.22, attackMs: 4 });
 }
-export function playTwinJitsu() {
-  buildTwinJitsuPoof(ensureChessBus(), getCtx().currentTime);
+export function playTwinJutsu() {
+  buildTwinJutsuPoof(ensureChessBus(), getCtx().currentTime);
 }
 
 // Generic UI click — subtle, neutral tap played on every button by default
