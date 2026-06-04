@@ -4,6 +4,8 @@ import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
 import { PlayerCard } from '../components/PlayerCard';
 import { ResultAvatar } from '../components/EndScreenAvatars';
+import { MobileGameLayout } from '../components/MobileGameLayout';
+import { useMobileLayout } from '../lib/useMobileLayout';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import {
   buildGameExport,
@@ -36,6 +38,7 @@ export function Review() {
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
   const [viewPly, setViewPly] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mobile = useMobileLayout();
 
   // Loading by gameId via ?game=<id> query param — used by the Profile page's
   // "Review" links so users can jump straight into reviewing a past match.
@@ -247,6 +250,7 @@ export function Review() {
             <p className="muted small">
               Hero matches played before this update don’t store their hero picks — those can’t be replayed.
             </p>
+            <div className="history-table-scroll">
             <table className="history-table">
               <thead>
                 <tr>
@@ -297,6 +301,7 @@ export function Review() {
                 })}
               </tbody>
             </table>
+            </div>
           </section>
         )}
       </div>
@@ -320,9 +325,7 @@ export function Review() {
     return color === 'w' ? m.whiteClockMs ?? initialMs : m.blackClockMs ?? initialMs;
   };
 
-  return (
-    <div className="game-layout">
-      <div className="board-column">
+  const boardNode = (
         <div className="board-wrap viewing-history">
           <MergeBoard
             board={display.board}
@@ -336,30 +339,35 @@ export function Review() {
             draggable={false}
           />
         </div>
-      </div>
+  );
 
-      <aside className="side-panel">
-        <PlayerCard
-          avatarDataUrl={null}
-          handle={exp.black.handle}
-          rating={exp.black.rating}
-          voiceState="off"
-          volume={0}
-          ms={clockAt('b')}
-          lowMs={0}
-          active={false}
-        />
-        <PlayerCard
-          avatarDataUrl={null}
-          handle={exp.white.handle}
-          rating={exp.white.rating}
-          voiceState="off"
-          volume={0}
-          ms={clockAt('w')}
-          lowMs={0}
-          active={false}
-        />
+  const blackCard = (
+    <PlayerCard
+      avatarDataUrl={null}
+      handle={exp.black.handle}
+      rating={exp.black.rating}
+      voiceState="off"
+      volume={0}
+      ms={clockAt('b')}
+      lowMs={0}
+      active={false}
+    />
+  );
 
+  const whiteCard = (
+    <PlayerCard
+      avatarDataUrl={null}
+      handle={exp.white.handle}
+      rating={exp.white.rating}
+      voiceState="off"
+      volume={0}
+      ms={clockAt('w')}
+      lowMs={0}
+      active={false}
+    />
+  );
+
+  const metaNode = (
         <div className="game-meta">
           <div className="game-meta-title">
             {VARIANT_LABEL[exp.variant]} · {getTimeControl(exp.timeControlId)?.label ?? exp.timeControlId}
@@ -373,7 +381,9 @@ export function Review() {
             Ply {viewPly} / {total}
           </div>
         </div>
+  );
 
+  const controlsNode = (
         <div className="history-nav-row">
           <button
             className="free-play-btn"
@@ -435,10 +445,13 @@ export function Review() {
             Load another
           </button>
         </div>
+  );
 
-        <MovesPanel replay={replay} viewPly={viewPly} onJump={setViewPly} />
+  const movesNode = (
+    <MovesPanel replay={replay} viewPly={viewPly} onJump={setViewPly} />
+  );
 
-        {exp.outcome && exp.reason && (
+  const resultNode = exp.outcome && exp.reason ? (
           <div className="game-result-strip">
             <div className="game-result-info">
               <div className="result-line">
@@ -466,7 +479,35 @@ export function Review() {
               </div>
             </div>
           </div>
-        )}
+  ) : null;
+
+  if (mobile) {
+    return (
+      <MobileGameLayout
+        topCard={blackCard}
+        board={boardNode}
+        bottomCard={whiteCard}
+        menu={<>{metaNode}{controlsNode}</>}
+        footer={resultNode}
+        drawerLabel="Moves"
+      >
+        {movesNode}
+      </MobileGameLayout>
+    );
+  }
+
+  return (
+    <div className="game-layout">
+      <div className="board-column">
+        {boardNode}
+      </div>
+      <aside className="side-panel">
+        {blackCard}
+        {whiteCard}
+        {metaNode}
+        {controlsNode}
+        {movesNode}
+        {resultNode}
       </aside>
     </div>
   );
