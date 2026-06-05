@@ -2122,6 +2122,58 @@ a { color: inherit; text-decoration: none; }
   to   { transform: translate(0, 0); }
 }
 
+@keyframes piece-jug-leap-slide {
+  0%   { transform: translate(var(--slide-dx, 0), var(--slide-dy, 0)); }
+  16%  { transform: translate(calc(var(--slide-dx, 0) * 0.88), calc(var(--slide-dy, 0) * 0.88)); }
+  72%  { transform: translate(calc(var(--slide-dx, 0) * 0.18), calc(var(--slide-dy, 0) * 0.18)); }
+  88%  { transform: translate(calc(var(--slide-dx, 0) * -0.035), calc(var(--slide-dy, 0) * -0.035)); }
+  100% { transform: translate(0, 0); }
+}
+
+.piece-jug-leap-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  transform-origin: 50% 78%;
+  animation: piece-jug-leap-body 680ms cubic-bezier(0.22, 0.9, 0.22, 1) both;
+}
+@keyframes piece-jug-leap-body {
+  0%   { transform: translateY(0) scaleX(1.16) scaleY(0.82); }
+  12%  { transform: translateY(calc(var(--size) * -0.18)) scaleX(0.9) scaleY(1.18); }
+  48%  { transform: translateY(calc(var(--size) * -0.78)) scaleX(0.88) scaleY(1.12); }
+  74%  { transform: translateY(calc(var(--size) * -0.22)) scaleX(0.95) scaleY(1.08); }
+  86%  { transform: translateY(0) scaleX(1.2) scaleY(0.78); }
+  100% { transform: translateY(0) scaleX(1) scaleY(1); }
+}
+
+.piece-jug-leap-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 13%;
+  width: 56%;
+  height: 14%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center,
+    rgba(0, 0, 0, 0.46) 0%,
+    rgba(0, 0, 0, 0.28) 44%,
+    rgba(0, 0, 0, 0) 76%);
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  z-index: 0;
+  animation: piece-jug-leap-shadow 680ms cubic-bezier(0.22, 0.9, 0.22, 1) both;
+}
+@keyframes piece-jug-leap-shadow {
+  0%   { transform: translateX(-50%) scale(1.08, 0.92); opacity: 0.28; }
+  12%  { transform: translateX(-50%) scale(0.78, 0.72); opacity: 0.2; }
+  48%  { transform: translateX(-50%) scale(0.34, 0.42); opacity: 0.08; }
+  74%  { transform: translateX(-50%) scale(0.74, 0.68); opacity: 0.24; }
+  86%  { transform: translateX(-50%) scale(1.18, 1); opacity: 0.42; }
+  100% { transform: translateX(-50%) scale(1.02, 0.9); opacity: 0; }
+}
+
 /* Pop-in for newly-created pieces (pawn promotions, etc.). Runs on an
    inner wrapper so it composes with the slide translate on the outer
    one. */
@@ -3092,5 +3144,324 @@ a { color: inherit; text-decoration: none; }
 .review-move.active {
   background: rgba(126, 200, 130, 0.42);
   font-weight: 600;
+}
+
+/* ============================================================
+   Slime hero — goo overlays, big-king blob, expansion + split
+   ============================================================ */
+/* Translucent goo pad sitting over slime kings. The big variant fills the
+   2×2 blob box; the mini variant hugs a single square. Both run a slow idle
+   wobble (morphing border radius) so the slime always looks alive. */
+.slime-goo {
+  position: absolute;
+  inset: 6%;
+  border-radius: 46% 54% 52% 48% / 54% 46% 54% 46%;
+  background:
+    radial-gradient(circle at 32% 28%,
+      rgba(220, 255, 200, 0.5) 0%,
+      rgba(126, 217, 87, 0.38) 38%,
+      rgba(70, 160, 60, 0.34) 75%,
+      rgba(40, 110, 45, 0.38) 100%);
+  box-shadow:
+    inset 0 0 0.6rem rgba(255, 255, 255, 0.35),
+    inset 0 -0.4rem 0.8rem rgba(30, 90, 35, 0.4),
+    0 0 0.6rem rgba(126, 217, 87, 0.45);
+  pointer-events: none;
+  animation: slime-goo-wobble 2600ms ease-in-out infinite;
+}
+.slime-goo-mini {
+  inset: 9%;
+  z-index: 2;
+}
+.slime-goo-big {
+  inset: 3%;
+}
+@keyframes slime-goo-wobble {
+  0%   { border-radius: 46% 54% 52% 48% / 54% 46% 54% 46%; transform: scale(1, 1); }
+  25%  { border-radius: 54% 46% 48% 52% / 46% 54% 46% 54%; transform: scale(1.02, 0.97); }
+  50%  { border-radius: 50% 50% 54% 46% / 52% 48% 52% 48%; transform: scale(0.98, 1.02); }
+  75%  { border-radius: 48% 52% 46% 54% / 50% 50% 48% 52%; transform: scale(1.01, 0.99); }
+  100% { border-radius: 46% 54% 52% 48% / 54% 46% 54% 46%; transform: scale(1, 1); }
+}
+
+/* Big-king body: gentle idle squish. While the expansion animation runs the
+   blob scales out of the mini king's corner with a gummy overshoot (the
+   component remounts without .growing once the effect window ends, which
+   hands the body back to the idle squish). */
+.slime-big-king-body {
+  animation: slime-idle-squish 2800ms ease-in-out infinite;
+}
+.slime-big-king.growing .slime-big-king-body {
+  transform-origin: var(--grow-ox) var(--grow-oy);
+  animation: slime-grow 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes slime-idle-squish {
+  0%, 100% { transform: scale(1, 1); }
+  50%      { transform: scale(1.015, 0.985); }
+}
+@keyframes slime-grow {
+  0%   { transform: scale(0.42); opacity: 0.4; }
+  60%  { transform: scale(1.08); opacity: 1; }
+  82%  { transform: scale(0.96); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Expansion burst — two goo-green rings ripple out from the centre of the
+   new 2×2 quadrant while the blob grows. */
+.ability-slime-expand {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+.ability-slime-expand .slime-burst {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 0.5);
+  height: calc(var(--size) * 0.5);
+  margin-left: calc(var(--size) * -0.25);
+  margin-top: calc(var(--size) * -0.25);
+  border-radius: 50%;
+  border: 2px solid rgba(170, 255, 130, 0.9);
+  box-shadow:
+    0 0 0.6rem rgba(126, 217, 87, 0.8),
+    inset 0 0 0.5rem rgba(200, 255, 170, 0.5);
+  animation: slime-burst-ring 760ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
+}
+.ability-slime-expand .slime-burst.r2 { animation-delay: 120ms; }
+@keyframes slime-burst-ring {
+  0%   { transform: scale(0.2); opacity: 0;    border-width: 3px; }
+  20%  {                        opacity: 0.95; }
+  100% { transform: scale(1.9); opacity: 0;    border-width: 1px; }
+}
+
+/* Split splatter — a goo flash on the destroyed blob tile plus droplets
+   flung outward, mirroring the frost-shatter drift-variable scheme. */
+.ability-slime-split {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+.ability-slime-split .slime-splat {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 1.2);
+  height: calc(var(--size) * 1.2);
+  margin-left: calc(var(--size) * -0.6);
+  margin-top: calc(var(--size) * -0.6);
+  border-radius: 46% 54% 52% 48% / 54% 46% 54% 46%;
+  background: radial-gradient(circle,
+    rgba(170, 255, 130, 0.85) 0%,
+    rgba(126, 217, 87, 0.5) 45%,
+    transparent 75%);
+  animation: slime-splat-flash 460ms ease-out forwards;
+}
+@keyframes slime-splat-flash {
+  0%   { transform: scale(0.3);  opacity: 0; }
+  25%  { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+.ability-slime-split .slime-drop {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 0.2);
+  height: calc(var(--size) * 0.26);
+  margin-left: calc(var(--size) * -0.1);
+  margin-top: calc(var(--size) * -0.13);
+  border-radius: 50% 50% 60% 60% / 60% 60% 70% 70%;
+  background: radial-gradient(circle at 35% 30%,
+    rgba(220, 255, 200, 0.95) 0%,
+    rgba(126, 217, 87, 0.9) 50%,
+    rgba(60, 150, 60, 0.85) 100%);
+  filter: drop-shadow(0 0 3px rgba(126, 217, 87, 0.8));
+  opacity: 0;
+  animation: slime-drop-fly 640ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  --drop-dx: 0px;
+  --drop-dy: 0px;
+  --drop-scale: 1;
+}
+@keyframes slime-drop-fly {
+  0%   { transform: translate(0, 0) scale(calc(var(--drop-scale) * 0.5)); opacity: 0; }
+  12%  { transform: translate(calc(var(--drop-dx) * 0.2), calc(var(--drop-dy) * 0.2)) scale(var(--drop-scale)); opacity: 1; }
+  100% { transform: translate(var(--drop-dx), var(--drop-dy)) scale(calc(var(--drop-scale) * 0.7)); opacity: 0; }
+}
+
+/* ---------- Juggernaut ---------- */
+
+/* Tier pips — three diamonds pinned to the bottom edge of the Juggernaut's
+   square. Filled count = current tier; the fill colour escalates with tier
+   (set inline from the component). */
+.jug-tier-pips {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4%;
+  display: flex;
+  justify-content: center;
+  gap: 9%;
+  pointer-events: none;
+  z-index: 3;
+}
+.jug-pip {
+  width: 11%;
+  aspect-ratio: 1;
+  transform: rotate(45deg);
+  border-radius: 20%;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+}
+.jug-pip.filled {
+  box-shadow: 0 0 4px rgba(224, 145, 63, 0.85);
+}
+
+/* Quake-leap stun — dizzy stars orbiting above the piece's head, plus a
+   faint amber tint on the square. Unlike frozen, a stunned piece can still
+   be captured, so the overlay deliberately stays light. */
+.stunned-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.stunned-overlay.delayed {
+  opacity: 0;
+  animation: stun-overlay-enter 1ms linear var(--stun-delay, 520ms) forwards;
+}
+@keyframes stun-overlay-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.stunned-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 200, 60, 0.14);
+}
+.stun-star {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  font-size: 14px;
+  line-height: 1;
+  color: #ffd84d;
+  text-shadow: 0 0 4px rgba(255, 190, 30, 0.95), 0 1px 1px rgba(0, 0, 0, 0.55);
+  animation: stun-orbit 1300ms linear infinite;
+}
+.stun-star.s2 { animation-delay: -433ms; }
+.stun-star.s3 { animation-delay: -866ms; }
+@keyframes stun-orbit {
+  0%   { transform: translate(-50%, -50%) rotate(0deg)   translateX(1.05em) rotate(0deg)    scale(1); opacity: 1; }
+  50%  { transform: translate(-50%, -50%) rotate(180deg) translateX(1.05em) rotate(-180deg) scale(0.75); opacity: 0.65; }
+  100% { transform: translate(-50%, -50%) rotate(360deg) translateX(1.05em) rotate(-360deg) scale(1); opacity: 1; }
+}
+
+/* Juggernaut quake — earthen shockwave rings + a dust puff + rubble chips
+   flung up and pulled back down by gravity. Plays at the ability target /
+   tier-up square alongside the deep-quake SFX. The .ability-jug-absorb
+   variant adds the doomed attacker's sprite sliding onto the (unmoving)
+   Juggernaut and exploding on impact; its quake parts are delayed so they
+   fire when the attacker lands. */
+.ability-juggernaut,
+.ability-jug-absorb {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+.ability-juggernaut .jug-shock,
+.ability-jug-absorb .jug-shock {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 0.6);
+  height: calc(var(--size) * 0.6);
+  margin-left: calc(var(--size) * -0.3);
+  margin-top: calc(var(--size) * -0.3);
+  border-radius: 50%;
+  border: 3px solid rgba(176, 141, 87, 0.9);
+  box-shadow:
+    0 0 0.6rem rgba(140, 110, 60, 0.8),
+    inset 0 0 0.5rem rgba(225, 200, 155, 0.5);
+  animation: jug-shock-ring 820ms cubic-bezier(0.25, 0.7, 0.4, 1) both;
+}
+.ability-juggernaut .jug-shock.r2 { animation-delay: 140ms; }
+.ability-jug-absorb .jug-shock { animation-delay: 320ms; }
+.ability-jug-absorb .jug-shock.r2 { animation-delay: 460ms; }
+@keyframes jug-shock-ring {
+  0%   { transform: scale(0.25); opacity: 0;    border-width: 4px; }
+  18%  {                         opacity: 0.95; }
+  100% { transform: scale(2.6);  opacity: 0;    border-width: 1px; }
+}
+.ability-juggernaut .jug-dust,
+.ability-jug-absorb .jug-dust {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 1.4);
+  height: calc(var(--size) * 1.4);
+  margin-left: calc(var(--size) * -0.7);
+  margin-top: calc(var(--size) * -0.7);
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(150, 125, 90, 0.55) 0%,
+    rgba(130, 110, 80, 0.3) 45%,
+    transparent 75%);
+  animation: jug-dust-puff 900ms ease-out both;
+}
+.ability-jug-absorb .jug-dust { animation-delay: 320ms; }
+@keyframes jug-dust-puff {
+  0%   { transform: scale(0.4); opacity: 0; }
+  25%  {                        opacity: 0.9; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.ability-juggernaut .jug-rubble,
+.ability-jug-absorb .jug-rubble {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: calc(var(--size) * 0.14);
+  height: calc(var(--size) * 0.12);
+  margin-left: calc(var(--size) * -0.07);
+  margin-top: calc(var(--size) * -0.06);
+  background: linear-gradient(135deg, #8a7a64 0%, #6b5d4a 100%);
+  border-radius: 28% 60% 40% 55%;
+  opacity: 0;
+  animation: jug-rubble-fly 700ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  --rubble-dx: 0px;
+  --rubble-dy: 0px;
+}
+@keyframes jug-rubble-fly {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(0.6); opacity: 0; }
+  12%  { transform: translate(calc(var(--rubble-dx) * 0.25), calc(var(--rubble-dy) * 0.25)) rotate(120deg) scale(1); opacity: 1; }
+  100% { transform: translate(var(--rubble-dx), calc(var(--rubble-dy) + var(--size) * 0.45)) rotate(340deg) scale(0.8); opacity: 0; }
+}
+
+/* The doomed attacker: slides from its origin onto the Juggernaut's square
+   (which never moves), holds for a beat on top of it, then bursts. Timing
+   pairs with the 320ms-delayed quake parts above. */
+.ability-jug-absorb .jug-absorb-piece {
+  position: absolute;
+  left: calc(var(--from-x) - var(--size) / 2);
+  top: calc(var(--from-y) - var(--size) / 2);
+  width: var(--size);
+  height: var(--size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+  animation: jug-absorb-piece 880ms cubic-bezier(0.33, 1, 0.68, 1) both;
+  --dx: 0px;
+  --dy: 0px;
+}
+@keyframes jug-absorb-piece {
+  0%   { transform: translate(0, 0) scale(1);                 opacity: 1; }
+  36%  { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 1; }
+  48%  { transform: translate(var(--dx), var(--dy)) scale(1.18); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1.8);  opacity: 0; }
 }
 

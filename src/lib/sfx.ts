@@ -745,6 +745,188 @@ export function playFly() {
   buildFly(ensureChessBus(), getCtx().currentTime);
 }
 
+// Slime expand (hero: slime) — a wet, stretchy grow. A wobbling low sine
+// bends upward (the blob inflating) under a band-passed noise swish, capped
+// with a few bubble pops as the goo settles.
+function buildSlimeExpand(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  // Inflating body — slow upward bend with an LFO wobble on the pitch.
+  const osc = ac.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(110, t);
+  osc.frequency.exponentialRampToValueAtTime(330, t + 0.5);
+  const lfo = ac.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 9;
+  const lfoGain = ac.createGain();
+  lfoGain.gain.value = 22;
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 900;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.22, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  osc.connect(lp).connect(g).connect(dest);
+  osc.start(t); osc.stop(t + 0.65);
+  lfo.start(t); lfo.stop(t + 0.65);
+
+  // Wet swish — band-passed noise climbing with the stretch.
+  const dur = 0.45;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 1.2;
+  bp.frequency.setValueAtTime(250, t);
+  bp.frequency.exponentialRampToValueAtTime(900, t + dur);
+  const ng = ac.createGain();
+  ng.gain.setValueAtTime(0, t);
+  ng.gain.linearRampToValueAtTime(0.12, t + 0.05);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(bp).connect(ng).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.02);
+
+  // Bubble pops as the goo settles.
+  blip({ dest, startAt: t + 0.30, freq: 620, freqEnd: 260, durMs: 70, type: 'sine', peak: 0.12, lpHz: 1600 });
+  blip({ dest, startAt: t + 0.42, freq: 800, freqEnd: 320, durMs: 60, type: 'sine', peak: 0.09, lpHz: 1800 });
+  blip({ dest, startAt: t + 0.52, freq: 500, freqEnd: 210, durMs: 80, type: 'sine', peak: 0.07, lpHz: 1400 });
+}
+export function playSlimeExpand() {
+  buildSlimeExpand(ensureChessBus(), getCtx().currentTime);
+}
+
+// Slime split (hero: slime) — a squelchy pop. A wet noise splat through a
+// fast-falling lowpass, a downward "deflate" bend, and stray droplet blips
+// landing after the burst.
+function buildSlimeSplit(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const dur = 0.22;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 1.6;
+  lp.frequency.setValueAtTime(2600, t);
+  lp.frequency.exponentialRampToValueAtTime(280, t + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.3, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(lp).connect(g).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.02);
+
+  // Deflating body.
+  blip({ dest, startAt: t, freq: 300, freqEnd: 90, durMs: 240, type: 'triangle', peak: 0.2, lpHz: 800 });
+  // Droplets scattering.
+  blip({ dest, startAt: t + 0.10, freq: 900, freqEnd: 380, durMs: 60, type: 'sine', peak: 0.1, lpHz: 2200 });
+  blip({ dest, startAt: t + 0.17, freq: 700, freqEnd: 300, durMs: 70, type: 'sine', peak: 0.08, lpHz: 1800 });
+  blip({ dest, startAt: t + 0.26, freq: 1100, freqEnd: 460, durMs: 55, type: 'sine', peak: 0.06, lpHz: 2400 });
+}
+export function playSlimeSplit() {
+  buildSlimeSplit(ensureChessBus(), getCtx().currentTime);
+}
+
+// Juggernaut quake (hero: juggernaut) — a deep earthquake, the hero's
+// signature per the design note. A compressed cousin of the ICBM explosion:
+// LFO-modulated sub-bass voices over a low-passed rumble bed, with a single
+// aftershock thump. Tighter (~1.2s) than the 2.3s missile blast since it
+// plays on every ability use and tier-up.
+function buildJugQuake(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // Tremolo'd sub-bass voice — same recipe as the explosion's subQuake but
+  // shorter. The LFO rocks a post-envelope gain (base 0.8 ± 0.2) so the
+  // ground "shakes" rather than just thuds.
+  const subQuake = (
+    freq: number, freqEnd: number, durMs: number, peak: number,
+    attackMs: number, lfoHz: number, startOffset = 0,
+  ) => {
+    const start = t + startOffset;
+    const dur = durMs / 1000;
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, start);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), start + dur);
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(peak, start + attackMs / 1000);
+    env.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    const trem = ac.createGain();
+    trem.gain.value = 0.8;
+    const lfo = ac.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = lfoHz;
+    const lfoAmt = ac.createGain();
+    lfoAmt.gain.value = 0.2;
+    lfo.connect(lfoAmt).connect(trem.gain);
+    osc.connect(env).connect(trem).connect(dest);
+    osc.start(start);
+    osc.stop(start + dur + 0.04);
+    lfo.start(start);
+    lfo.stop(start + dur + 0.04);
+  };
+  subQuake(52, 18, 1100, 0.7, 50, 6.2);
+  subQuake(30, 13, 1250, 0.6, 70, 4.4);
+  subQuake(72, 26, 800, 0.45, 40, 5.1, 0.03);
+
+  // Rumble bed — low-passed noise with the corner sweeping down so the
+  // spectral centroid stays buried in the bass. Two biquads in series for a
+  // steeper rolloff (no mids leaking through).
+  const dur = 1.2;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 0.9;
+  lp.frequency.setValueAtTime(380, t);
+  lp.frequency.exponentialRampToValueAtTime(60, t + dur);
+  const lp2 = ac.createBiquadFilter();
+  lp2.type = 'lowpass';
+  lp2.frequency.setValueAtTime(380, t);
+  lp2.frequency.exponentialRampToValueAtTime(60, t + dur);
+  const env = ac.createGain();
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(0.8, t + 0.04);
+  env.gain.setValueAtTime(0.8, t + 0.14);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  const trem = ac.createGain();
+  trem.gain.value = 0.85;
+  const lfo = ac.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 4.2;
+  const lfoAmt = ac.createGain();
+  lfoAmt.gain.value = 0.15;
+  lfo.connect(lfoAmt).connect(trem.gain);
+  src.connect(lp).connect(lp2).connect(env).connect(trem).connect(dest);
+  src.start(t);
+  src.stop(t + dur + 0.04);
+  lfo.start(t);
+  lfo.stop(t + dur + 0.04);
+
+  // One aftershock thump rolling through the decay.
+  blip({ dest, startAt: t + 0.45, freq: 46, freqEnd: 19, durMs: 550, type: 'sine', peak: 0.32, attackMs: 22 });
+}
+export function playJugQuake() {
+  buildJugQuake(ensureChessBus(), getCtx().currentTime);
+}
+
 // Mutate (hero: mutation) — Geiger-counter style ticks accelerating over a
 // low rising drone, capped by a soft "lock-in" chime. Reads as radiation
 // building up and the piece reconfiguring.

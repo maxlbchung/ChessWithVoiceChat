@@ -17,6 +17,8 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 | **ICBM**        | 10-turn warmup, then none | Drop a bomb that lands in 5 plies and demolishes a square |
 | **Goofball**    | *none*          | Force the opponent to make a legal move on their next ply |
 | **Twin-Jutsu**  | 3 turns         | All your pieces look like kings to the opponent until they move. Back rank starts shuffled (opposite-color bishops; no castling). Active swaps two of your pieces and re-masks both. |
+| **Slime**       | 10 turns        | Only pawns (3rd rank) + a 2×2 big king that slides one square and crushes what it lands on. Capturing a tile splits it into 3 mini kings; uncheckable until a single king remains. Active regrows a mini into a big king. |
+| **Juggernaut**  | 3 turns         | A lone colorless king with three lives. Capturing it kills the attacker and tiers it up (king → knight → queen movement, new ability per tier); uncheckable until tier 3, where the next hit fells it. |
 
 > A "turn" means one of *your own* moves. Under the hood the engine stores cooldowns in plies (`turns × 2`).
 
@@ -82,6 +84,28 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - Cannot pick an enemy piece with no legal moves.
 - Cannot pick a destination that would leave you (the Goofball user) in check after the forced opponent move — the engine filters those out.
 - Promotion: if the forced move is a pawn promotion, the engine accepts a promotion letter in the ability UCI; the UI prompts for it.
+
+### Slime — `#7ed957`
+- **Active**, 10-turn cooldown, plus heavy passives.
+- **Starting army**: only 8 pawns — on the **3rd rank** (6th for black, no double-step from there) — and a **2×2 big king** of blob tiles (`S`) on d1/e1/d2/e2 (d8/e8/d7/e7 for black). No other pieces, no castling.
+- **Big king movement**: the whole 2×2 blob slides **one square in any direction**, crushing every enemy piece on the squares it enters (up to 2 orthogonally / 3 diagonally). Own pieces and frozen pieces block the slide. Because it crushes, the blob *gives check* to adjacent enemy kings — but only in directions it could actually slide.
+- **Split**: when any blob tile is captured (by a move, a crush, or an ICBM blast), the blob bursts — the three surviving tiles become **normal mini kings**. The minis move and capture like kings.
+- **Multi-king check immunity**: while a Slime side has more than one king square (blob tiles + minis combined), it **cannot be checked** — its kings are simply capturable pieces. Normal check/checkmate rules resume once it's down to a single king. Losing the last king square (e.g. to a missile or a double-crush) loses the game.
+- **Active — expand**, 10-turn cooldown. Two-click: pick a mini king, then the diagonal corner of an empty 2×2 quadrant — the mini grows back into a big king there. The three new squares must be empty and on the board. Expanding while in check is legal (the blob is uncheckable). Splitting then re-expanding is how the slime multiplies.
+- Blob tiles can't be frozen (Frost), carved (Warlord), or flown; they serialize as `S`/`s` in FEN with a trailing blob-groups token.
+
+### Juggernaut — `#b08d57`
+- **Active**, 3-turn cooldown, plus heavy passives. Plays a deep-earthquake SFX on every ability use and tier-up.
+- **Starting army**: nothing but a **lone, colorless king** (the Juggernaut) on e1/e8 — no pawns, no pieces, no castling. It renders as a stone-grey king with three tier pips under it.
+- **Three lives — capture attempts feed it**: capturing the Juggernaut at tier 1 or 2 **kills the attacker instead** — the Juggernaut keeps its square and **rises a tier**. An ICBM blast counts as a capture attempt too (tier +1, square not cleared). At **tier 3 a capture finally lands**: the Juggernaut dies and its side loses. A Slime blob can't crush a sub-tier-3 Juggernaut (the slide is blocked).
+- **The enemy king can never suicide into it**: a king capturing a sub-tier-3 Juggernaut would die with it, so the move is illegal — same as moving into check. (A multi-king Slime side may legally spend a spare king.) An undefended **tier-3** Juggernaut can be captured by the king normally.
+- **Check immunity until tier 3**: at tiers 1-2 the Juggernaut cannot be checked — it walks through attacked squares freely (the check *sound* still plays as a flavor cue). At tier 3, normal check/checkmate rules switch on: the opponent can now mate it, or land the killing capture.
+- **Tier kits** (movement passive + active ability, `!J<sq>`):
+  - **Tier 1 — moves like a king. Convert**: turn an enemy piece (not a king / blob tile) adjacent to the Juggernaut to your side. This is how the lone king builds an army.
+  - **Tier 2 — moves like a knight. Quake Leap**: jump like a knight (capturing what you land on); every piece — both sides' — within a 2-tile radius of the landing is **stunned** for one turn each. Stunned pieces can't move and don't attack, but unlike frozen pieces they CAN be captured.
+  - **Tier 3 — moves like a queen. Rampage**: charge left or right along the rank to the board edge, **destroying every piece in the path** (both sides', frozen included — like ICBM it ignores Frost). A flattened king ends the game on the spot.
+- The Juggernaut *gives* check with its current movement pattern (adjacent at tier 1, knight squares at tier 2, queen lines at tier 3) — a tier-1 Juggernaut standing next to the enemy king is real check, and since the king can't capture it, the only outs are escaping or sacrificing a piece into it (which powers it up and breaks the adjacency check).
+- Serialization: the tier rides the hero FEN token (`juggernaut:<cd>:<flight>:<tier>`); stunned squares get a trailing `idx:expiry` token.
 
 ### Twin-Jutsu — `#bda0ff`
 - **Passive + active**.

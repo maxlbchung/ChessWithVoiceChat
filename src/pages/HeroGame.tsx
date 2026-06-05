@@ -37,6 +37,11 @@ import {
   goofballLegalDestinations,
   twinJutsuLegalDestinations,
   flightLegalDestinations,
+  slimeLegalDestinations,
+  slimeShiftOptions,
+  resolveSlimeShiftClick,
+  type SlimeShiftOption,
+  jugTierOf,
   normalizeHeroKind,
   HERO_INFO,
   heroPoolForGame,
@@ -142,7 +147,7 @@ export function HeroGame() {
   const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
   useEffect(() => {
     if (!slideAnim) return;
-    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    const t = window.setTimeout(() => setSlideAnim(null), 760);
     return () => clearTimeout(t);
   }, [slideAnim]);
   useEffect(() => {
@@ -162,8 +167,11 @@ export function HeroGame() {
   // Flight is also two-click: first click picks one of your own pieces,
   // second click picks the (empty) square it flies to.
   const [flightFrom, setFlightFrom] = useState<Square | null>(null);
+  // Slime too: first click picks a mini king, second click picks the diagonal
+  // corner of the 2×2 quadrant it expands into.
+  const [slimeFrom, setSlimeFrom] = useState<Square | null>(null);
   useEffect(() => {
-    if (!abilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); }
+    if (!abilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null); }
   }, [abilityArmed]);
   // Transient ability animation overlay state. Bumped to a fresh key every
   // time we want the animation to re-fire (CSS keyframes restart on remount).
@@ -489,6 +497,80 @@ export function HeroGame() {
     }
   };
 
+  // Slime split: a big-king tile was captured / crushed / blasted this move
+  // and the blob burst into mini kings. Squelch SFX + goo splatter at the
+  // destroyed tile, with the minis popping in via the pop channel.
+  const triggerSlimeSplit = (prev: GameState, result: MoveResult) => {
+    const splits = result.slimeSplits;
+    if (!splits || splits.length === 0) return;
+    sfx.playSlimeSplit();
+    if (animationsEnabled) {
+      // One splatter overlay slot — splash the first destroyed tile.
+      const tile = splits[0].tiles[0];
+      if (tile) {
+        setAbilityAnim({
+          kind: 'slime-split',
+          toSq: tile,
+          color: 'w',
+          key: `slime-split-${prev.ply}-${tile}-${Date.now()}`,
+        });
+      }
+      const minis = splits.flatMap((s) => s.minis);
+      if (minis.length > 0) setPopAnim({ squares: minis, key: Date.now() });
+    }
+  };
+
+  // Juggernaut tier-up: an enemy capture attempt (or a missile) fed the
+  // Juggernaut this move — the attacker died and the boss powered up. For a
+  // board-move capture, the doomed attacker slides onto the (unmoving)
+  // Juggernaut and explodes there; the deep quake lands at the impact beat.
+  // Missile feeds get the plain immediate quake.
+  const triggerJugTierShift = (prev: GameState, next: GameState, uci: string) => {
+    for (const c of ['w', 'b'] as const) {
+      if (jugTierOf(next, c) > jugTierOf(prev, c)) {
+        const jugSq = kingSquareOf(next.board, c);
+        const isBoardMove = /^[a-h][1-8][a-h][1-8]/.test(uci);
+        const fromSq = isBoardMove ? (uci.slice(0, 2) as Square) : null;
+        const attacker = fromSq ? prev.board[sqToIdx(fromSq)] : null;
+        const isAbsorb = !!jugSq && isBoardMove && uci.slice(2, 4) === jugSq && !!attacker;
+        if (isAbsorb) {
+          window.setTimeout(() => sfx.playJugQuake(), 320);
+          if (animationsEnabled) {
+            setAbilityAnim({
+              kind: 'jug-absorb',
+              fromSq: fromSq!,
+              toSq: jugSq!,
+              color: c,
+              flyerLetter: attacker!.letter,
+              key: `jug-absorb-${prev.ply}-${c}-${Date.now()}`,
+            });
+          }
+        } else {
+          sfx.playJugQuake();
+          if (animationsEnabled && jugSq) {
+            setAbilityAnim({
+              kind: 'juggernaut',
+              toSq: jugSq,
+              color: c,
+              key: `jug-tier-${prev.ply}-${c}-${Date.now()}`,
+            });
+          }
+        }
+      }
+    }
+  };
+
+  // True when this just-applied board move was a capture attempt absorbed by
+  // a Juggernaut (attacker died on its square). Used to suppress the normal
+  // slide — otherwise the slide channel animates the JUGGERNAUT (the piece
+  // now on the target square) gliding in from the attacker's origin.
+  const wasJugAbsorb = (prev: GameState, next: GameState, uci: string): boolean =>
+    /^[a-h][1-8][a-h][1-8]/.test(uci) &&
+    (['w', 'b'] as const).some((c) =>
+      jugTierOf(next, c) > jugTierOf(prev, c) &&
+      kingSquareOf(next.board, c) === uci.slice(2, 4),
+    );
+
   // Warlord ability: the engine clears the target piece on move commit, but
   // we keep it visible as a doomed-piece overlay through the wind-up of the
   // sword swing and only let it disappear at the swing midpoint (when the
@@ -551,7 +633,7 @@ export function HeroGame() {
     const ab = result.abilityUsed;
     // Only kinds with a rendered overlay; harem is passive and icbm has its
     // own missile-marker UI, so they don't drive abilityAnim.
-    if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation') {
+    if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation' && ab !== 'slime' && ab !== 'juggernaut') {
       return null;
     }
     const moverColor = prev.turn;
@@ -569,10 +651,32 @@ export function HeroGame() {
         key: `${prev.ply}-${result.uci}-${Date.now()}`,
       };
     }
-    const targetSq = result.uci.slice(2);
+    if (ab === 'slime') {
+      // !S<from><to> — the mini king at from grows toward the corner at to.
+      return {
+        kind: 'slime-expand',
+        fromSq: result.uci.slice(2, 4) as Square,
+        toSq: result.uci.slice(4, 6) as Square,
+        color: moverColor,
+        key: `${prev.ply}-${result.uci}-${Date.now()}`,
+      };
+    }
+    const targetSq = result.uci.slice(2) as Square;
     let fromSq: Square | undefined;
     if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
+    }
+    if (ab === 'juggernaut' && jugTierOf(prev, moverColor) === 2) {
+      fromSq = kingSquareOf(prev.board, moverColor) ?? undefined;
+      if (fromSq) {
+        return {
+          kind: 'juggernaut-leap',
+          fromSq,
+          toSq: targetSq,
+          color: moverColor,
+          key: `${prev.ply}-${result.uci}-${Date.now()}`,
+        };
+      }
     }
     return {
       kind: ab,
@@ -598,21 +702,27 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
+    else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
+    else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     // Suppress check feedback when the side now to move is the opponent and
     // they are Twin-Jutsu — leaking "Check!" would tell them which decoy is
     // their actual king. Their own client still announces it.
+    // jugPhantomCheck: a sub-tier-3 Juggernaut can't actually be checked but
+    // the design calls for the check sound to play anyway as a flavor cue.
     {
       const nextTurn = res.state.turn;
       const oppIsHidden = nextTurn !== myEngineColor && res.state.heroes[nextTurn].hero === 'twin-jutsu';
-      if (res.result.check && !res.result.checkmate && !oppIsHidden) sfx.playCheck();
+      if ((res.result.check || res.result.jugPhantomCheck) && !res.result.checkmate && !oppIsHidden) sfx.playCheck();
     }
     if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
     triggerMissileDetonations(game, res.state, uci);
     triggerWarlordDoom(game, res.result);
     triggerFrostShatter(game, res.state);
+    triggerSlimeSplit(game, res.result);
+    triggerJugTierShift(game, res.state, uci);
 
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
@@ -646,8 +756,10 @@ export function HeroGame() {
     // Skip the slide if an ability fired — abilityAnim already provides the
     // movement effect for Flight (and the others don't move pieces at all).
     // Twin-Jutsu is the exception: the two endpoints swap, so we drive a
-    // pair of slides from each square into the other's spot.
-    if (slides && slides.length > 0 && !res.result.abilityUsed) {
+    // pair of slides from each square into the other's spot. A Juggernaut
+    // absorb also skips it — the jug-absorb overlay carries the attacker's
+    // motion, and the Juggernaut itself must not appear to move.
+    if (slides && slides.length > 0 && !res.result.abilityUsed && !wasJugAbsorb(game, res.state, uci)) {
       setSlideAnim({ moves: slides, key: Date.now() });
     } else if (res.result.abilityUsed === 'twin-jutsu' && animationsEnabled) {
       const a = uci.slice(2, 4) as Square;
@@ -659,6 +771,14 @@ export function HeroGame() {
       const from = uci.slice(2, 4) as Square;
       const to = uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
+      // Quake leap / rampage (tiers 2-3) move the Juggernaut itself — slide
+      // it from its pre-move square. Convert (tier 1) keeps it in place: pop
+      // the flipped piece instead. Tier comes from the PRE-move state.
+      const from = kingSquareOf(game.board, beforeTurn);
+      const to = uci.slice(2, 4) as Square;
+      if (jugTierOf(game, beforeTurn) === 1) setPopAnim({ squares: [to], key: Date.now() });
+      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     }
     // Pop the destination on promotions and on Necromancer spawns (a new
     // piece materialises). The uci's 5th char marks a promotion.
@@ -731,14 +851,18 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
+    else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
+    else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
-    if (res.result.check && !res.result.checkmate) sfx.playCheck();
+    if ((res.result.check || res.result.jugPhantomCheck) && !res.result.checkmate) sfx.playCheck();
     if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(prev, res.state, res.result));
     triggerMissileDetonations(prev, res.state, move.uci);
     triggerWarlordDoom(prev, res.result);
     triggerFrostShatter(prev, res.state);
+    triggerSlimeSplit(prev, res.result);
+    triggerJugTierShift(prev, res.state, move.uci);
     // Twin-Jutsu: deliberately skip the slide animation on the OPPONENT'S
     // screen. The swap re-masks both endpoints, so showing two pieces
     // sliding into each other's squares would leak which two squares
@@ -748,6 +872,12 @@ export function HeroGame() {
       const from = move.uci.slice(2, 4) as Square;
       const to = move.uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
+      // Mirror the mover's quake-leap / rampage slide on this screen too.
+      const from = kingSquareOf(prev.board, prev.turn);
+      const to = move.uci.slice(2, 4) as Square;
+      if (jugTierOf(prev, prev.turn) === 1) setPopAnim({ squares: [to], key: Date.now() });
+      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     }
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
@@ -902,8 +1032,21 @@ export function HeroGame() {
     if (game.heroes[myEngineColor].hero === 'flight' && flightFrom) {
       return new Set(flightLegalDestinations(game, sqToIdx(flightFrom)).map(idxToSq));
     }
+    // Slime: once a mini king is picked, surface the expansion corners.
+    if (game.heroes[myEngineColor].hero === 'slime' && slimeFrom) {
+      return new Set(slimeLegalDestinations(game, sqToIdx(slimeFrom)).map(idxToSq));
+    }
     return new Set(abilityTargets(game).map(idxToSq));
-  }, [game, atPresent, abilityArmed, goofballFrom, twinJutsuFrom, flightFrom, myEngineColor]);
+  }, [game, atPresent, abilityArmed, goofballFrom, twinJutsuFrom, flightFrom, slimeFrom, myEngineColor]);
+
+  // Whole-blob shift options when a Slime big-king tile is selected. Drives
+  // the direction-arrow UI on the board and click/drop resolution below.
+  const slimeShiftOpts = useMemo<SlimeShiftOption[]>(() => {
+    if (!game || !atPresent || abilityArmed || !selectedSquare) return [];
+    const p = game.board[sqToIdx(selectedSquare)];
+    if (!p || p.color !== myEngineColor || p.letter.toUpperCase() !== 'S') return [];
+    return slimeShiftOptions(game, sqToIdx(selectedSquare));
+  }, [game, atPresent, abilityArmed, selectedSquare, myEngineColor]);
 
   const legalTargets = useMemo(() => {
     if (!game || !atPresent) return [];
@@ -917,10 +1060,17 @@ export function HeroGame() {
       }));
     }
     if (!selectedSquare) return [];
+    // Selected blob tile: every square the blob can slide onto is clickable.
+    // MergeBoard suppresses the dots for these and draws direction arrows.
+    if (slimeShiftOpts.length > 0) {
+      return slimeShiftOpts.flatMap((o) => o.entered.map((i) => ({
+        to: idxToSq(i), isCapture: o.isCapture, isMerge: false,
+      })));
+    }
     return legalMovesFrom(game, selectedSquare).map((m) => ({
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
-  }, [selectedSquare, game, abilityArmed, abilityTargetSet, atPresent, myEngineColor]);
+  }, [selectedSquare, game, abilityArmed, abilityTargetSet, atPresent, myEngineColor, slimeShiftOpts]);
 
   const lastMove = useMemo(() => {
     if (viewPly <= 0) return null;
@@ -944,8 +1094,9 @@ export function HeroGame() {
         if (bRevealed) return { from: b, to: b };
         return null;
       }
-      if (hero === 'G' || hero === 'L') {
-        // Goofball / Flight both move a visible piece from → to.
+      if (hero === 'G' || hero === 'L' || hero === 'S') {
+        // Goofball / Flight move a visible piece from → to; Slime grows a
+        // mini king (from) toward an empty corner (to) — tint both ends.
         const from = uci.slice(2, 4) as Square;
         const to = uci.slice(4, 6) as Square;
         return { from, to };
@@ -975,10 +1126,12 @@ export function HeroGame() {
             else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
             else if (r.abilityUsed === 'goofball') sfx.playGoofball();
             else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
+            else if (r.abilityUsed === 'slime') sfx.playSlimeExpand();
+            else if (r.abilityUsed === 'juggernaut') sfx.playJugQuake();
             else if (r.castled) sfx.playCastle();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
-            if (r.check && !r.checkmate) sfx.playCheck();
+            if ((r.check || r.jugPhantomCheck) && !r.checkmate) sfx.playCheck();
           } else {
             if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
             if (r.check) sfx.playCheckReversed();
@@ -992,10 +1145,18 @@ export function HeroGame() {
         const prevState = states[p];
         const nextState = states[p + 1];
         if (r && prevState && nextState) {
-          if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(prevState, nextState, r));
+          if (animationsEnabled) {
+            const anim = triggerAbilityAnim(prevState, nextState, r);
+            setAbilityAnim(anim);
+            if (anim?.kind === 'juggernaut-leap' && anim.fromSq) {
+              setSlideAnim({ moves: [{ from: anim.fromSq, to: anim.toSq }], key: Date.now() });
+            }
+          }
           triggerMissileDetonations(prevState, nextState, r.uci);
           triggerWarlordDoom(prevState, r);
           triggerFrostShatter(prevState, nextState);
+          triggerSlimeSplit(prevState, r);
+          triggerJugTierShift(prevState, nextState, r.uci);
         }
       }
       return next;
@@ -1191,6 +1352,26 @@ export function HeroGame() {
         setFlightFrom(null);
         return;
       }
+      if (armedHero === 'slime') {
+        // Two-click expansion: first click picks a mini king, second click
+        // picks the diagonal corner of the quadrant it grows into.
+        if (!slimeFrom) {
+          if (abilityTargetSet.has(square)) {
+            setSlimeFrom(square);
+          } else {
+            setAbilityArmed(false);
+          }
+          return;
+        }
+        if (abilityTargetSet.has(square)) {
+          void applyLocalAbility('slime', square, slimeFrom);
+          setSlimeFrom(null);
+          return;
+        }
+        // Click off a legal corner resets the pick (back to picking a king).
+        setSlimeFrom(null);
+        return;
+      }
       if (abilityTargetSet.has(square)) {
         void applyLocalAbility(armedHero, square);
         return;
@@ -1201,6 +1382,16 @@ export function HeroGame() {
     }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
+    // Selected blob: resolve the click to a whole-blob slide and fire its
+    // canonical uci — the raw selected→clicked pair isn't necessarily a move
+    // the engine recognises (shared entered squares resolve orthogonal-first).
+    if (selectedSquare && slimeShiftOpts.length > 0) {
+      const opt = resolveSlimeShiftClick(slimeShiftOpts, sqIdx(square));
+      if (opt) {
+        void applyLocalMove(opt.uci.slice(0, 2) as Square, opt.uci.slice(2, 4) as Square);
+        return;
+      }
+    }
     if (selectedSquare && target) {
       attemptMove(selectedSquare, square, true);
       return;
@@ -1225,6 +1416,19 @@ export function HeroGame() {
     if (end || !game || !atPresent || !isMyTurn()) return false;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
+    // Dragging the big king: the grabbed tile's travel gives the slide
+    // direction; drops further out resolve like a click on an entered square.
+    if (piece.letter.toUpperCase() === 'S') {
+      const opts = slimeShiftOptions(game, sqIdx(from));
+      const df = to.charCodeAt(0) - from.charCodeAt(0);
+      const dr = parseInt(to[1], 10) - parseInt(from[1], 10);
+      const opt = (Math.abs(df) <= 1 && Math.abs(dr) <= 1
+        ? opts.find((o) => o.df === df && o.dr === dr)
+        : undefined) ?? resolveSlimeShiftClick(opts, sqIdx(to));
+      if (!opt) return false;
+      void applyLocalMove(opt.uci.slice(0, 2) as Square, opt.uci.slice(2, 4) as Square);
+      return true;
+    }
     const legal = legalMovesFrom(game, from).some((m) => m.to === to);
     if (!legal) return false;
     return attemptMove(from, to);
@@ -1283,6 +1487,44 @@ export function HeroGame() {
     return { maskedSelfSqs: selfSqs, maskedAsKingSqs: oppSqs };
   }, [viewedState, myEngineColor]);
 
+  // Slime rendering: big-king blobs (stretched sprite spanning 2×2 tiles)
+  // plus the squares of any mini kings (goo overlay).
+  const { slimeBigKings, slimeKingSqs } = useMemo(() => {
+    const bigs: { tiles: Square[]; color: 'w' | 'b' }[] = [];
+    const minis: Square[] = [];
+    if (viewedState) {
+      for (const g of viewedState.slimes) {
+        const ref = viewedState.board[g.tiles[0]];
+        if (!ref) continue;
+        bigs.push({ tiles: g.tiles.map(idxToSq), color: ref.color });
+      }
+      for (let i = 0; i < 64; i++) {
+        const p = viewedState.board[i];
+        if (!p || p.letter.toUpperCase() !== 'K') continue;
+        if (viewedState.heroes[p.color].hero === 'slime') minis.push(idxToSq(i));
+      }
+    }
+    return { slimeBigKings: bigs, slimeKingSqs: minis };
+  }, [viewedState]);
+
+  // Juggernaut rendering: the colorless king + tier pips, plus quake-leap
+  // stun overlays on affected squares.
+  const { juggernauts, stunnedSqs } = useMemo(() => {
+    const jugs: { sq: Square; tier: number }[] = [];
+    const stuns: Square[] = [];
+    if (viewedState) {
+      for (const c of ['w', 'b'] as const) {
+        if (viewedState.heroes[c].hero !== 'juggernaut') continue;
+        const sq = kingSquareOf(viewedState.board, c);
+        if (sq) jugs.push({ sq, tier: viewedState.jugTier[c] });
+      }
+      for (const s of viewedState.stunned) {
+        if (viewedState.ply < s.expiresAtPly) stuns.push(idxToSq(s.idx));
+      }
+    }
+    return { juggernauts: jugs, stunnedSqs: stuns };
+  }, [viewedState]);
+
   const bothPicked = myHero != null && oppHero != null;
 
   return (
@@ -1311,6 +1553,8 @@ export function HeroGame() {
             armed={abilityArmed}
             onArm={() => { setSelectedSquare(null); setAbilityArmed(true); }}
             onCancel={() => setAbilityArmed(false)}
+            myJugTier={game ? jugTierOf(game, myEngineColor) : 0}
+            oppJugTier={game ? jugTierOf(game, myEngineColor === 'w' ? 'b' : 'w') : 0}
           />
         ) : (
           <div className="hero-side-placeholder muted small">
@@ -1334,7 +1578,7 @@ export function HeroGame() {
           <MergeBoard
             board={boardForRender}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={atPresent ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? selectedSquare) : null}
+            selectedSquare={atPresent ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? slimeFrom ?? selectedSquare) : null}
             legalTargets={atPresent ? legalTargets : []}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
@@ -1382,6 +1626,11 @@ export function HeroGame() {
             popKey={popAnim?.key}
             maskedSelfSquares={maskedSelfSqs}
             maskedAsKingSquares={maskedAsKingSqs}
+            slimeBigKings={slimeBigKings}
+            slimeShiftArrows={slimeShiftOpts.map((o) => ({ df: o.df, dr: o.dr, isCapture: o.isCapture }))}
+            slimeKingSquares={slimeKingSqs}
+            juggernauts={juggernauts}
+            stunnedSquares={stunnedSqs}
           />
           {pendingPromo && game && (
             <PromotionPicker

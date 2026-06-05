@@ -36,6 +36,10 @@ import {
   goofballLegalDestinations,
   twinJutsuLegalDestinations,
   flightLegalDestinations,
+  slimeLegalDestinations,
+  slimeShiftOptions,
+  resolveSlimeShiftClick,
+  type SlimeShiftOption,
   isInCheck as heroIsInCheck,
   isCheckmate as heroIsCheckmate,
   HERO_INFO,
@@ -45,7 +49,7 @@ import {
   type HeroKind,
 } from '../lib/heroChess';
 import type { AbilityAnim } from '../components/MergeBoard';
-import { renderPiece, lettersToPieceKeys } from '../lib/pieceSvgs';
+import { renderPiece, renderNeutralKing, lettersToPieceKeys } from '../lib/pieceSvgs';
 import * as sfx from '../lib/sfx';
 import { useSettingsStore } from '../store/settingsStore';
 
@@ -70,6 +74,10 @@ type SandboxState = {
   // purely visually: moves / placements clear the flag on the touched squares,
   // and the swap ability re-masks both endpoints.
   masked: boolean[];
+  // Squares stunned by a Juggernaut quake leap. Purely visual in sandbox
+  // (no ply counter to expire them) — markers clear when the piece moves or
+  // is deleted, same bookkeeping as frozenIdxs.
+  stunnedIdxs: number[];
 };
 
 // Piece sets per variant, in the order they appear in the palette (top→bottom).
@@ -127,6 +135,10 @@ function frozenAfterMove(frozenIdxs: number[], fromIdx: number, toIdx: number): 
 function frozenAfterClear(frozenIdxs: number[], idx: number): number[] {
   return frozenIdxs.filter((f) => f !== idx);
 }
+// Stun markers share the freeze bookkeeping shape (move follows the piece,
+// clear drops the marker).
+const stunnedAfterMove = frozenAfterMove;
+const stunnedAfterClear = frozenAfterClear;
 
 function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): SandboxState {
   const board = initialBoard(variant, heroW, heroB);
@@ -146,6 +158,7 @@ function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): 
     frozenIdxs: [],
     enPassant: null,
     masked,
+    stunnedIdxs: [],
   };
 }
 
@@ -155,8 +168,40 @@ function colorOf(letter: string): 'w' | 'b' {
 }
 
 function hasKing(board: (MergePiece | null)[], color: 'w' | 'b'): boolean {
-  for (const p of board) if (p && p.color === color && p.letter.toUpperCase() === 'K') return true;
+  for (const p of board) {
+    if (!p || p.color !== color) continue;
+    const up = p.letter.toUpperCase();
+    // Slime big-king tiles count as king material.
+    if (up === 'K' || up === 'S') return true;
+  }
   return false;
+}
+
+// Reconstruct Slime blob groups from raw board contents: any 2×2 block of
+// same-color 'S' tiles forms a blob (scanned top-left first, each tile used
+// once). Sandbox is freeform, so the engine's group bookkeeping isn't
+// available — stray 'S' tiles that aren't part of a full block just render
+// as single king sprites and stop moving as a blob.
+function deriveSlimeGroups(board: (MergePiece | null)[]): { tiles: number[] }[] {
+  const used = new Set<number>();
+  const out: { tiles: number[] }[] = [];
+  const isFreeS = (i: number, color: 'w' | 'b') => {
+    const p = board[i];
+    return !!p && p.color === color && p.letter.toUpperCase() === 'S' && !used.has(i);
+  };
+  for (let row = 0; row < 7; row++) {
+    for (let col = 0; col < 7; col++) {
+      const i = row * 8 + col;
+      const p = board[i];
+      if (!p || p.letter.toUpperCase() !== 'S' || used.has(i)) continue;
+      const tiles = [i, i + 1, i + 8, i + 9];
+      if (tiles.every((t) => isFreeS(t, p.color))) {
+        for (const t of tiles) used.add(t);
+        out.push({ tiles });
+      }
+    }
+  }
+  return out;
 }
 
 // Is `color`'s king currently attacked in this variant? Defers to each
@@ -169,6 +214,7 @@ function inCheck(
   color: 'w' | 'b',
   heroW: HeroKind,
   heroB: HeroKind,
+  jugTier?: { w: number; b: number },
 ): boolean {
   if (!hasKing(board, color)) return false;
   try {
@@ -181,7 +227,13 @@ function inCheck(
       return cashIsInCheck(state as any, color);
     }
     if (variant === 'hero') {
-      const state = { ...heroInitial(heroW, heroB), board: board as any, turn: color };
+      const state = {
+        ...heroInitial(heroW, heroB),
+        board: board as any,
+        turn: color,
+        slimes: deriveSlimeGroups(board),
+        ...(jugTier ? { jugTier } : {}),
+      };
       return heroIsInCheck(state as any, color);
     }
     const state = { ...mergeInitial(), board, turn: color };
@@ -199,6 +251,7 @@ function inMate(
   color: 'w' | 'b',
   heroW: HeroKind,
   heroB: HeroKind,
+  jugTier?: { w: number; b: number },
 ): boolean {
   if (!hasKing(board, color)) return false;
   try {
@@ -211,7 +264,13 @@ function inMate(
       return cashIsCheckmate(state as any);
     }
     if (variant === 'hero') {
-      const state = { ...heroInitial(heroW, heroB), board: board as any, turn: color };
+      const state = {
+        ...heroInitial(heroW, heroB),
+        board: board as any,
+        turn: color,
+        slimes: deriveSlimeGroups(board),
+        ...(jugTier ? { jugTier } : {}),
+      };
       return heroIsCheckmate(state as any);
     }
     const state = { ...mergeInitial(), board, turn: color };
@@ -233,6 +292,7 @@ function engineLegalTargets(
   heroW: HeroKind,
   heroB: HeroKind,
   enPassant: string | null,
+  jugTier?: { w: number; b: number },
 ): { to: string; isCapture: boolean; isMerge: boolean }[] {
   const idx = mergeSqToIdx(sq);
   const piece = board[idx];
@@ -249,7 +309,14 @@ function engineLegalTargets(
       return cashLegalFrom(state as any, sq).map((m) => ({ to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial }));
     }
     if (variant === 'hero') {
-      const state = { ...heroInitial(heroW, heroB), board: board as any, turn: color, enPassant };
+      const state = {
+        ...heroInitial(heroW, heroB),
+        board: board as any,
+        turn: color,
+        enPassant,
+        slimes: deriveSlimeGroups(board),
+        ...(jugTier ? { jugTier } : {}),
+      };
       return heroLegalFrom(state as any, sq).map((m) => ({ to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial }));
     }
     // normal / merge
@@ -449,6 +516,12 @@ export function Sandbox() {
   // undoable action (matches free-play hero behavior — instant re-init).
   const [heroW, setHeroW] = useState<HeroKind>('frost');
   const [heroB, setHeroB] = useState<HeroKind>('warlord');
+  // Juggernaut tier dials (1-3) — like the hero kinds, not undoable. They
+  // drive movement / abilities / check immunity for a Juggernaut side, and
+  // tick up automatically when a sandbox capture attempt feeds the boss.
+  const [jugTierW, setJugTierW] = useState(1);
+  const [jugTierB, setJugTierB] = useState(1);
+  const jugTiers = { w: jugTierW, b: jugTierB };
 
   const [history, setHistory] = useState<SandboxState[]>(() => [freshState('normal', 'frost', 'warlord')]);
   const [viewPly, setViewPly] = useState(0);
@@ -479,6 +552,9 @@ export function Sandbox() {
   // Flight is two-click too: first click picks one of the active side's own
   // pieces, second click picks the empty destination square.
   const [flightFrom, setFlightFrom] = useState<number | null>(null);
+  // Slime too: first click picks a mini king, second click picks the diagonal
+  // corner of the 2×2 quadrant it expands into.
+  const [slimeFrom, setSlimeFrom] = useState<number | null>(null);
   // Goofball / Twin-Jutsu / Flight promotions pause the flow for a picker,
   // just like a regular pawn move that reaches the back rank.
   const [pendingAbilityPromo, setPendingAbilityPromo] = useState<{
@@ -499,6 +575,7 @@ export function Sandbox() {
       setGoofballFrom(null);
       setTwinJutsuFrom(null);
       setFlightFrom(null);
+      setSlimeFrom(null);
       setPendingAbilityPromo(null);
     }
   }, [abilityArmed]);
@@ -527,7 +604,7 @@ export function Sandbox() {
   const [mergeAnim, setMergeAnim] = useState<{ from: string; to: string; fromLetter: string; toLetter: string; mergedLetter: string; key: number; releasePx?: { x: number; y: number } } | null>(null);
   useEffect(() => {
     if (!slideAnim) return;
-    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    const t = window.setTimeout(() => setSlideAnim(null), 760);
     return () => clearTimeout(t);
   }, [slideAnim]);
   useEffect(() => {
@@ -593,14 +670,14 @@ export function Sandbox() {
     // movePiece / spawnPiece / etc. — same as free play. Compute it from the
     // before→after transition so a check that was already present before the
     // change doesn't re-fire the SFX on every action.
-    const wWasMate = inMate(variant, current.board, 'w', current.heroW, current.heroB);
-    const bWasMate = inMate(variant, current.board, 'b', current.heroW, current.heroB);
-    const wWasCheck = inCheck(variant, current.board, 'w', current.heroW, current.heroB);
-    const bWasCheck = inCheck(variant, current.board, 'b', current.heroW, current.heroB);
-    const wNowMate = inMate(variant, next.board, 'w', next.heroW, next.heroB);
-    const bNowMate = inMate(variant, next.board, 'b', next.heroW, next.heroB);
-    const wNowCheck = inCheck(variant, next.board, 'w', next.heroW, next.heroB);
-    const bNowCheck = inCheck(variant, next.board, 'b', next.heroW, next.heroB);
+    const wWasMate = inMate(variant, current.board, 'w', current.heroW, current.heroB, jugTiers);
+    const bWasMate = inMate(variant, current.board, 'b', current.heroW, current.heroB, jugTiers);
+    const wWasCheck = inCheck(variant, current.board, 'w', current.heroW, current.heroB, jugTiers);
+    const bWasCheck = inCheck(variant, current.board, 'b', current.heroW, current.heroB, jugTiers);
+    const wNowMate = inMate(variant, next.board, 'w', next.heroW, next.heroB, jugTiers);
+    const bNowMate = inMate(variant, next.board, 'b', next.heroW, next.heroB, jugTiers);
+    const wNowCheck = inCheck(variant, next.board, 'w', next.heroW, next.heroB, jugTiers);
+    const bNowCheck = inCheck(variant, next.board, 'b', next.heroW, next.heroB, jugTiers);
     if ((wNowMate && !wWasMate) || (bNowMate && !bWasMate)) {
       sfx.playWin();
     } else if ((wNowCheck && !wWasCheck) || (bNowCheck && !bWasCheck)) {
@@ -645,7 +722,7 @@ export function Sandbox() {
   };
   const handleClear = () => {
     sfx.playReset();
-    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], enPassant: null, masked: new Array(64).fill(false) }]);
+    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], stunnedIdxs: [], enPassant: null, masked: new Array(64).fill(false) }]);
     setViewPly((p) => p + 1);
     setSelectedSq(null);
     setShopArmed(null);
@@ -660,7 +737,7 @@ export function Sandbox() {
     nextBoard[idx] = { color: colorOf(letter), letter };
     const nextMasked = current.masked.slice();
     nextMasked[idx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: frozenAfterClear(current.frozenIdxs, idx), enPassant: null, masked: nextMasked });
+    pushState({ ...current, board: nextBoard, frozenIdxs: frozenAfterClear(current.frozenIdxs, idx), stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, idx), enPassant: null, masked: nextMasked });
     sfx.playPlace();
     if (animationsEnabled) {
       setPopAnim({ squares: [sq], key: Date.now() });
@@ -685,6 +762,108 @@ export function Sandbox() {
     const moving = current.board[fromIdx];
     if (!moving) return false;
     const target = current.board[toIdx];
+
+    // Juggernaut absorb (hero variant): capturing a sub-tier-3 Juggernaut
+    // kills the attacker and feeds the boss a tier — mirror the live engine.
+    if (variant === 'hero' && target && target.color !== moving.color && target.letter.toUpperCase() === 'K') {
+      const side = target.color === 'w' ? current.heroW : current.heroB;
+      const tier = target.color === 'w' ? jugTierW : jugTierB;
+      if (side === 'juggernaut' && tier < 3) {
+        const nextBoard = current.board.slice();
+        nextBoard[fromIdx] = null;
+        const nextMasked = current.masked.slice();
+        nextMasked[fromIdx] = false;
+        pushState({
+          ...current,
+          board: nextBoard,
+          frozenIdxs: frozenAfterClear(current.frozenIdxs, fromIdx),
+          stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, fromIdx),
+          enPassant: null,
+          masked: nextMasked,
+        });
+        (target.color === 'w' ? setJugTierW : setJugTierB)((t) => Math.min(3, t + 1));
+        window.setTimeout(() => sfx.playJugQuake(), 320);
+        if (animationsEnabled) {
+          // Doomed attacker slides onto the (unmoving) Juggernaut and bursts.
+          setAbilityAnim({
+            kind: 'jug-absorb',
+            fromSq: from,
+            toSq: to,
+            color: target.color,
+            flyerLetter: moving.letter,
+            key: `jug-absorb-${Date.now()}`,
+          });
+        }
+        return true;
+      }
+    }
+
+    // Slime blob shift: moving a big-king tile one square moves the whole
+    // 2×2 blob, crushing enemy pieces on the squares it enters (own pieces
+    // block). Longer drags fall through to the freeform single-tile move
+    // below — sandbox is "no rules", so tearing a tile off the blob is fine.
+    if (moving.letter.toUpperCase() === 'S') {
+      const groups = deriveSlimeGroups(current.board);
+      const group = groups.find((g) => g.tiles.includes(fromIdx));
+      const df = (toIdx % 8) - (fromIdx % 8);
+      const dr = Math.floor(toIdx / 8) - Math.floor(fromIdx / 8);
+      if (group && Math.abs(df) <= 1 && Math.abs(dr) <= 1 && !group.tiles.includes(toIdx)) {
+        const shifted = group.tiles.map((t) => {
+          const f = (t % 8) + df;
+          const r = Math.floor(t / 8) + dr;
+          return f >= 0 && f < 8 && r >= 0 && r < 8 ? r * 8 + f : -1;
+        });
+        const blocked = shifted.some((t) => {
+          if (t === -1) return true;
+          if (group.tiles.includes(t)) return false;
+          const occ = current.board[t];
+          return !!occ && occ.color === moving.color;
+        });
+        if (blocked) return false;
+        const nextBoard = current.board.slice();
+        const nextMasked = current.masked.slice();
+        let nextFrozen = current.frozenIdxs;
+        let captured = false;
+        let split = false;
+        for (const t of shifted) {
+          if (group.tiles.includes(t)) continue;
+          const victim = nextBoard[t];
+          if (victim) {
+            captured = true;
+            // Crushing an enemy big-king tile splits that blob into minis.
+            // Groups derived up-front: a second tile of the same blob hit in
+            // this shift is already a mini by the time we reach it.
+            if (victim.letter.toUpperCase() === 'S') {
+              split = true;
+              const vGroup = groups.find((g) => g.tiles.includes(t));
+              if (vGroup) {
+                for (const vt of vGroup.tiles) {
+                  const vp = nextBoard[vt];
+                  if (vt !== t && vp && vp.letter.toUpperCase() === 'S') {
+                    nextBoard[vt] = { color: vp.color, letter: (vp.color === 'w' ? 'K' : 'k') as PieceLetter };
+                  }
+                }
+              }
+            }
+            nextBoard[t] = null;
+            nextFrozen = frozenAfterClear(nextFrozen, t);
+          }
+        }
+        for (const t of group.tiles) {
+          if (!shifted.includes(t)) { nextBoard[t] = null; nextMasked[t] = false; }
+        }
+        for (const t of shifted) {
+          nextBoard[t] = { color: moving.color, letter: moving.letter };
+          nextMasked[t] = false;
+        }
+        pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+        if (split) sfx.playSlimeSplit();
+        else if (captured) sfx.playCapture();
+        else sfx.playMove();
+        return true;
+      }
+      // Stray / long-distance drag — freeform single-tile move below.
+    }
 
     // Guerrilla rook push.
     if (
@@ -765,6 +944,20 @@ export function Sandbox() {
     nextBoard[fromIdx] = null;
     nextBoard[toIdx] = placed;
 
+    // Capturing a Slime big-king tile splits the rest of that blob into mini
+    // kings, matching the live engine.
+    if (target && target.color !== moving.color && target.letter.toUpperCase() === 'S') {
+      const vGroup = deriveSlimeGroups(current.board).find((g) => g.tiles.includes(toIdx));
+      if (vGroup) {
+        for (const vt of vGroup.tiles) {
+          const vp = nextBoard[vt];
+          if (vt !== toIdx && vp && vp.letter.toUpperCase() === 'S') {
+            nextBoard[vt] = { color: vp.color, letter: (vp.color === 'w' ? 'K' : 'k') as PieceLetter };
+          }
+        }
+      }
+    }
+
     // Pawn-specific bookkeeping: detect en-passant capture (diagonal pawn
     // move onto the EP target with no piece on the dest), and detect a
     // double push so the *next* ply offers en-passant. Skip for Guerrilla,
@@ -795,12 +988,15 @@ export function Sandbox() {
 
     let nextFrozen = frozenAfterMove(current.frozenIdxs, fromIdx, toIdx);
     if (epCapturedIdx != null) nextFrozen = frozenAfterClear(nextFrozen, epCapturedIdx);
+    let nextStunned = stunnedAfterMove(current.stunnedIdxs, fromIdx, toIdx);
+    if (epCapturedIdx != null) nextStunned = stunnedAfterClear(nextStunned, epCapturedIdx);
     const nextMasked = current.masked.slice();
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
     if (epCapturedIdx != null) nextMasked[epCapturedIdx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: nextEnPassant, masked: nextMasked });
+    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, stunnedIdxs: nextStunned, enPassant: nextEnPassant, masked: nextMasked });
     if (isMerge) sfx.playMerge();
+    else if (target && target.color !== moving.color && target.letter.toUpperCase() === 'S') sfx.playSlimeSplit();
     else if (target || epCapturedIdx != null) sfx.playCapture();
     else sfx.playMove();
     // Merge gets its own flow animation; otherwise click moves slide.
@@ -833,6 +1029,7 @@ export function Sandbox() {
       ...current,
       board: nextBoard,
       frozenIdxs: frozenAfterClear(current.frozenIdxs, idx),
+      stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, idx),
       enPassant: null,
       masked: nextMasked,
     });
@@ -965,6 +1162,43 @@ export function Sandbox() {
     setAbilityArmed(null);
   };
 
+  // Commit a resolved Slime expansion: the mini king at fromIdx grows into
+  // the 2×2 quadrant whose far corner is toIdx (validated empty by
+  // slimeLegalDestinations through heroLegalAbilityTargets).
+  const commitSlimeExpand = (color: 'w' | 'b', fromIdx: number, toIdx: number) => {
+    const piece = current.board[fromIdx];
+    if (!piece) { setSlimeFrom(null); setAbilityArmed(null); return; }
+    const fCol = fromIdx % 8, fRow = Math.floor(fromIdx / 8);
+    const cCol = toIdx % 8, cRow = Math.floor(toIdx / 8);
+    const tiles = [fromIdx, fRow * 8 + cCol, cRow * 8 + fCol, toIdx];
+    const letter = (color === 'w' ? 'S' : 's') as PieceLetter;
+    const nextBoard = current.board.slice();
+    const nextMasked = current.masked.slice();
+    for (const t of tiles) {
+      nextBoard[t] = { color, letter };
+      nextMasked[t] = false;
+    }
+    pushState({
+      ...current,
+      board: nextBoard,
+      frozenIdxs: frozenAfterClear(current.frozenIdxs, fromIdx),
+      enPassant: null,
+      masked: nextMasked,
+    });
+    sfx.playSlimeExpand();
+    if (animationsEnabled) {
+      setAbilityAnim({
+        kind: 'slime-expand',
+        fromSq: heroIdxToSq(fromIdx),
+        toSq: heroIdxToSq(toIdx),
+        color,
+        key: `slime-expand-${Date.now()}`,
+      });
+    }
+    setSlimeFrom(null);
+    setAbilityArmed(null);
+  };
+
   const resolveAbilityPromotion = (letter: PromotionLetter) => {
     if (!pendingAbilityPromo) return;
     const { hero, color, fromIdx, toIdx } = pendingAbilityPromo;
@@ -1094,6 +1328,121 @@ export function Sandbox() {
         return;
       }
       commitFlight(color, flightFrom, idx, targetSq);
+      return;
+    }
+
+    // Slime: two-click expansion. First click picks a mini king of the armed
+    // side, second click picks the diagonal corner of the quadrant.
+    if (hero === 'slime') {
+      if (slimeFrom == null) {
+        if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
+        setSlimeFrom(idx);
+        sfx.playSelect();
+        return;
+      }
+      if (!heroLegalAbilityTargets.has(idx)) {
+        // Click off a legal corner resets to the pick-a-king state.
+        setSlimeFrom(null);
+        return;
+      }
+      commitSlimeExpand(color, slimeFrom, idx);
+      return;
+    }
+
+    // Juggernaut: single-click, tier-dependent (tier comes from the dial).
+    // Tier 1 converts the adjacent enemy; tier 2 quake-leaps and stuns the
+    // 2-tile radius; tier 3 rampages to the rank edge, flattening the path.
+    if (hero === 'juggernaut') {
+      if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
+      const tier = color === 'w' ? jugTierW : jugTierB;
+      // The Juggernaut is this side's first (normally only) king.
+      let k = -1;
+      for (let i = 0; i < 64; i++) {
+        const p = current.board[i];
+        if (p && p.color === color && p.letter.toUpperCase() === 'K') { k = i; break; }
+      }
+      const nextBoard = current.board.slice();
+      const nextMasked = current.masked.slice();
+      let nextFrozen = current.frozenIdxs;
+      let nextStunned = current.stunnedIdxs;
+      let jugLeapFromSq: string | undefined;
+      if (tier === 1) {
+        const p = nextBoard[idx];
+        if (!p) { setAbilityArmed(null); return; }
+        const up = p.letter.toUpperCase();
+        nextBoard[idx] = { color, letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter };
+        nextMasked[idx] = false;
+        if (animationsEnabled) setPopAnim({ squares: [targetSq], key: Date.now() });
+      } else if (tier === 2) {
+        if (k === -1) { setAbilityArmed(null); return; }
+        jugLeapFromSq = heroIdxToSq(k);
+        nextFrozen = frozenAfterClear(nextFrozen, idx);
+        nextStunned = stunnedAfterClear(nextStunned, idx);
+        nextBoard[idx] = nextBoard[k];
+        nextBoard[k] = null;
+        nextMasked[k] = false;
+        nextMasked[idx] = false;
+        // Stun everything (both sides) within a 2-tile radius of the landing.
+        const tCol = idx % 8, tRow = Math.floor(idx / 8);
+        for (let dc = -2; dc <= 2; dc++) {
+          for (let dr = -2; dr <= 2; dr++) {
+            if (dc === 0 && dr === 0) continue;
+            const c2 = tCol + dc, r2 = tRow + dr;
+            if (c2 < 0 || c2 > 7 || r2 < 0 || r2 > 7) continue;
+            const sIdx = r2 * 8 + c2;
+            if (nextBoard[sIdx] && !nextStunned.includes(sIdx)) {
+              nextStunned = [...nextStunned, sIdx];
+            }
+          }
+        }
+        if (animationsEnabled) setSlideAnim({ moves: [{ from: heroIdxToSq(k), to: targetSq }], key: Date.now() });
+      } else {
+        if (k === -1) { setAbilityArmed(null); return; }
+        // Rampage: flatten every square between the Juggernaut and the
+        // chosen rank edge (Slime tiles split as they're crushed).
+        const kCol = k % 8, kRow = Math.floor(k / 8);
+        const tCol = idx % 8;
+        const step = tCol > kCol ? 1 : -1;
+        const groups = deriveSlimeGroups(current.board);
+        nextBoard[k] = null;
+        nextMasked[k] = false;
+        for (let c2 = kCol + step; c2 >= 0 && c2 < 8; c2 += step) {
+          const pIdx = kRow * 8 + c2;
+          const victim = nextBoard[pIdx];
+          if (victim) {
+            if (victim.letter.toUpperCase() === 'S') {
+              const vGroup = groups.find((g) => g.tiles.includes(pIdx));
+              if (vGroup) {
+                for (const vt of vGroup.tiles) {
+                  const vp = nextBoard[vt];
+                  if (vt !== pIdx && vp && vp.letter.toUpperCase() === 'S') {
+                    nextBoard[vt] = { color: vp.color, letter: (vp.color === 'w' ? 'K' : 'k') as PieceLetter };
+                  }
+                }
+              }
+            }
+            nextBoard[pIdx] = null;
+            nextFrozen = frozenAfterClear(nextFrozen, pIdx);
+            nextStunned = stunnedAfterClear(nextStunned, pIdx);
+          }
+          nextMasked[pIdx] = false;
+          if (c2 === tCol) break;
+        }
+        nextBoard[idx] = current.board[k];
+        if (animationsEnabled) setSlideAnim({ moves: [{ from: heroIdxToSq(k), to: targetSq }], key: Date.now() });
+      }
+      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked, stunnedIdxs: nextStunned });
+      sfx.playJugQuake();
+      if (animationsEnabled) {
+        setAbilityAnim({
+          kind: tier === 2 && jugLeapFromSq ? 'juggernaut-leap' : 'juggernaut',
+          fromSq: tier === 2 ? jugLeapFromSq : undefined,
+          toSq: targetSq,
+          color,
+          key: `jug-${Date.now()}`,
+        });
+      }
+      setAbilityArmed(null);
       return;
     }
 
@@ -1284,8 +1633,8 @@ export function Sandbox() {
   // End-of-game overlay (checkmate). Mirrors free play: shows on top of the
   // board with the winning side. Free placement still works underneath.
   const sandboxEnd = useMemo<{ winner: 'w' | 'b' } | null>(() => {
-    if (inMate(variant, current.board, 'w', current.heroW, current.heroB)) return { winner: 'b' };
-    if (inMate(variant, current.board, 'b', current.heroW, current.heroB)) return { winner: 'w' };
+    if (inMate(variant, current.board, 'w', current.heroW, current.heroB, jugTiers)) return { winner: 'b' };
+    if (inMate(variant, current.board, 'b', current.heroW, current.heroB, jugTiers)) return { winner: 'w' };
     return null;
   }, [variant, current]);
 
@@ -1340,6 +1689,8 @@ export function Sandbox() {
         board: current.board as any,
         turn: abilityArmed,
         masked: current.masked,
+        slimes: deriveSlimeGroups(current.board),
+        jugTier: jugTiers,
       };
       const armedHero = abilityArmed === 'w' ? current.heroW : current.heroB;
       if (armedHero === 'goofball' && goofballFrom != null) {
@@ -1351,11 +1702,38 @@ export function Sandbox() {
       if (armedHero === 'flight' && flightFrom != null) {
         return new Set(flightLegalDestinations(state as any, flightFrom));
       }
+      if (armedHero === 'slime' && slimeFrom != null) {
+        return new Set(slimeLegalDestinations(state as any, slimeFrom));
+      }
       return new Set(heroAbilityTargets(state as any));
     } catch {
       return new Set();
     }
-  }, [variant, abilityArmed, current, goofballFrom, twinJutsuFrom, flightFrom]);
+  }, [variant, abilityArmed, current, goofballFrom, twinJutsuFrom, flightFrom, slimeFrom, jugTierW, jugTierB]);
+
+  // Whole-blob shift options when a Slime big-king tile is selected — drives
+  // the direction-arrow UI and click resolution (same synthetic-state recipe
+  // as engineLegalTargets).
+  const sandboxSlimeShiftOpts = useMemo<SlimeShiftOption[]>(() => {
+    if (variant !== 'hero' || abilityArmed || !selectedSq) return [];
+    const idx = mergeSqToIdx(selectedSq);
+    const p = current.board[idx];
+    if (!p || p.letter.toUpperCase() !== 'S') return [];
+    try {
+      const state = {
+        ...heroInitial(current.heroW, current.heroB),
+        board: current.board as any,
+        turn: p.color,
+        masked: current.masked,
+        slimes: deriveSlimeGroups(current.board),
+        jugTier: jugTiers,
+      };
+      return slimeShiftOptions(state as any, idx);
+    } catch {
+      return [];
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant, abilityArmed, selectedSq, current, jugTierW, jugTierB]);
 
   // Advisory indicators on the board. Three modes:
   //   1. Cash shop armed → squares with own pawns of the armed color.
@@ -1385,12 +1763,19 @@ export function Sandbox() {
     if (!selectedSq) return [];
     const piece = current.board[mergeSqToIdx(selectedSq)];
     if (!piece) return [];
+    // Selected blob tile: every square the blob can slide onto is clickable;
+    // MergeBoard suppresses the dots for these and draws direction arrows.
+    if (sandboxSlimeShiftOpts.length > 0) {
+      return sandboxSlimeShiftOpts.flatMap((o) => o.entered.map((i) => ({
+        to: heroIdxToSq(i), isCapture: o.isCapture, isMerge: false,
+      })));
+    }
     // No king of the mover's color → check filtering is meaningless, so fall
     // back to raw patterns. Otherwise the variant's engine generates the
     // proper check-filtered legal moves.
     if (!hasKing(current.board, piece.color)) return patternTargets(variant, current.board, selectedSq);
-    return engineLegalTargets(variant, current.board, selectedSq, current.heroW, current.heroB, current.enPassant);
-  }, [selectedSq, variant, current, shopArmed, abilityArmed, heroLegalAbilityTargets]);
+    return engineLegalTargets(variant, current.board, selectedSq, current.heroW, current.heroB, current.enPassant, jugTiers);
+  }, [selectedSq, variant, current, shopArmed, abilityArmed, heroLegalAbilityTargets, sandboxSlimeShiftOpts, jugTierW, jugTierB]);
 
   const frozenSquares = current.frozenIdxs.map((i) => heroIdxToSq(i));
 
@@ -1409,6 +1794,8 @@ export function Sandbox() {
           board: current.board as any,
           turn: color,
           masked: current.masked,
+          slimes: deriveSlimeGroups(current.board),
+          jugTier: jugTiers,
         };
         return heroAbilityTargets(state as any).length > 0;
       } catch {
@@ -1416,7 +1803,7 @@ export function Sandbox() {
       }
     };
     return { w: check('w'), b: check('b') };
-  }, [current]);
+  }, [current, jugTierW, jugTierB]);
 
   // Disarm whichever side's ability was armed when it becomes unavailable
   // (e.g. user deleted the king mid-arm).
@@ -1463,6 +1850,7 @@ export function Sandbox() {
                 abilityArmed && goofballFrom != null ? heroIdxToSq(goofballFrom)
                 : abilityArmed && twinJutsuFrom != null ? heroIdxToSq(twinJutsuFrom)
                 : abilityArmed && flightFrom != null ? heroIdxToSq(flightFrom)
+                : abilityArmed && slimeFrom != null ? heroIdxToSq(slimeFrom)
                 : selectedSq
               }
               legalTargets={legalTargets}
@@ -1509,6 +1897,35 @@ export function Sandbox() {
                 for (let i = 0; i < 64; i++) if (current.masked[i]) out.push(heroIdxToSq(i));
                 return out;
               })()}
+              slimeBigKings={deriveSlimeGroups(current.board)
+                .map((g) => {
+                  const ref = current.board[g.tiles[0]];
+                  return ref ? { tiles: g.tiles.map(heroIdxToSq), color: ref.color } : null;
+                })
+                .filter((g): g is { tiles: string[]; color: 'w' | 'b' } => g !== null)}
+              slimeKingSquares={(() => {
+                if (variant !== 'hero') return [];
+                const out: string[] = [];
+                for (let i = 0; i < 64; i++) {
+                  const p = current.board[i];
+                  if (!p || p.letter.toUpperCase() !== 'K') continue;
+                  const side = p.color === 'w' ? current.heroW : current.heroB;
+                  if (side === 'slime') out.push(heroIdxToSq(i));
+                }
+                return out;
+              })()}
+              juggernauts={(() => {
+                if (variant !== 'hero') return [];
+                const out: { sq: string; tier: number }[] = [];
+                for (let i = 0; i < 64; i++) {
+                  const p = current.board[i];
+                  if (!p || p.letter.toUpperCase() !== 'K') continue;
+                  const side = p.color === 'w' ? current.heroW : current.heroB;
+                  if (side === 'juggernaut') out.push({ sq: heroIdxToSq(i), tier: p.color === 'w' ? jugTierW : jugTierB });
+                }
+                return out;
+              })()}
+              stunnedSquares={variant === 'hero' ? current.stunnedIdxs.map((i) => heroIdxToSq(i)) : []}
             />
             {isFullscreen && (
               <button
@@ -1621,6 +2038,8 @@ export function Sandbox() {
                     else if (h === 'icbm') sfx.playMissileLaunch();
                     else if (h === 'goofball') sfx.playGoofball();
                     else if (h === 'twin-jutsu') sfx.playTwinJutsu();
+                    else if (h === 'slime') sfx.playSlimeExpand();
+                    else if (h === 'juggernaut') sfx.playJugQuake();
                   }
                   setHeroW(h);
                 }}
@@ -1635,6 +2054,8 @@ export function Sandbox() {
                     else if (h === 'icbm') sfx.playMissileLaunch();
                     else if (h === 'goofball') sfx.playGoofball();
                     else if (h === 'twin-jutsu') sfx.playTwinJutsu();
+                    else if (h === 'slime') sfx.playSlimeExpand();
+                    else if (h === 'juggernaut') sfx.playJugQuake();
                   }
                   setHeroB(h);
                 }}
@@ -1646,6 +2067,10 @@ export function Sandbox() {
                   sfx.playSelect();
                 }}
                 onCancel={() => setAbilityArmed(null)}
+                jugTierW={jugTierW}
+                jugTierB={jugTierB}
+                onJugTierW={setJugTierW}
+                onJugTierB={setJugTierB}
               />
             )}
 
@@ -1801,6 +2226,10 @@ function SandboxHeroPanel({
   armed,
   onArm,
   onCancel,
+  jugTierW,
+  jugTierB,
+  onJugTierW,
+  onJugTierB,
 }: {
   heroW: HeroKind;
   heroB: HeroKind;
@@ -1814,7 +2243,17 @@ function SandboxHeroPanel({
   armed: 'w' | 'b' | null;
   onArm: (c: 'w' | 'b') => void;
   onCancel: () => void;
+  // Juggernaut tier dials — shown only when that side picked the Juggernaut.
+  jugTierW: number;
+  jugTierB: number;
+  onJugTierW: (t: number) => void;
+  onJugTierB: (t: number) => void;
 }) {
+  const tierOptions = [
+    { value: '1', label: 'Tier 1 · Convert' },
+    { value: '2', label: 'Tier 2 · Quake Leap' },
+    { value: '3', label: 'Tier 3 · Rampage' },
+  ];
   return (
     <div className="hero-panel compact sandbox-hero">
       <div className="hero-panel-title">Heroes</div>
@@ -1842,6 +2281,36 @@ function SandboxHeroPanel({
           />
         </label>
       </div>
+      {(heroW === 'juggernaut' || heroB === 'juggernaut') && (
+        <div className="hero-side-pickers">
+          {heroW === 'juggernaut' && (
+            <label className="hero-side-picker">
+              <span className="sandbox-king-label" aria-label="White Juggernaut tier">
+                {renderNeutralKing(22)}
+              </span>
+              <CustomSelect<'1' | '2' | '3'>
+                value={String(jugTierW) as '1' | '2' | '3'}
+                options={tierOptions as { value: '1' | '2' | '3'; label: string }[]}
+                onChange={(t) => onJugTierW(Number(t))}
+                data-no-sfx
+              />
+            </label>
+          )}
+          {heroB === 'juggernaut' && (
+            <label className="hero-side-picker">
+              <span className="sandbox-king-label" aria-label="Black Juggernaut tier">
+                {renderNeutralKing(22)}
+              </span>
+              <CustomSelect<'1' | '2' | '3'>
+                value={String(jugTierB) as '1' | '2' | '3'}
+                options={tierOptions as { value: '1' | '2' | '3'; label: string }[]}
+                onChange={(t) => onJugTierB(Number(t))}
+                data-no-sfx
+              />
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="sandbox-hero-actions">
         {(['w', 'b'] as const).map((c) => {
@@ -1875,4 +2344,3 @@ function SandboxHeroPanel({
     </div>
   );
 }
-

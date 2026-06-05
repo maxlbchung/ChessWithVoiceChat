@@ -13,7 +13,10 @@ export type GameEndReason =
   | 'resignation'
   | 'timeout'
   | 'draw-agreed'
-  | 'disconnect';
+  | 'disconnect'
+  | 'promotion'
+  | 'pawns-cleared'
+  | 'queen-captured';
 
 export type PlayerInfo = {
   handle: string;
@@ -67,7 +70,7 @@ export type LocalGameSummary = {
 
 export type WireMessage =
   | { type: 'hello'; handle: string; rating: number }
-  | { type: 'hero-pick'; hero: 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu' }
+  | { type: 'hero-pick'; hero: HeroKind }
   | {
       type: 'lobby-confirm';
       gameId: string;

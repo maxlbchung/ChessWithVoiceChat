@@ -19,20 +19,27 @@
 //   !K<sq>            — Knight destroy
 //   !N<sq>            — Necromancer spawn
 //   !L<from><to>[<p>] — Flight teleport (optional promotion letter)
+//   !S<from><to>      — Slime expand (mini king at <from> grows into the 2×2
+//                       quadrant whose far corner is <to>)
+//   !J<sq>            — Juggernaut ability (tier-dependent: convert an
+//                       adjacent enemy / quake-leap to <sq> / rampage to the
+//                       rank edge at <sq>)
 
 export type C2Color = 'w' | 'b';
 
 // A/C/Z are the merge-chess fused glyphs used by Mutation hero outputs:
 //   A = bishop + knight, C = rook + knight, Z = queen + knight.
+// S is a Slime big-king tile — one square of a 2×2 blob king. The four tiles
+// of a blob are grouped in GameState.slimes.
 export type PieceLetter =
-  | 'P' | 'K' | 'R' | 'B' | 'N' | 'Q' | 'A' | 'C' | 'Z'
-  | 'p' | 'k' | 'r' | 'b' | 'n' | 'q' | 'a' | 'c' | 'z';
+  | 'P' | 'K' | 'R' | 'B' | 'N' | 'Q' | 'A' | 'C' | 'Z' | 'S'
+  | 'p' | 'k' | 'r' | 'b' | 'n' | 'q' | 'a' | 'c' | 'z' | 's';
 
 export type Piece = { color: C2Color; letter: PieceLetter };
 export type Square = string;
 
-export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu';
-export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jutsu'];
+export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu' | 'slime' | 'juggernaut';
+export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jutsu', 'slime', 'juggernaut'];
 
 // 'twin-jutsu' was misspelled 'twin-jitsu' before the rename. Old saved
 // records, exported JSON files, and stale peers can still carry the old id —
@@ -47,30 +54,39 @@ export function normalizeHeroKind(v: unknown): HeroKind | null {
 // stays fresh. Free-play / sandbox use the full HERO_KINDS list.
 export const ONLINE_POOL_SIZE = 4;
 
-// Deterministic per-game pool: both players hash the shared gameId to the
-// same seed, so a Fisher-Yates shuffle picks identical heroes on both ends.
-export function heroPoolForGame(gameId: string, size: number = ONLINE_POOL_SIZE): HeroKind[] {
-  if (size >= HERO_KINDS.length) return HERO_KINDS.slice();
-  // FNV-1a 32-bit string hash
+// FNV-1a 32-bit string hash -> Mulberry32 PRNG. Kept as the single seeded
+// randomness path for online hero pools and Twin-Jutsu back-rank shuffles.
+function seededRandom(seed: string): () => number {
   let h = 0x811c9dc5;
-  for (let i = 0; i < gameId.length; i++) {
-    h ^= gameId.charCodeAt(i);
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  // Mulberry32 PRNG seeded with the hash
   let s = h >>> 0;
-  const rand = () => {
+  return () => {
     s = (s + 0x6D2B79F5) >>> 0;
     let t = s;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const arr = HERO_KINDS.slice();
+}
+
+function seededShuffle<T>(items: T[], seed: string): T[] {
+  const rand = seededRandom(seed);
+  const arr = items.slice();
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+  return arr;
+}
+
+// Deterministic per-game pool: both players hash the shared gameId to the
+// same seed, so a Fisher-Yates shuffle picks identical heroes on both ends.
+export function heroPoolForGame(gameId: string, size: number = ONLINE_POOL_SIZE): HeroKind[] {
+  if (size >= HERO_KINDS.length) return HERO_KINDS.slice();
+  const arr = seededShuffle(HERO_KINDS, gameId);
   return arr.slice(0, size);
 }
 
@@ -81,20 +97,7 @@ export function heroPoolForGame(gameId: string, size: number = ONLINE_POOL_SIZE)
 // fresh random seed. Bishops are re-rolled onto opposite square colors,
 // Chess960-style. A shuffled side loses castling (see initialState).
 export function shuffledBackRank(seed: string): string {
-  // FNV-1a hash → Mulberry32 PRNG, same scheme as heroPoolForGame.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  let s = h >>> 0;
-  const rand = () => {
-    s = (s + 0x6D2B79F5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  const rand = seededRandom(seed);
   const arr = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
   // Re-shuffle until the bishops sit on opposite square colors. The PRNG
   // stream continues across attempts, so the result stays deterministic
@@ -114,12 +117,16 @@ export function shuffledBackRank(seed: string): string {
 // the standard arrangement.
 export type BackRanks = { w?: string; b?: string };
 
-// Back ranks for a fresh game: shuffle each Twin-Jutsu side from the seed,
-// leave every other hero on its standard arrangement.
+// Back ranks for a fresh game: generate one Twin-Jutsu rank from the same
+// game-level seed both players use for the hero pool. If both sides pick
+// Twin-Jutsu, they receive the same arrangement.
 export function backRanksForGame(heroW: HeroKind, heroB: HeroKind, seed: string): BackRanks {
+  const rank = heroW === 'twin-jutsu' || heroB === 'twin-jutsu'
+    ? shuffledBackRank(seed)
+    : undefined;
   return {
-    w: heroW === 'twin-jutsu' ? shuffledBackRank(seed + ':w') : undefined,
-    b: heroB === 'twin-jutsu' ? shuffledBackRank(seed + ':b') : undefined,
+    w: heroW === 'twin-jutsu' ? rank : undefined,
+    b: heroB === 'twin-jutsu' ? rank : undefined,
   };
 }
 
@@ -204,6 +211,29 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     glowColor: '#000000',
     cooldownTurns: 3,
   },
+  slime: {
+    kind: 'slime',
+    name: 'Slime',
+    blurb: 'Only pawns (on the 3rd rank) and a giant 2×2 king that slides one square, crushing what it lands on. Capturing one of its tiles splits it into three mini kings — you can’t be checked until a single king remains. Active: grow a mini king back into a big king.',
+    glowColor: '#7ed957',
+    cooldownTurns: 10,
+  },
+  juggernaut: {
+    kind: 'juggernaut',
+    name: 'Juggernaut',
+    blurb: 'Fields only a lone colorless king with three lives. Capturing it kills the attacker and only enrages it — it tiers up from king to knight to queen movement, with a new ability each tier — and it can’t be checked until tier 3, where the next hit finally fells it.',
+    glowColor: '#b08d57',
+    cooldownTurns: 3,
+  },
+};
+
+// Per-tier Juggernaut kit — movement passive + active ability. Indexed by
+// GameState.jugTier (1-3). The picker/abilities panel renders these so the
+// player always sees what their current tier does.
+export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
+  1: { name: 'Convert',    move: 'moves like a king',   blurb: 'Turn an enemy piece adjacent to the Juggernaut to your side.' },
+  2: { name: 'Quake Leap', move: 'moves like a knight', blurb: 'Jump like a knight — everything within 2 tiles of the landing is stunned for a turn.' },
+  3: { name: 'Rampage',    move: 'moves like a queen',  blurb: 'Charge to the left or right board edge, destroying everything in the path.' },
 };
 
 export type AbilitySide = {
@@ -242,7 +272,20 @@ export type GameState = {
   // when a piece moves off / arrives on a square; re-set on both endpoints of
   // a Twin-Jutsu swap. Empty for games where neither side is Twin-Jutsu.
   masked: boolean[];
+  // Slime big kings — each entry groups the four board squares (holding 'S'
+  // tiles) that form one 2×2 blob. Tile colour comes from the board pieces.
+  // A side can field several blobs at once (split, then expand two minis).
+  slimes: SlimeGroup[];
+  // Juggernaut tier per side (1-3). Only meaningful while that side's hero is
+  // 'juggernaut'; stays at 1 otherwise. Rises when an enemy spends a piece
+  // capturing the Juggernaut (the attacker dies, the Juggernaut powers up).
+  jugTier: { w: number; b: number };
+  // Stunned pieces (Juggernaut quake leap). Like frozen but capturable: a
+  // stunned piece can't move and doesn't attack, but CAN be taken.
+  stunned: { idx: number; expiresAtPly: number }[];
 };
+
+export type SlimeGroup = { tiles: number[] };
 
 export type Missile = {
   idx: number;
@@ -265,6 +308,15 @@ export type MoveResult = {
   // is the LOSER (their king was destroyed). HeroGame treats this as a
   // checkmate-style end.
   kingDestroyed?: C2Color | null;
+  // Slime blobs that split on this move (a tile was captured / blasted /
+  // crushed). `tiles` are the squares that were destroyed; `minis` are the
+  // squares where the surviving tiles regrouped as mini kings. Drives the
+  // split animation + SFX.
+  slimeSplits?: { tiles: Square[]; minis: Square[] }[];
+  // True when the side now to move is a sub-tier-3 Juggernaut that WOULD be
+  // in check under normal rules. The Juggernaut is immune (check=false), but
+  // the idea calls for the check sound to still play as a flavor cue.
+  jugPhantomCheck?: boolean;
 };
 
 // True if `idx` currently has an active freeze entry that hasn't expired.
@@ -276,13 +328,41 @@ export function isFrozen(state: GameState, idx: number): boolean {
   return false;
 }
 
+// True if `idx` currently has an active stun entry (Juggernaut quake leap).
+// Stunned pieces can't move and don't attack, but remain capturable.
+export function isStunned(state: GameState, idx: number): boolean {
+  for (const s of state.stunned) {
+    if (s.idx === idx && state.ply < s.expiresAtPly) return true;
+  }
+  return false;
+}
+
+// Tier of the Juggernaut king sitting on `idx`, or 0 if the square doesn't
+// hold a Juggernaut (not a king, or its side didn't pick the hero).
+function jugTierAt(state: GameState, idx: number): number {
+  const p = state.board[idx];
+  if (!p || p.letter.toUpperCase() !== 'K') return 0;
+  if (state.heroes[p.color].hero !== 'juggernaut') return 0;
+  return state.jugTier[p.color];
+}
+
+// Current Juggernaut tier for `color`, or 0 when that side isn't playing
+// the Juggernaut. Exported for the UI (tier pips, panel labels, SFX cues).
+export function jugTierOf(state: GameState, color: C2Color): number {
+  return state.heroes[color].hero === 'juggernaut' ? state.jugTier[color] : 0;
+}
+
 // Locate the king of `color` on a given board. Returns null if missing
 // (shouldn't happen during legal play but kept defensive). Used by ability
-// animations to know where the king is (Flight from-square, Knight pivot).
+// animations to know where the king is (Flight from-square, Knight pivot)
+// and by HeroGame's end-of-game check (a Slime side counts its big-king
+// tiles as king material, so the first 'S' tile qualifies too).
 export function kingSquareOf(board: (Piece | null)[], color: C2Color): Square | null {
   for (let i = 0; i < 64; i++) {
     const p = board[i];
-    if (p && p.color === color && p.letter.toUpperCase() === 'K') return idxToSq(i);
+    if (!p || p.color !== color) continue;
+    const up = p.letter.toUpperCase();
+    if (up === 'K' || up === 'S') return idxToSq(i);
   }
   return null;
 }
@@ -337,10 +417,17 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
   const haremBackRank: (PieceLetter | null)[]    = ['Q', 'N', 'Q', 'Q', 'K', 'Q', 'N', 'Q'];
   const mutationBackRank: (PieceLetter | null)[] = ['R', 'B', 'B', 'Q', 'K', 'B', 'B', 'R'];
   const warlordBackRank: (PieceLetter | null)[]  = ['R', 'N', 'B', null, 'K', 'B', 'N', 'R'];
+  // Slime fields no back-rank pieces at all — just pawns (moved up a rank
+  // below) and the 2×2 blob king.
+  const slimeBackRank: (PieceLetter | null)[]    = [null, null, null, null, null, null, null, null];
+  // Juggernaut fields ONLY its king — no pawns either (cleared below).
+  const jugBackRank: (PieceLetter | null)[]      = [null, null, null, null, 'K', null, null, null];
   const backRankFor = (hero: HeroKind): (PieceLetter | null)[] => {
     if (hero === 'harem') return haremBackRank;
     if (hero === 'mutation') return mutationBackRank;
     if (hero === 'warlord') return warlordBackRank;
+    if (hero === 'slime') return slimeBackRank;
+    if (hero === 'juggernaut') return jugBackRank;
     return standardBackRank;
   };
   // A caller-supplied back rank (Twin-Jutsu shuffle) overrides the hero's
@@ -363,18 +450,45 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
   if (heroB === 'warlord') {
     for (let f = 0; f < 8; f++) board[idxFR(f, 5)] = { color: 'b', letter: 'p' };
   }
-  // A side on a non-standard back rank (Harem's all-queens row, or a
-  // Twin-Jutsu shuffle) can't castle — its king/rooks aren't on the squares
-  // the castling rules assume. Old replays without an override keep their
-  // standard rank, so their castling moves stay legal.
+  // Slime: the pawn line moves one rank forward (3rd / 6th rank — no
+  // double-step from there, same as Warlord's forward pawns) and the king is
+  // a 2×2 blob of 'S' tiles centred on the d/e files of ranks 1-2 (7-8).
+  const startSlimes: SlimeGroup[] = [];
+  if (heroW === 'slime') {
+    for (let f = 0; f < 8; f++) { board[idxFR(f, 1)] = null; board[idxFR(f, 2)] = { color: 'w', letter: 'P' }; }
+    const tiles = [idxFR(3, 0), idxFR(4, 0), idxFR(3, 1), idxFR(4, 1)];
+    for (const t of tiles) board[t] = { color: 'w', letter: 'S' };
+    startSlimes.push({ tiles });
+  }
+  if (heroB === 'slime') {
+    for (let f = 0; f < 8; f++) { board[idxFR(f, 6)] = null; board[idxFR(f, 5)] = { color: 'b', letter: 'p' }; }
+    const tiles = [idxFR(3, 7), idxFR(4, 7), idxFR(3, 6), idxFR(4, 6)];
+    for (const t of tiles) board[t] = { color: 'b', letter: 's' };
+    startSlimes.push({ tiles });
+  }
+  // Juggernaut: a lone king and nothing else — clear that side's pawn line
+  // (the back rank is already empty apart from the king).
+  if (heroW === 'juggernaut') {
+    for (let f = 0; f < 8; f++) board[idxFR(f, 1)] = null;
+  }
+  if (heroB === 'juggernaut') {
+    for (let f = 0; f < 8; f++) board[idxFR(f, 6)] = null;
+  }
+  // A side on a non-standard back rank (Harem's all-queens row, a Twin-Jutsu
+  // shuffle, or Slime's / Juggernaut's empty rank) can't castle — its
+  // king/rooks aren't on the squares the castling rules assume. Old replays
+  // without an override keep their standard rank, so their castling moves
+  // stay legal.
   const wStandard = !backRanks?.w || backRanks.w === 'RNBQKBNR';
   const bStandard = !backRanks?.b || backRanks.b === 'RNBQKBNR';
+  const wCastles = heroW !== 'harem' && heroW !== 'slime' && heroW !== 'juggernaut' && wStandard;
+  const bCastles = heroB !== 'harem' && heroB !== 'slime' && heroB !== 'juggernaut' && bStandard;
   const state: GameState = {
     board,
     turn: 'w',
     castling: {
-      wK: heroW !== 'harem' && wStandard, wQ: heroW !== 'harem' && wStandard,
-      bK: heroB !== 'harem' && bStandard, bQ: heroB !== 'harem' && bStandard,
+      wK: wCastles, wQ: wCastles,
+      bK: bCastles, bQ: bCastles,
     },
     enPassant: null,
     halfmove: 0,
@@ -390,6 +504,9 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
     frozen: [],
     missiles: [],
     masked: new Array(64).fill(false),
+    slimes: startSlimes,
+    jugTier: { w: 1, b: 1 },
+    stunned: [],
   };
   // Twin-Jutsu: mask every piece of that side at game-start. Pieces unmask
   // when they move (or are captured); the swap ability re-masks both endpoints.
@@ -403,24 +520,66 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
   return state;
 }
 
+// True if `color` still has any king material — a normal/mini king OR a
+// Slime big-king tile. "Out of kings" is what loses a Slime side, since its
+// individual kings are capturable while it has more than one.
+function hasAnyKingSquare(state: GameState, color: C2Color): boolean {
+  for (const p of state.board) {
+    if (!p || p.color !== color) continue;
+    const up = p.letter.toUpperCase();
+    if (up === 'K' || up === 'S') return true;
+  }
+  return false;
+}
+
+// A Slime big-king tile at `capturedIdx` was just captured / blasted /
+// crushed: the blob's surviving tiles regroup as mini kings and the group
+// dissolves. Mutates `next` in place. Sequential multi-tile damage works
+// naturally — the first hit splits the group (survivors become 'K' minis),
+// so a second hit in the same event captures a plain mini.
+function splitSlimeGroupAt(next: GameState, capturedIdx: number) {
+  const gi = next.slimes.findIndex((g) => g.tiles.includes(capturedIdx));
+  if (gi === -1) return;
+  const group = next.slimes[gi];
+  for (const tIdx of group.tiles) {
+    if (tIdx === capturedIdx) continue;
+    const p = next.board[tIdx];
+    if (p && p.letter.toUpperCase() === 'S') {
+      next.board[tIdx] = { color: p.color, letter: p.color === 'w' ? 'K' : 'k' };
+    }
+  }
+  next.slimes = next.slimes.filter((_, i) => i !== gi);
+}
+
 // Detonate any missile whose landing ply has arrived. Mutates `next` in
 // place: removes detonated missiles from next.missiles, clears the target
 // square (Frost provides no protection — explosions bypass it), and reports
-// whether a king was demolished.
+// whether a side lost its last king material.
 function processMissileLandings(next: GameState): { kingDestroyed: C2Color | null } {
   if (next.missiles.length === 0) return { kingDestroyed: null };
-  let kingDestroyed: C2Color | null = null;
+  const hadW = hasAnyKingSquare(next, 'w');
+  const hadB = hasAnyKingSquare(next, 'b');
   const surviving: Missile[] = [];
   for (const m of next.missiles) {
     if (next.ply >= m.landsAtPly) {
       const target = next.board[m.idx];
-      if (target && target.letter.toUpperCase() === 'K') {
-        kingDestroyed = target.color;
+      // A sub-tier-3 Juggernaut shrugs the blast off — and gets ANGRIER.
+      // The missile is spent (counts as a capture attempt: tier +1) but the
+      // square is not cleared. At tier 3 the blast kills it like any king.
+      const jt = jugTierAt(next, m.idx);
+      if (jt >= 1 && jt < 3) {
+        next.jugTier[target!.color] = jt + 1;
+        continue;
+      }
+      // A blasted big-king tile splits the blob just like a capture would.
+      if (target && target.letter.toUpperCase() === 'S') {
+        splitSlimeGroupAt(next, m.idx);
       }
       next.board[m.idx] = null;
-      // Also clear any freeze on the impacted square — the piece is gone,
-      // the frost reference would be a dangling index otherwise.
+      // Also clear any freeze / stun on the impacted square — the piece is
+      // gone, the reference would be a dangling index otherwise.
       next.frozen = next.frozen.filter((f) => f.idx !== m.idx);
+      next.stunned = next.stunned.filter((s) => s.idx !== m.idx);
       // Mask flag on a now-empty square is meaningless; clear it.
       if (next.masked) next.masked[m.idx] = false;
     } else {
@@ -428,6 +587,11 @@ function processMissileLandings(next: GameState): { kingDestroyed: C2Color | nul
     }
   }
   next.missiles = surviving;
+  // Only losing the LAST king square counts as destruction — a Slime side
+  // shrugs off losing one king of many (and a blasted blob tile just splits).
+  let kingDestroyed: C2Color | null = null;
+  if (hadW && !hasAnyKingSquare(next, 'w')) kingDestroyed = 'w';
+  else if (hadB && !hasAnyKingSquare(next, 'b')) kingDestroyed = 'b';
   return { kingDestroyed };
 }
 
@@ -448,18 +612,35 @@ type PseudoMove = {
   // Castling side, when this move is a castle. The rook from the matching
   // corner gets swung to the square the king crossed.
   castle?: 'K' | 'Q';
+  // Slime big-king shift: the whole 2×2 blob containing `from` slides one
+  // square in the from→to direction. slimeCrushes lists the enemy-occupied
+  // squares the blob lands on (destroyed by the shift) so capture flags
+  // survive the uci round-trip.
+  slimeShift?: boolean;
+  slimeCrushes?: number[];
 };
 
 function pseudoMoves(state: GameState, from: number): PseudoMove[] {
   const p = state.board[from];
   if (!p) return [];
-  // Frozen pieces can't move.
+  // Frozen and stunned pieces can't move.
   if (isFrozen(state, from)) return [];
+  if (isStunned(state, from)) return [];
   const out: PseudoMove[] = [];
   const [ff, fr] = frOfIdx(from);
   const up = p.letter.toUpperCase();
   if (up === 'P') pseudoPawn(state, from, ff, fr, p, out);
-  else if (up === 'K') pseudoKing(state, from, ff, fr, p, out);
+  else if (up === 'K') {
+    // Juggernaut passive: movement grows with tier — king steps at tier 1,
+    // knight jumps at tier 2, queen slides at tier 3. A Juggernaut side has
+    // no castling rights, so pseudoKing's castle block stays dormant.
+    const jt = jugTierAt(state, from);
+    if (jt === 2) pseudoKnight(state, from, ff, fr, p, out);
+    else if (jt >= 3) pseudoSliding(state, from, ff, fr, p, EIGHT_DIRS, out);
+    else pseudoKing(state, from, ff, fr, p, out);
+  }
+  // Slime big-king tile — shifts the whole 2×2 blob one square.
+  else if (up === 'S') pseudoSlimeShift(state, from, ff, fr, p, out);
   else if (up === 'Q') pseudoSliding(state, from, ff, fr, p, EIGHT_DIRS, out);
   else if (up === 'B') pseudoSliding(state, from, ff, fr, p, BISHOP_DIRS, out);
   else if (up === 'R') pseudoSliding(state, from, ff, fr, p, ROOK_DIRS, out);
@@ -521,6 +702,118 @@ function pseudoKing(s: GameState, from: number, ff: number, fr: number, p: Piece
   }
 }
 
+// Can the blob `group` legally shift one square by (df, dr)? Every shifted
+// tile must stay on the board and land on an empty square, another tile of
+// the same blob, or a crushable enemy piece (own pieces and frozen pieces
+// block).
+function slimeShiftValid(s: GameState, group: SlimeGroup, df: number, dr: number, color: C2Color): boolean {
+  for (const tIdx of group.tiles) {
+    const [f, r] = frOfIdx(tIdx);
+    const nf = f + df, nr = r + dr;
+    if (!onBoard(nf, nr)) return false;
+    const n = idxFR(nf, nr);
+    if (group.tiles.includes(n)) continue;
+    const occ = s.board[n];
+    if (!occ) continue;
+    if (occ.color === color) return false;
+    if (isFrozen(s, n)) return false;
+    // A sub-tier-3 Juggernaut can't be crushed — any capture attempt on it
+    // costs the attacker its life, and a blob has no single piece to spend.
+    // The slide is simply blocked. (At tier 3 it crushes like anything else.)
+    const jt = jugTierAt(s, n);
+    if (jt >= 1 && jt < 3) return false;
+  }
+  return true;
+}
+
+// Pseudo-moves for one big-king tile: each of the 8 directions whose shift
+// is valid, expressed as this tile stepping onto the adjacent EXTERIOR
+// square (interior steps are skipped — the same shift is reachable from the
+// blob's leading tile, and a move onto an own-blob square would fight the
+// click-to-select UI).
+function pseudoSlimeShift(s: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[]) {
+  const group = s.slimes.find((g) => g.tiles.includes(from));
+  if (!group) return;
+  for (const [df, dr] of EIGHT_DIRS) {
+    const f = ff + df, r = fr + dr;
+    if (!onBoard(f, r)) continue;
+    const t = idxFR(f, r);
+    if (group.tiles.includes(t)) continue;
+    if (!slimeShiftValid(s, group, df, dr, p.color)) continue;
+    const crushes: number[] = [];
+    for (const tIdx of group.tiles) {
+      const [gf, gr] = frOfIdx(tIdx);
+      const n = idxFR(gf + df, gr + dr);
+      if (group.tiles.includes(n)) continue;
+      if (s.board[n]) crushes.push(n);
+    }
+    out.push({ from, to: t, slimeShift: true, slimeCrushes: crushes });
+  }
+}
+
+// One legal whole-blob shift, summarised per direction. Pages use these to
+// drive the blob's arrow UI: clicking any tile of the blob surfaces every
+// direction the blob can slide (not just the directions exterior to that
+// tile), the entered squares are the clickable affordance, and `uci` is a
+// canonical from→to the engine accepts for the shift.
+export type SlimeShiftOption = {
+  // Board-coordinate direction (file delta / rank delta, each -1 | 0 | 1).
+  df: number;
+  dr: number;
+  uci: string;
+  // Exterior squares the blob slides onto.
+  entered: number[];
+  // True when any entered square holds a (crushable) enemy piece.
+  isCapture: boolean;
+};
+
+export function slimeShiftOptions(state: GameState, tileIdx: number): SlimeShiftOption[] {
+  const p = state.board[tileIdx];
+  if (!p || p.color !== state.turn || p.letter.toUpperCase() !== 'S') return [];
+  const group = state.slimes.find((g) => g.tiles.includes(tileIdx));
+  if (!group) return [];
+  const out: SlimeShiftOption[] = [];
+  for (const [df, dr] of EIGHT_DIRS) {
+    if (!slimeShiftValid(state, group, df, dr, p.color)) continue;
+    const entered: number[] = [];
+    let isCapture = false;
+    let fromTile = -1;
+    for (const t of group.tiles) {
+      const [f, r] = frOfIdx(t);
+      const n = idxFR(f + df, r + dr);
+      if (group.tiles.includes(n)) continue;
+      entered.push(n);
+      if (state.board[n]) isCapture = true;
+      // Any tile whose step lands exterior works as the canonical mover —
+      // pseudoSlimeShift emits exactly those from→to pairs.
+      if (fromTile === -1) fromTile = t;
+    }
+    if (fromTile === -1) continue;
+    const [cf, cr] = frOfIdx(fromTile);
+    out.push({
+      df,
+      dr,
+      uci: idxToSq(fromTile) + idxToSq(idxFR(cf + df, cr + dr)),
+      entered,
+      isCapture,
+    });
+  }
+  return out;
+}
+
+// Resolve a click (or drop) on `clickedIdx` against the blob's shift options.
+// Entered squares shared between an orthogonal and a diagonal shift resolve
+// to the orthogonal one — each diagonal stays reachable through its unique
+// far-corner square.
+export function resolveSlimeShiftClick(
+  options: SlimeShiftOption[],
+  clickedIdx: number,
+): SlimeShiftOption | null {
+  const hits = options.filter((o) => o.entered.includes(clickedIdx));
+  if (hits.length === 0) return null;
+  return hits.find((o) => o.df === 0 || o.dr === 0) ?? hits[0];
+}
+
 function pseudoSliding(
   s: GameState, from: number, ff: number, fr: number, p: Piece,
   dirs: [number, number][], out: PseudoMove[],
@@ -553,7 +846,12 @@ function pseudoKnight(s: GameState, from: number, ff: number, fr: number, p: Pie
 
 function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[]) {
   const dir = p.color === 'w' ? 1 : -1;
-  const startRank = p.color === 'w' ? 1 : 6;
+  // Slime pawns start one rank forward (3rd / 6th) — that's their home rank,
+  // so the initial double-step (and the en-passant window it opens) moves up
+  // with them. Pawns can't move backward, so a slime pawn on the 3rd rank is
+  // always still on its home square.
+  const isSlime = s.heroes[p.color].hero === 'slime';
+  const startRank = p.color === 'w' ? (isSlime ? 2 : 1) : (isSlime ? 5 : 6);
   const promoRank = p.color === 'w' ? 7 : 0;
   // Mutation-hero side gets +knight-fused promotion options (Z=Q+N, C=R+N,
   // A=B+N). Plain N is in the base list — the Z/C/A variants add a knight
@@ -600,8 +898,10 @@ function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece
 // ------------------------------------------------------------------
 export function isSquareAttacked(state: GameState, target: number, byColor: C2Color): boolean {
   const [tf, tr] = frOfIdx(target);
-  // Frozen pieces can't capture or move, so they don't attack anything.
-  // Their square still BLOCKS sliding rays — the piece is physically there.
+  // Frozen and stunned pieces can't capture or move, so they don't attack
+  // anything. Their square still BLOCKS sliding rays — the piece is
+  // physically there.
+  const inert = (idx: number) => isFrozen(state, idx) || isStunned(state, idx);
   // Pawn
   const pawnDir = byColor === 'w' ? 1 : -1;
   for (const df of [-1, 1]) {
@@ -609,53 +909,76 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (!onBoard(f, r)) continue;
     const idx = idxFR(f, r);
     const p = state.board[idx];
-    if (p && p.color === byColor && p.letter.toUpperCase() === 'P' && !isFrozen(state, idx)) return true;
+    if (p && p.color === byColor && p.letter.toUpperCase() === 'P' && !inert(idx)) return true;
   }
-  // King
+  // King — plus Slime big-king tiles. A blob tile attacks an adjacent square
+  // only if the whole blob can actually shift onto it (own pieces / frozen
+  // pieces / the board edge can block the crush). A Juggernaut king attacks
+  // adjacently only at tier 1 — tiers 2/3 use the knight / queen patterns
+  // handled in the sections below.
   for (const [df, dr] of EIGHT_DIRS) {
     const f = tf + df, r = tr + dr;
     if (!onBoard(f, r)) continue;
     const idx = idxFR(f, r);
     const p = state.board[idx];
-    if (p && p.color === byColor && p.letter.toUpperCase() === 'K' && !isFrozen(state, idx)) return true;
+    if (!p || p.color !== byColor || inert(idx)) continue;
+    const up = p.letter.toUpperCase();
+    if (up === 'K') {
+      const jt = jugTierAt(state, idx);
+      if (jt === 0 || jt === 1) return true;
+    }
+    if (up === 'S') {
+      const group = state.slimes.find((g) => g.tiles.includes(idx));
+      // Shift direction that carries this tile onto the target is the
+      // reverse of the tile's offset from the target.
+      if (group && !group.tiles.includes(target) && slimeShiftValid(state, group, -df, -dr, byColor)) {
+        return true;
+      }
+    }
   }
-  // Knight — N plus the merged forms (A/C/Z all carry knight movement).
+  // Knight — N plus the merged forms (A/C/Z all carry knight movement) and
+  // a tier-2 Juggernaut king.
   for (const [df, dr] of KNIGHT_OFFSETS) {
     const f = tf + df, r = tr + dr;
     if (!onBoard(f, r)) continue;
     const idx = idxFR(f, r);
     const p = state.board[idx];
     if (!p || p.color !== byColor) continue;
-    if (isFrozen(state, idx)) continue;
+    if (inert(idx)) continue;
     const up = p.letter.toUpperCase();
     if (up === 'N' || up === 'A' || up === 'C' || up === 'Z') return true;
+    if (up === 'K' && jugTierAt(state, idx) === 2) return true;
   }
-  // Orthogonal rays — R / Q plus merged C (rook+N) and Z (queen+N).
+  // Orthogonal rays — R / Q plus merged C (rook+N), Z (queen+N) and a
+  // tier-3 Juggernaut king.
   for (const [df, dr] of ROOK_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
       const idx = idxFR(f, r);
       const p = state.board[idx];
       if (p) {
-        if (p.color === byColor && !isFrozen(state, idx)) {
+        if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'R' || up === 'Q' || up === 'C' || up === 'Z') return true;
+          if (up === 'K' && jugTierAt(state, idx) === 3) return true;
         }
         break;
       }
       f += df; r += dr;
     }
   }
-  // Diagonal rays — B / Q plus merged A (bishop+N) and Z (queen+N).
+  // Diagonal rays — B / Q plus merged A (bishop+N), Z (queen+N) and a
+  // tier-3 Juggernaut king.
   for (const [df, dr] of BISHOP_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
       const idx = idxFR(f, r);
       const p = state.board[idx];
       if (p) {
-        if (p.color === byColor && !isFrozen(state, idx)) {
+        if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'B' || up === 'Q' || up === 'A' || up === 'Z') return true;
+          if (up === 'K' && jugTierAt(state, idx) === 3) return true;
         }
         break;
       }
@@ -674,6 +997,38 @@ function findKing(state: GameState, color: C2Color): number {
 }
 
 export function isInCheck(state: GameState, color: C2Color): boolean {
+  // A sub-tier-3 Juggernaut can't be checked at all — it strolls through
+  // attacked squares unbothered. Normal check rules switch on at tier 3
+  // (its final life), which is also when checkmate becomes possible.
+  const jt = jugTierOf(state, color);
+  if (jt >= 1 && jt < 3) return false;
+  // A Slime side can field multiple kings (mini kings and big-king tiles).
+  // While it has more than one king square it can't be checked at all — its
+  // kings are simply capturable pieces. Check resumes once it's down to a
+  // single king. Non-Slime sides always have exactly one 'K', so this is the
+  // standard rule for them.
+  let only = -1;
+  let count = 0;
+  for (let i = 0; i < 64; i++) {
+    const p = state.board[i];
+    if (!p || p.color !== color) continue;
+    const up = p.letter.toUpperCase();
+    if (up !== 'K' && up !== 'S') continue;
+    count++;
+    if (count > 1) return false;
+    only = i;
+  }
+  if (count !== 1) return false;
+  return isSquareAttacked(state, only, color === 'w' ? 'b' : 'w');
+}
+
+// Would the side to move be in check if Juggernaut immunity didn't exist?
+// Only meaningful (and only true) for a sub-tier-3 Juggernaut — used to play
+// the check SOUND as a flavor cue even though no actual check is in force.
+function jugWouldBeInCheck(state: GameState): boolean {
+  const color = state.turn;
+  const jt = jugTierOf(state, color);
+  if (jt < 1 || jt >= 3) return false;
   const k = findKing(state, color);
   if (k === -1) return false;
   return isSquareAttacked(state, k, color === 'w' ? 'b' : 'w');
@@ -718,20 +1073,24 @@ export function abilityTargets(state: GameState): number[] {
   const out: number[] = [];
   if (hero === 'frost') {
     // Any non-king piece on the board, except a piece that's already frozen.
+    // Slime big-king tiles count as kings — they can't be frozen either.
     for (let i = 0; i < 64; i++) {
       const p = state.board[i];
       if (!p) continue;
-      if (p.letter.toUpperCase() === 'K') continue;
+      const up = p.letter.toUpperCase();
+      if (up === 'K' || up === 'S') continue;
       if (isFrozen(state, i)) continue;
       out.push(i);
     }
   } else if (hero === 'warlord') {
-    // Enemy non-king pieces adjacent to my king.
+    // Enemy non-king pieces adjacent to my king. Slime big-king tiles count
+    // as kings — the blade can't carve the blob.
     for (const idx of squaresAdjacentToKing(state, color)) {
       const p = state.board[idx];
       if (!p) continue;
       if (p.color === color) continue;
-      if (p.letter.toUpperCase() === 'K') continue;
+      const up = p.letter.toUpperCase();
+      if (up === 'K' || up === 'S') continue;
       out.push(idx);
     }
   } else if (hero === 'necromancer') {
@@ -773,6 +1132,59 @@ export function abilityTargets(state: GameState): number[] {
       if (twinJutsuLegalDestinations(state, i).length > 0) out.push(i);
     }
     return out;
+  } else if (hero === 'slime') {
+    // Two-click. First-click list: any of your mini kings with at least one
+    // open 2×2 quadrant to expand into. (No mini kings exist until the big
+    // king splits, so the ability idles until then.) Expansion always
+    // produces an uncheckable blob, so no post-state check filter is needed.
+    for (let i = 0; i < 64; i++) {
+      const p = state.board[i];
+      if (!p || p.color !== color) continue;
+      if (p.letter.toUpperCase() !== 'K') continue;
+      if (slimeLegalDestinations(state, i).length > 0) out.push(i);
+    }
+    return out;
+  } else if (hero === 'juggernaut') {
+    // Tier-dependent, all single-click. Tier 1: convert an adjacent enemy.
+    // Tier 2: quake-leap to a knight square. Tier 3: rampage to a rank edge.
+    const tier = state.jugTier[color];
+    const k = findKing(state, color);
+    if (k === -1) return [];
+    const [kf, kr] = frOfIdx(k);
+    if (tier === 1) {
+      // Adjacent enemy pieces — kings and Slime blob tiles excluded.
+      for (const [df, dr] of EIGHT_DIRS) {
+        const f = kf + df, r = kr + dr;
+        if (!onBoard(f, r)) continue;
+        const idx = idxFR(f, r);
+        const p = state.board[idx];
+        if (!p || p.color === color) continue;
+        const up = p.letter.toUpperCase();
+        if (up === 'K' || up === 'S') continue;
+        out.push(idx);
+      }
+    } else if (tier === 2) {
+      // Knight-jump landings: empty squares or capturable enemy pieces
+      // (frozen pieces can't be captured; kings/blob tiles can't be taken
+      // by a move).
+      for (const [df, dr] of KNIGHT_OFFSETS) {
+        const f = kf + df, r = kr + dr;
+        if (!onBoard(f, r)) continue;
+        const idx = idxFR(f, r);
+        const p = state.board[idx];
+        if (p) {
+          if (p.color === color) continue;
+          const up = p.letter.toUpperCase();
+          if (up === 'K' || up === 'S') continue;
+          if (isFrozen(state, idx)) continue;
+        }
+        out.push(idx);
+      }
+    } else {
+      // Rampage destinations: the left and right edges of the current rank.
+      if (kf !== 0) out.push(idxFR(0, kr));
+      if (kf !== 7) out.push(idxFR(7, kr));
+    }
   } else if (hero === 'goofball') {
     // Goofball picks an OPPONENT'S piece to force-move. The "targets"
     // here are the from-squares: every enemy piece that has at least one
@@ -870,6 +1282,30 @@ export function flightLegalDestinations(state: GameState, fromIdx: number): numb
   return out;
 }
 
+// Given the user has armed Slime and picked one of their mini kings at
+// `fromIdx`, which diagonal-corner squares define a legal expansion? The
+// king becomes one corner of a new 2×2 blob; the clicked square is the far
+// corner. All three new squares must be on the board and empty. Expanding
+// is always check-safe — the resulting blob can't be checked.
+export function slimeLegalDestinations(state: GameState, fromIdx: number): number[] {
+  const color = state.turn;
+  if (!abilityReady(state, color)) return [];
+  if (state.heroes[color].hero !== 'slime') return [];
+  const p = state.board[fromIdx];
+  if (!p || p.color !== color || p.letter.toUpperCase() !== 'K') return [];
+  const [f, r] = frOfIdx(fromIdx);
+  const out: number[] = [];
+  for (const df of [-1, 1]) {
+    for (const dr of [-1, 1]) {
+      if (!onBoard(f + df, r + dr)) continue;
+      const others = [idxFR(f + df, r), idxFR(f, r + dr), idxFR(f + df, r + dr)];
+      if (others.some((i) => state.board[i] != null)) continue;
+      out.push(idxFR(f + df, r + dr));
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------
 // Apply a (validated) ability action.
 // ------------------------------------------------------------------
@@ -940,6 +1376,9 @@ function applyAbility(
     frozen: state.frozen.slice(),
     missiles: state.missiles.slice(),
     masked: state.masked.slice(),
+    slimes: state.slimes.map((g) => ({ tiles: g.tiles.slice() })),
+    jugTier: { ...state.jugTier },
+    stunned: state.stunned.slice(),
   };
 
   if (hero === 'frost') {
@@ -1065,6 +1504,111 @@ function applyAbility(
     // their immediate next turn (2 plies away).
     next.missiles.push({ idx: targetIdx, landsAtPly: next.ply + 5, firedBy: color });
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
+  } else if (hero === 'slime') {
+    // Two-click expansion: the mini king at fromIdx grows into a 2×2 blob
+    // whose far corner is targetIdx. The three new squares were validated
+    // empty by slimeLegalDestinations.
+    if (fromIdx == null) return state;
+    const [kf, kr] = frOfIdx(fromIdx);
+    const [cf, cr] = frOfIdx(targetIdx);
+    const tiles = [fromIdx, idxFR(cf, kr), idxFR(kf, cr), targetIdx];
+    const letter: PieceLetter = color === 'w' ? 'S' : 's';
+    for (const tIdx of tiles) {
+      next.board[tIdx] = { color, letter };
+      next.masked[tIdx] = false;
+    }
+    next.slimes = [...next.slimes, { tiles }];
+    next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
+  } else if (hero === 'juggernaut') {
+    // Tier-dependent kit. Targets were validated by abilityTargets.
+    const tier = state.jugTier[color];
+    const k = findKing(next, color);
+    if (k !== -1) {
+      if (tier === 1) {
+        // Convert: flip the adjacent enemy piece to this side. The piece
+        // keeps its square and letter; only the allegiance (and case)
+        // changes. Counts as material progress for the 50-move clock.
+        const p = next.board[targetIdx];
+        if (p) {
+          const up = p.letter.toUpperCase();
+          next.board[targetIdx] = {
+            color,
+            letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter,
+          };
+          next.masked[targetIdx] = false;
+          next.halfmove = 0;
+          // Converting a rook off its owner's home corner forfeits that
+          // wing, exactly as if the rook had been captured there.
+          if (targetIdx === 56) next.castling.wQ = false;
+          if (targetIdx === 63) next.castling.wK = false;
+          if (targetIdx === 0)  next.castling.bQ = false;
+          if (targetIdx === 7)  next.castling.bK = false;
+        }
+      } else if (tier === 2) {
+        // Quake leap: knight-jump to the target (capturing whatever's
+        // there), then stun every piece — BOTH sides — within a 2-tile
+        // radius of the landing square for one turn each.
+        const victim = next.board[targetIdx];
+        if (victim) {
+          if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, targetIdx);
+          next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
+          next.halfmove = 0;
+          if (targetIdx === 56) next.castling.wQ = false;
+          if (targetIdx === 63) next.castling.wK = false;
+          if (targetIdx === 0)  next.castling.bQ = false;
+          if (targetIdx === 7)  next.castling.bK = false;
+        }
+        next.board[targetIdx] = next.board[k];
+        next.board[k] = null;
+        next.masked[k] = false;
+        next.masked[targetIdx] = false;
+        // expiresAtPly = next.ply + 2 keeps the stun active through the
+        // opponent's next move AND the Juggernaut side's own next move —
+        // one lost turn for every piece caught in the quake.
+        const [tf, tr] = frOfIdx(targetIdx);
+        for (let df = -2; df <= 2; df++) {
+          for (let dr = -2; dr <= 2; dr++) {
+            if (df === 0 && dr === 0) continue;
+            const f = tf + df, r = tr + dr;
+            if (!onBoard(f, r)) continue;
+            const idx = idxFR(f, r);
+            if (!next.board[idx]) continue;
+            if (isStunned(next, idx)) continue;
+            next.stunned.push({ idx, expiresAtPly: next.ply + 2 });
+          }
+        }
+      } else {
+        // Rampage: charge along the rank to the chosen edge, destroying
+        // every piece in the path (both sides' — and, like ICBM, the charge
+        // ignores Frost). A destroyed king ends the game via the
+        // king-destroyed pathway.
+        const [kf, kr] = frOfIdx(k);
+        const [tf] = frOfIdx(targetIdx);
+        const step = tf > kf ? 1 : -1;
+        const jug = next.board[k]!;
+        next.board[k] = null;
+        next.masked[k] = false;
+        for (let f = kf + step; f >= 0 && f < 8; f += step) {
+          const idx = idxFR(f, kr);
+          const victim = next.board[idx];
+          if (victim) {
+            if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
+            next.board[idx] = null;
+            next.halfmove = 0;
+            next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
+            next.stunned = next.stunned.filter((s) => s.idx !== idx);
+            if (idx === 56) next.castling.wQ = false;
+            if (idx === 63) next.castling.wK = false;
+            if (idx === 0)  next.castling.bQ = false;
+            if (idx === 7)  next.castling.bK = false;
+          }
+          next.masked[idx] = false;
+          if (f === tf) break;
+        }
+        next.board[targetIdx] = jug;
+      }
+    }
+    next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
   }
 
   // Resolve any missile landings now that ply has advanced. ICBM is the
@@ -1072,8 +1616,9 @@ function applyAbility(
   // applies to capture/move, not to explosions).
   processMissileLandings(next);
 
-  // Expire any active freezes whose lifetime has now ended.
+  // Expire any active freezes / stuns whose lifetime has now ended.
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
+  next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
 
   const hist = state.positionHistory.slice();
   hist.push(positionKey(next));
@@ -1101,12 +1646,104 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     frozen: state.frozen.slice(),
     missiles: state.missiles.slice(),
     masked: state.masked.slice(),
+    slimes: state.slimes.map((g) => ({ tiles: g.tiles.slice() })),
+    jugTier: { ...state.jugTier },
+    stunned: state.stunned.slice(),
   };
+
+  // Slime big-king shift: the whole 2×2 blob containing mv.from slides one
+  // square in the from→to direction, crushing any enemy pieces on the
+  // squares it enters (validated crushable in pseudoSlimeShift).
+  if (mv.slimeShift) {
+    const group = next.slimes.find((g) => g.tiles.includes(mv.from));
+    const blobPiece = next.board[mv.from]!;
+    if (group) {
+      const [ff, fr] = frOfIdx(mv.from);
+      const [tf, tr] = frOfIdx(mv.to);
+      const df = tf - ff, dr = tr - fr;
+      const oldTiles = group.tiles.slice();
+      const newTiles = oldTiles.map((tIdx) => {
+        const [f, r] = frOfIdx(tIdx);
+        return idxFR(f + df, r + dr);
+      });
+      let crushed = false;
+      for (const tIdx of newTiles) {
+        if (oldTiles.includes(tIdx)) continue;
+        const victim = next.board[tIdx];
+        if (victim) {
+          crushed = true;
+          // Crushing an enemy big-king tile splits THAT blob before the
+          // square clears.
+          if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, tIdx);
+          next.board[tIdx] = null;
+          next.stunned = next.stunned.filter((s) => s.idx !== tIdx);
+        }
+        // Crushing a rook on its home corner forfeits that wing.
+        if (tIdx === 56) next.castling.wQ = false;
+        if (tIdx === 63) next.castling.wK = false;
+        if (tIdx === 0)  next.castling.bQ = false;
+        if (tIdx === 7)  next.castling.bK = false;
+      }
+      for (const tIdx of oldTiles) {
+        if (!newTiles.includes(tIdx)) {
+          next.board[tIdx] = null;
+          next.masked[tIdx] = false;
+        }
+      }
+      for (const tIdx of newTiles) {
+        next.board[tIdx] = { color: blobPiece.color, letter: blobPiece.letter };
+        next.masked[tIdx] = false;
+      }
+      group.tiles = newTiles;
+      if (crushed) next.halfmove = 0;
+    }
+    processMissileLandings(next);
+    next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
+    next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
+    const hist = state.positionHistory.slice();
+    hist.push(positionKey(next));
+    next.positionHistory = hist;
+    return next;
+  }
 
   const mover = next.board[mv.from]!;
   const moverUp = mover.letter.toUpperCase();
   const dest = next.board[mv.to];
   if (dest) next.halfmove = 0;
+
+  // Juggernaut absorb: capturing a sub-tier-3 Juggernaut never completes.
+  // The attacker dies on the spot and the Juggernaut — unmoved — rises a
+  // tier. (At tier 3 the capture resolves normally below and the missing
+  // king ends the game via the king-destroyed pathway.) The enemy KING can
+  // never legally do this: spending your last king square is filtered out
+  // like a move into check.
+  if (dest && dest.color !== mover.color) {
+    const jt = jugTierAt(next, mv.to);
+    if (jt >= 1 && jt < 3) {
+      next.board[mv.from] = null;
+      next.masked[mv.from] = false;
+      next.jugTier[dest.color] = jt + 1;
+      next.halfmove = 0;
+      // A rook that died charging off its home corner still forfeits that
+      // castling wing.
+      if (mv.from === 56) next.castling.wQ = false;
+      if (mv.from === 63) next.castling.wK = false;
+      if (mv.from === 0)  next.castling.bQ = false;
+      if (mv.from === 7)  next.castling.bK = false;
+      processMissileLandings(next);
+      next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
+      next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
+      const hist = state.positionHistory.slice();
+      hist.push(positionKey(next));
+      next.positionHistory = hist;
+      return next;
+    }
+  }
+
+  // Capturing one tile of a Slime blob splits the rest into mini kings.
+  if (dest && dest.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, mv.to);
+  // A captured stunned piece takes its stun entry with it.
+  if (dest) next.stunned = next.stunned.filter((s) => s.idx !== mv.to);
 
   let resultPiece: Piece = mover;
   if (mv.promotion) {
@@ -1183,6 +1820,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   processMissileLandings(next);
 
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
+  next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
 
   const hist = state.positionHistory.slice();
   hist.push(positionKey(next));
@@ -1210,8 +1848,13 @@ export function legalMovesFrom(state: GameState, from: Square): LegalMove[] {
   for (const pm of pseudos) {
     const next = applyPseudo(state, pm);
     if (isInCheck(next, moverColor)) continue;
+    // Capturing a sub-tier-3 Juggernaut costs the attacker its life. A move
+    // that would spend the mover's LAST king square (the king itself
+    // charging in) is illegal, same as moving into check. A multi-king
+    // Slime side may legally sacrifice one of its spares.
+    if (hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor)) continue;
     const dest = state.board[pm.to];
-    const isCapture = !!dest || !!pm.enPassantCapture;
+    const isCapture = !!dest || !!pm.enPassantCapture || (pm.slimeCrushes != null && pm.slimeCrushes.length > 0);
     out.push({ to: idxToSq(pm.to), promotion: pm.promotion, isCapture, isSpecial: false });
   }
   return out;
@@ -1239,10 +1882,10 @@ function anyLegalAbility(state: GameState): boolean {
 // ------------------------------------------------------------------
 // Harem is passive — no entry. Mutation uses M; ICBM uses I; Goofball uses G.
 const ABILITY_PREFIX_TO_HERO: Record<string, HeroKind> = {
-  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jutsu',
+  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jutsu', S: 'slime', J: 'juggernaut',
 };
 const HERO_TO_ABILITY_PREFIX: Partial<Record<HeroKind, string>> = {
-  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jutsu': 'T',
+  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jutsu': 'T', slime: 'S', juggernaut: 'J',
 };
 
 export function isAbilityUci(uci: string): boolean {
@@ -1257,11 +1900,12 @@ export function parseAbility(
   if (!isAbilityUci(uci)) return null;
   const hero = ABILITY_PREFIX_TO_HERO[uci[1]];
   if (!hero) return null;
-  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight') {
+  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight' || hero === 'slime') {
     // !G/!T/!L<from><to>[<promo>] — 6 or 7 chars total. Goofball forces an
     // opponent move; Twin-Jutsu swaps two own pieces (symmetric, order is
     // arbitrary); Flight teleports an own piece. The promo letter applies
-    // when a pawn lands on its back rank.
+    // when a pawn lands on its back rank. !S<from><to> is the Slime
+    // expansion: <from> is the mini king, <to> the far corner (no promo).
     if (uci.length < 6) return null;
     const from = uci.slice(2, 4);
     const to = uci.slice(4, 6);
@@ -1274,7 +1918,7 @@ export function parseAbility(
   return { hero, to };
 }
 export function abilityUci(hero: HeroKind, to: Square, from?: Square, promo?: string): string {
-  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight') {
+  if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight' || hero === 'slime') {
     return `!${HERO_TO_ABILITY_PREFIX[hero]}${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
   }
   return `!${HERO_TO_ABILITY_PREFIX[hero]}${to}`;
@@ -1323,6 +1967,49 @@ export function pieceAtImpactBeforeBlast(
       if (toIdx === impactIdx) return state.board[fromIdx] ?? null;
       return state.board[impactIdx] ?? null;
     }
+    // Slime expansion fills the 2×2 quadrant with big-king tiles — a missile
+    // landing on any of them hits a fresh 'S' tile.
+    if (parsed.hero === 'slime' && parsed.from) {
+      const fromIdx = sqToIdx(parsed.from);
+      const toIdx = sqToIdx(parsed.to);
+      const [kf, kr] = frOfIdx(fromIdx);
+      const [cf, cr] = frOfIdx(toIdx);
+      const tiles = [fromIdx, idxFR(cf, kr), idxFR(kf, cr), toIdx];
+      if (tiles.includes(impactIdx)) {
+        const mover = state.board[fromIdx];
+        if (mover) {
+          return { color: mover.color, letter: (mover.color === 'w' ? 'S' : 's') as PieceLetter };
+        }
+      }
+      return state.board[impactIdx] ?? null;
+    }
+    // Juggernaut: tier 1 flips the target's allegiance in place; tiers 2/3
+    // move the Juggernaut itself (and rampage clears its whole path).
+    if (parsed.hero === 'juggernaut') {
+      const color = state.turn;
+      const tier = state.heroes[color].hero === 'juggernaut' ? state.jugTier[color] : 0;
+      const jugIdx = findKing(state, color);
+      const targetIdx2 = sqToIdx(parsed.to);
+      if (tier === 1 && impactIdx === targetIdx2) {
+        const p = state.board[impactIdx];
+        if (!p) return null;
+        const up = p.letter.toUpperCase();
+        return { color, letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter };
+      }
+      if (tier >= 2 && jugIdx !== -1) {
+        if (impactIdx === jugIdx) return null;
+        if (impactIdx === targetIdx2) return state.board[jugIdx];
+        if (tier >= 3) {
+          // Squares strictly between the Juggernaut and the edge it charged
+          // to were flattened by the rampage.
+          const [kf, kr] = frOfIdx(jugIdx);
+          const [tf] = frOfIdx(targetIdx2);
+          const [pf, pr] = frOfIdx(impactIdx);
+          if (pr === kr && ((pf > Math.min(kf, tf) && pf < Math.max(kf, tf)))) return null;
+        }
+      }
+      return state.board[impactIdx] ?? null;
+    }
     const targetIdx = sqToIdx(parsed.to);
     if (targetIdx !== impactIdx) return state.board[impactIdx] ?? null;
     // The ability lands on the same square as the missile. What ends up on
@@ -1343,6 +2030,24 @@ export function pieceAtImpactBeforeBlast(
   if (uci.length < 4) return state.board[impactIdx] ?? null;
   const fromIdx = sqToIdx(uci.slice(0, 2));
   const toIdx = sqToIdx(uci.slice(2, 4));
+  // A Slime blob shift moves four tiles at once — map the impact square
+  // through the whole-blob translation rather than the single from→to pair.
+  const blobMover = state.board[fromIdx];
+  if (blobMover && blobMover.letter.toUpperCase() === 'S') {
+    const group = state.slimes.find((g) => g.tiles.includes(fromIdx));
+    if (group) {
+      const [ff, fr] = frOfIdx(fromIdx);
+      const [tf, tr] = frOfIdx(toIdx);
+      const df = tf - ff, dr = tr - fr;
+      const newTiles = group.tiles.map((tIdx) => {
+        const [f, r] = frOfIdx(tIdx);
+        return idxFR(f + df, r + dr);
+      });
+      if (newTiles.includes(impactIdx)) return blobMover;
+      if (group.tiles.includes(impactIdx)) return null;
+      return state.board[impactIdx] ?? null;
+    }
+  }
   if (fromIdx === impactIdx) return null;
   if (toIdx === impactIdx) {
     const mover = state.board[fromIdx];
@@ -1389,14 +2094,29 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       const fromIdx = sqToIdx(parsed.from);
       if (!flightLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
       next = applyAbility(state, 'flight', targetIdx, fromIdx, parsed.promo);
+    } else if (parsed.hero === 'slime') {
+      if (!parsed.from) return null;
+      const fromIdx = sqToIdx(parsed.from);
+      if (!slimeLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
+      next = applyAbility(state, 'slime', targetIdx, fromIdx);
     } else {
       if (!abilityTargets(state).includes(targetIdx)) return null;
       next = applyAbility(state, parsed.hero, targetIdx);
-      captured = parsed.hero === 'warlord';
+      if (parsed.hero === 'warlord') {
+        captured = true;
+      } else if (parsed.hero === 'juggernaut') {
+        // Quake leap can capture; rampage can flatten several pieces;
+        // convert only flips allegiance. A simple piece-count diff covers
+        // all three (plus any missile landing on the same ply).
+        const count = (b: (Piece | null)[]) => b.reduce((n, p) => n + (p ? 1 : 0), 0);
+        captured = count(next.board) < count(state.board);
+      }
     }
     if (isInCheck(next, color)) return null;
     const kingDestroyed = detectKingDestroyed(state, next);
+    const slimeSplits = detectSlimeSplits(state, next);
     const check = isInCheck(next, next.turn);
+    const jugPhantom = !check && jugWouldBeInCheck(next);
     const oppHasMoves = allLegalBoardMoves(next).length > 0 || anyLegalAbility(next);
     // ICBM-king-strike counts as checkmate-style end: surface it as
     // checkmate=true so the existing finalize flow runs.
@@ -1414,6 +2134,8 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
         checkmate,
         stalemate,
         kingDestroyed,
+        ...(slimeSplits.length > 0 ? { slimeSplits } : {}),
+        ...(jugPhantom ? { jugPhantomCheck: true } : {}),
       },
     };
   }
@@ -1440,9 +2162,13 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
 
   const next = applyPseudo(state, chosen);
   if (isInCheck(next, moverColor)) return null;
+  // Spending your last king square to capture a sub-tier-3 Juggernaut is
+  // suicide — illegal, mirroring the filter in legalMovesFrom.
+  if (hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor)) return null;
 
   const dest = state.board[toIdx];
   const kingDestroyed = detectKingDestroyed(state, next);
+  const slimeSplits = detectSlimeSplits(state, next);
   // Missile demolition on the same ply counts as a capture for sfx/result —
   // but only when the missile actually destroys something. A piece moving
   // OFF the impact square leaves it empty before the explosion lands, so
@@ -1453,8 +2179,10 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     m.idx !== chosen.from &&
     state.board[m.idx] != null,
   );
-  const captured = !!dest || !!chosen.enPassantCapture || missileCaptured;
+  const captured = !!dest || !!chosen.enPassantCapture || missileCaptured
+    || (chosen.slimeCrushes != null && chosen.slimeCrushes.length > 0);
   const check = isInCheck(next, next.turn);
+  const jugPhantom = !check && jugWouldBeInCheck(next);
   const oppHasMoves = allLegalBoardMoves(next).length > 0 || anyLegalAbility(next);
   const checkmate = (check && !oppHasMoves) || kingDestroyed != null;
   const stalemate = !check && !oppHasMoves && kingDestroyed == null;
@@ -1471,19 +2199,48 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       checkmate,
       stalemate,
       kingDestroyed,
+      ...(slimeSplits.length > 0 ? { slimeSplits } : {}),
+      ...(jugPhantom ? { jugPhantomCheck: true } : {}),
     },
   };
 }
 
-// Compare pre/post king presence to surface the loser of a missile strike.
+// Compare pre/post king presence to surface the loser of a missile strike
+// (or a Slime crush that flattened the last enemy kings). King material
+// counts both 'K' and Slime 'S' tiles.
 function detectKingDestroyed(prev: GameState, next: GameState): C2Color | null {
-  const hadW = findKing(prev, 'w') !== -1;
-  const hadB = findKing(prev, 'b') !== -1;
-  const hasW = findKing(next, 'w') !== -1;
-  const hasB = findKing(next, 'b') !== -1;
-  if (hadW && !hasW) return 'w';
-  if (hadB && !hasB) return 'b';
+  if (hasAnyKingSquare(prev, 'w') && !hasAnyKingSquare(next, 'w')) return 'w';
+  if (hasAnyKingSquare(prev, 'b') && !hasAnyKingSquare(next, 'b')) return 'b';
   return null;
+}
+
+// Slime blobs that dissolved between prev and next — a group with no
+// surviving entry sharing any tile split into minis (or was wiped out).
+// Returns the destroyed tile squares + the squares where minis appeared.
+function detectSlimeSplits(prev: GameState, next: GameState): { tiles: Square[]; minis: Square[] }[] {
+  if (prev.slimes.length === 0) return [];
+  const out: { tiles: Square[]; minis: Square[] }[] = [];
+  for (const g of prev.slimes) {
+    const ref = prev.board[g.tiles[0]];
+    const color = ref?.color;
+    // A shifted blob keeps an entry overlapping its old tiles; a split blob
+    // has no successor at all. The successor must be the same side's blob —
+    // an enemy blob crushing INTO this group's tiles also overlaps them.
+    const survived = next.slimes.some((g2) =>
+      g2.tiles.some((t) => g.tiles.includes(t)) &&
+      next.board[g2.tiles[0]]?.color === color,
+    );
+    if (survived) continue;
+    const minis: Square[] = [];
+    const tiles: Square[] = [];
+    for (const t of g.tiles) {
+      const p = next.board[t];
+      if (p && p.color === color && p.letter.toUpperCase() === 'K') minis.push(idxToSq(t));
+      else tiles.push(idxToSq(t));
+    }
+    out.push({ tiles, minis });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------
@@ -1509,7 +2266,11 @@ export function toFen(state: GameState): string {
   const ep = state.enPassant ?? '-';
   const wH = state.heroes.w;
   const bH = state.heroes.b;
-  const hero = `${wH.hero}:${wH.cooldownUntilPly}:${wH.flightUsed ? 1 : 0}|${bH.hero}:${bH.cooldownUntilPly}:${bH.flightUsed ? 1 : 0}`;
+  // A Juggernaut side carries its tier as a 4th hero-token field so the
+  // position key distinguishes otherwise-identical boards at different tiers.
+  const wT = wH.hero === 'juggernaut' ? `:${state.jugTier.w}` : '';
+  const bT = bH.hero === 'juggernaut' ? `:${state.jugTier.b}` : '';
+  const hero = `${wH.hero}:${wH.cooldownUntilPly}:${wH.flightUsed ? 1 : 0}${wT}|${bH.hero}:${bH.cooldownUntilPly}:${bH.flightUsed ? 1 : 0}${bT}`;
   const frozen = state.frozen.length === 0
     ? '-'
     : state.frozen.map((f) => `${f.idx}:${f.expiresAtPly}`).join(',');
@@ -1537,7 +2298,16 @@ export function toFen(state: GameState): string {
     }
     masked = hex;
   }
-  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked}`;
+  // Slime blob groups: `t.t.t.t` per blob, comma-separated. '-' when no blob
+  // is on the board so non-Slime FENs stay unchanged.
+  const slimes = state.slimes.length === 0
+    ? '-'
+    : state.slimes.map((g) => g.tiles.join('.')).join(',');
+  // Stunned pieces (Juggernaut quake leap) — same `idx:exp` format as frozen.
+  const stunned = state.stunned.length === 0
+    ? '-'
+    : state.stunned.map((s) => `${s.idx}:${s.expiresAtPly}`).join(',');
+  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked} ${slimes} ${stunned}`;
 }
 
 function positionKey(state: GameState): string {
@@ -1569,11 +2339,19 @@ export function isFiftyMoveRule(state: GameState): boolean {
 // K-vs-K is the only auto-draw — heroes can revive material via Necromancer
 // so other "insufficient material" cases aren't really insufficient.
 export function isInsufficientMaterial(state: GameState): boolean {
+  let wK = 0, bK = 0;
   for (const p of state.board) {
-    if (p && p.letter.toUpperCase() !== 'K') return false;
+    if (!p) continue;
+    if (p.letter.toUpperCase() !== 'K') return false; // 'S' tiles are mating material too
+    if (p.color === 'w') wK++; else bK++;
   }
+  // A mini-king swarm can still mate (and can re-expand into a blob).
+  if (wK > 1 || bK > 1) return false;
   // If either side could still spawn or freeze meaningfully, don't auto-draw.
   if (state.heroes.w.hero === 'necromancer' && state.ply >= state.heroes.w.cooldownUntilPly) return false;
   if (state.heroes.b.hero === 'necromancer' && state.ply >= state.heroes.b.cooldownUntilPly) return false;
+  // A Slime side can grow its last king back into a blob, which can mate.
+  if (state.heroes.w.hero === 'slime' && state.ply >= state.heroes.w.cooldownUntilPly) return false;
+  if (state.heroes.b.hero === 'slime' && state.ply >= state.heroes.b.cooldownUntilPly) return false;
   return true;
 }

@@ -16,7 +16,7 @@ import {
 } from '../lib/gameExport';
 import { loadGameRecord, loadRecentSummaries } from '../lib/storage';
 import { getTimeControl } from '../lib/timeControls';
-import { HERO_INFO, idxToSq as heroIdxToSq } from '../lib/heroChess';
+import { HERO_INFO, idxToSq as heroIdxToSq, kingSquareOf } from '../lib/heroChess';
 import type { GameEndReason, LocalGameSummary } from '../lib/types';
 import * as sfx from '../lib/sfx';
 
@@ -332,6 +332,10 @@ export function Review() {
             frozenSquares={display.frozenSquares ?? null}
             missiles={display.missiles}
             maskedAsKingSquares={display.maskedAsKingSquares ?? null}
+            slimeBigKings={display.slimeBigKings ?? null}
+            slimeKingSquares={display.slimeKingSquares ?? null}
+            juggernauts={display.juggernauts ?? null}
+            stunnedSquares={display.stunnedSquares ?? null}
             interactive={false}
             draggable={false}
           />
@@ -491,6 +495,10 @@ type DisplaySnapshot = {
   frozenSquares?: string[];
   missiles?: { sq: string; pliesLeft: number; firedBy: 'w' | 'b' }[];
   maskedAsKingSquares?: string[];
+  slimeBigKings?: { tiles: string[]; color: 'w' | 'b' }[];
+  slimeKingSquares?: string[];
+  juggernauts?: { sq: string; tier: number }[];
+  stunnedSquares?: string[];
 };
 
 function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
@@ -554,7 +562,7 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
       // visually informative tint per kind. Twin-Jutsu/Goofball/Flight encode
       // two squares; the others encode one target.
       const hero = uci[1];
-      if (hero === 'T' || hero === 'G' || hero === 'L') {
+      if (hero === 'T' || hero === 'G' || hero === 'L' || hero === 'S') {
         const a = uci.slice(2, 4);
         const b = uci.slice(4, 6);
         lastMove = { from: a, to: b };
@@ -587,7 +595,31 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
       maskedAsKingSquares.push(heroIdxToSq(i));
     }
   }
-  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares };
+  // Slime: big-king blobs render via the stretched sprite; mini kings get
+  // the goo overlay.
+  const slimeBigKings = (state.slimes ?? [])
+    .map((g: { tiles: number[] }) => {
+      const ref = state.board[g.tiles[0]];
+      return ref ? { tiles: g.tiles.map(heroIdxToSq), color: ref.color as 'w' | 'b' } : null;
+    })
+    .filter((g: unknown): g is { tiles: string[]; color: 'w' | 'b' } => g !== null);
+  const slimeKingSquares: string[] = [];
+  for (let i = 0; i < 64; i++) {
+    const p = state.board[i];
+    if (!p || p.letter.toUpperCase() !== 'K') continue;
+    if (state.heroes[p.color].hero === 'slime') slimeKingSquares.push(heroIdxToSq(i));
+  }
+  // Juggernaut: neutral king + tier pips, plus quake-leap stun overlays.
+  const juggernauts: { sq: string; tier: number }[] = [];
+  for (const c of ['w', 'b'] as const) {
+    if (state.heroes[c].hero !== 'juggernaut') continue;
+    const sq = kingSquareOf(state.board, c);
+    if (sq) juggernauts.push({ sq, tier: state.jugTier[c] });
+  }
+  const stunnedSquares = state.stunned
+    .filter((s) => state.ply < s.expiresAtPly)
+    .map((s) => heroIdxToSq(s.idx));
+  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares, slimeBigKings, slimeKingSquares, juggernauts, stunnedSquares };
 }
 
 function lastMoveFromUci(viewPly: number, ucis: string[]): { from: string; to: string } | null {

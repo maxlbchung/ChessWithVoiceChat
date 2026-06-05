@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'chaos';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'farmer' | 'chaos';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -19,6 +19,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     two: false,
     cash: false,
     hero: false,
+    farmer: false,
     chaos: false,
   });
   const toggle = (k: SectionKey) => {
@@ -91,6 +92,14 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           Using an ability takes your turn.
         </div>
         {renderGrid(timeControlsForVariant('hero'))}
+      </Section>
+
+      <Section title="Farmer" open={open.farmer} onToggle={() => toggle('farmer')}>
+        <div className="muted small time-mode-blurb">
+          White starts with one queen. Black starts with eight pawns.
+          A pawn promotion wins instantly; clearing all pawns wins for the queen.
+        </div>
+        {renderGrid(timeControlsForVariant('farmer'))}
       </Section>
 
       <Section title="Chaos" open={open.chaos} onToggle={() => toggle('chaos')}>

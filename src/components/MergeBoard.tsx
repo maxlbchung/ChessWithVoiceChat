@@ -8,7 +8,7 @@ import type {
 } from 'react';
 import type { Piece, PieceLetter, Square } from '../lib/mergeChess';
 import { sqToIdx } from '../lib/mergeChess';
-import { lettersToPieceKeys, renderPiece, type PieceKey } from '../lib/pieceSvgs';
+import { lettersToPieceKeys, renderNeutralKing, renderPiece, type PieceKey } from '../lib/pieceSvgs';
 
 type Props = {
   board: (Piece | null)[];
@@ -100,6 +100,25 @@ type Props = {
   // real piece renders normally and a translucent king sits on top so the
   // owner can see which of their pieces are still hidden from the opponent.
   maskedSelfSquares?: Square[] | null;
+  // Slime: big-king blobs. Each renders as a single stretched king sprite
+  // spanning its four tiles (with a goo overlay) instead of four per-square
+  // sprites — the cell sprites for these squares are suppressed.
+  slimeBigKings?: { tiles: Square[]; color: 'w' | 'b' }[] | null;
+  // Slime: squares holding mini kings. Drawn with a goo overlay so the slime
+  // identity stays readable after a split.
+  slimeKingSquares?: Square[] | null;
+  // Slime: when the selected square is a blob tile, the blob's legal shifts
+  // render as direction arrows from the blob's centre instead of per-square
+  // target dots (which are suppressed). Directions are in board coordinates
+  // (file delta / rank delta, each -1 | 0 | 1); capture shifts tint red.
+  slimeShiftArrows?: { df: number; dr: number; isCapture: boolean }[] | null;
+  // Juggernaut: the colorless boss king. The piece on `sq` renders as a
+  // neutral stone king with `tier` pips (1-3) under it. The hero glow still
+  // flows through kingGlows like any other hero king.
+  juggernauts?: { sq: Square; tier: number }[] | null;
+  // Squares holding pieces stunned by the Juggernaut's quake leap — dizzy
+  // stars overlay. Stunned pieces can still be captured (unlike frozen).
+  stunnedSquares?: Square[] | null;
 };
 
 export type MergeAnim = {
@@ -122,13 +141,17 @@ export type MergeAnim = {
 };
 
 export type AbilityAnim = {
-  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm';
+  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm' | 'slime-expand' | 'slime-split' | 'juggernaut' | 'juggernaut-leap' | 'jug-absorb';
   // Flight: flyer's old square. Warlord: king's square (pivot for swing).
+  // Slime-expand: the mini king's square (the corner the blob grows out of).
+  // Juggernaut-leap: the tier-2 king's takeoff square.
   // Necromancer / Frost / Mutation: unused.
   fromSq?: Square;
   // Flight: flyer's new square. Knight: destroyed piece's square.
   // Necromancer: spawn square. Frost: frozen piece's square.
   // Mutation: mutated piece's square (centre of the radiation burst).
+  // Slime-expand: the expansion quadrant's far corner.
+  // Slime-split: the destroyed blob tile (goo splatter origin).
   toSq: Square;
   // Side that used the ability — drives the rendered sprite's color for Flight.
   color: 'w' | 'b';
@@ -178,6 +201,11 @@ export function MergeBoard({
   clearAnnotationsKey,
   maskedAsKingSquares,
   maskedSelfSquares,
+  slimeBigKings,
+  slimeKingSquares,
+  slimeShiftArrows,
+  juggernauts,
+  stunnedSquares,
 }: Props) {
   // Indexed map for O(1) per-square missile lookup during render.
   const missilesBySq = useMemo(() => {
@@ -304,6 +332,26 @@ export function MergeBoard({
   const popSet = useMemo(() => new Set(popSquares ?? []), [popSquares]);
   const maskedAsKingSet = useMemo(() => new Set(maskedAsKingSquares ?? []), [maskedAsKingSquares]);
   const maskedSelfSet = useMemo(() => new Set(maskedSelfSquares ?? []), [maskedSelfSquares]);
+  // Squares occupied by a Slime big-king tile — their per-square sprites are
+  // suppressed; the stretched blob layer below draws the king instead.
+  const slimeTileSet = useMemo(() => {
+    const s = new Set<Square>();
+    for (const g of slimeBigKings ?? []) for (const t of g.tiles) s.add(t);
+    return s;
+  }, [slimeBigKings]);
+  // Blob arrow mode: the selected square is a blob tile and the page handed
+  // us its shift directions — replace the target dots with arrows.
+  const slimeArrowsActive =
+    !!slimeShiftArrows && slimeShiftArrows.length > 0 &&
+    !!selectedSquare && slimeTileSet.has(selectedSquare);
+  const slimeMiniSet = useMemo(() => new Set(slimeKingSquares ?? []), [slimeKingSquares]);
+  // Juggernaut square → tier, for the neutral sprite + tier pips.
+  const jugBySq = useMemo(() => {
+    const m = new Map<Square, number>();
+    for (const j of juggernauts ?? []) m.set(j.sq, j.tier);
+    return m;
+  }, [juggernauts]);
+  const stunnedSet = useMemo(() => new Set(stunnedSquares ?? []), [stunnedSquares]);
 
   const slideMap = useMemo(() => {
     const m = new Map<Square, { dx: number; dy: number }>();
@@ -588,6 +636,8 @@ export function MergeBoard({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            minWidth: 0,
+            minHeight: 0,
             // Chess-board cells always show the grab/circle cursor — the
             // board is the "pick-up zone", so any cell (piece or empty) reads
             // as such. UI elements outside the board keep the pointer/X.
@@ -598,7 +648,12 @@ export function MergeBoard({
           };
 
           let overlay: CSSProperties | null = null;
-          if (isSelected) {
+          // While the blob's direction arrows are up, the per-square target
+          // dots and the selection ring are pure noise — the arrows carry
+          // both signals. (Clicks on the entered squares still work.)
+          if (slimeArrowsActive) {
+            overlay = null;
+          } else if (isSelected) {
             overlay = {
               background:
                 'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
@@ -699,8 +754,31 @@ export function MergeBoard({
                 />
               )}
               {piece && (() => {
+                // Slime big-king tiles render via the stretched blob layer
+                // below, not as four per-square king sprites — but each tile
+                // still mounts an invisible pointer target so the blob can be
+                // picked up and dragged like any other piece.
+                if (slimeTileSet.has(sq)) {
+                  return (
+                    <div
+                      draggable={false}
+                      onPointerDown={(e) => handlePiecePointerDown(e, sq, piece)}
+                      onPointerMove={handlePiecePointerMove}
+                      onPointerUp={handlePiecePointerUp}
+                      onPointerCancel={handlePiecePointerCancel}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        cursor: draggable && interactive ? 'var(--cursor-grab)' : 'inherit',
+                        touchAction: 'none',
+                        zIndex: 3,
+                      }}
+                    />
+                  );
+                }
                 const isFlightDest = abilityAnim?.kind === 'flight' && abilityAnim.toSq === sq;
                 const isNecroSpawn = abilityAnim?.kind === 'necromancer' && abilityAnim.toSq === sq;
+                const isJugLeapDest = abilityAnim?.kind === 'juggernaut-leap' && abilityAnim.toSq === sq;
                 const isMergeDest = !!(mergeAnim && mergeAnim.to === sq);
                 const fadeInSlots = isMergeDest
                   ? computeMergeFadeInSlots(mergeAnim!.toLetter, mergeAnim!.mergedLetter)
@@ -709,6 +787,8 @@ export function MergeBoard({
                   ? `flight-${abilityAnim.key}-${sq}`
                   : isNecroSpawn
                   ? `necro-${abilityAnim.key}-${sq}`
+                  : isJugLeapDest
+                  ? `jug-leap-${abilityAnim.key}-${sq}`
                   : isMergeDest
                   ? `merge-${mergeAnim!.key}-${sq}`
                   : slideMap.has(sq)
@@ -747,7 +827,32 @@ export function MergeBoard({
                     mergeFadeInSlots={fadeInSlots}
                     flightArrival={isFlightDest}
                     necromancerSpawn={isNecroSpawn}
+                    neutralKing={jugBySq.has(sq)}
+                    neutralKingTier={jugBySq.get(sq)}
+                    juggernautLeap={isJugLeapDest}
                   />
+                );
+              })()}
+              {piece && stunnedSet.has(sq) && (() => {
+                // During Quake Leap, state updates immediately when the move
+                // commits. Hold the stun overlay until the landing impact so
+                // the pieces look stunned by the quake, not by takeoff.
+                const delayForLeap =
+                  abilityAnim?.kind === 'juggernaut-leap' &&
+                  Math.max(
+                    Math.abs(sq.charCodeAt(0) - abilityAnim.toSq.charCodeAt(0)),
+                    Math.abs(parseInt(sq[1], 10) - parseInt(abilityAnim.toSq[1], 10)),
+                  ) <= 2;
+                return (
+                  <div
+                    className={`stunned-overlay${delayForLeap ? ' delayed' : ''}`}
+                    style={delayForLeap ? { ['--stun-delay' as any]: '520ms' } : undefined}
+                    aria-hidden
+                  >
+                    <span className="stun-star s1">✶</span>
+                    <span className="stun-star s2">✶</span>
+                    <span className="stun-star s3">✶</span>
+                  </div>
                 );
               })()}
               {piece && isMaskedSelf && (() => {
@@ -795,6 +900,11 @@ export function MergeBoard({
                   </div>
                 );
               })()}
+              {piece && slimeMiniSet.has(sq) && !slimeTileSet.has(sq) && (
+                // Slime mini king — translucent goo blob hugging the piece so
+                // the swarm reads as slime at a glance.
+                <div className="slime-goo slime-goo-mini" aria-hidden />
+              )}
               {isFrozen && (
                 <div className={`frozen-overlay${isFrozenCracking ? ' cracking' : ''}`} aria-hidden>
                   {isFrozenCracking && (
@@ -1116,6 +1226,129 @@ export function MergeBoard({
         }),
       )}
 
+      {/* Slime big kings — one stretched king sprite per 2×2 blob, sitting on
+          a goo pad. The per-square sprites for these tiles are suppressed in
+          the cell renderer. left/top transition makes the blob slide smoothly
+          when it shifts; the grow animation fires when an expansion lands. */}
+      {(slimeBigKings ?? []).map((g, i) => {
+        if (g.tiles.length === 0) return null;
+        const xs = g.tiles.map((t) => center(t).x);
+        const ys = g.tiles.map((t) => center(t).y);
+        const left = Math.min(...xs) - squarePx / 2;
+        const top = Math.min(...ys) - squarePx / 2;
+        const size = squarePx * 2;
+        const glow = g.color === 'w' ? kingGlows?.w : kingGlows?.b;
+        const growing = abilityAnim?.kind === 'slime-expand' && g.tiles.includes(abilityAnim.toSq);
+        // The grow animation scales the blob out of the mini king's corner.
+        let originX = `${size / 2}px`;
+        let originY = `${size / 2}px`;
+        if (growing && abilityAnim?.fromSq) {
+          const o = center(abilityAnim.fromSq);
+          originX = `${o.x - left}px`;
+          originY = `${o.y - top}px`;
+        }
+        const glowFilter = glow
+          ? `drop-shadow(0 0 ${squarePx * 0.08}px ${glow}) drop-shadow(0 0 ${squarePx * 0.22}px ${glow})`
+          : undefined;
+        return (
+          <div
+            key={growing ? `slime-big-${i}-${abilityAnim!.key}` : `slime-big-${i}`}
+            className={`slime-big-king${growing ? ' growing' : ''}`}
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left,
+              top,
+              width: size,
+              height: size,
+              pointerEvents: 'none',
+              zIndex: 2,
+              transition: 'left 220ms cubic-bezier(0.33, 1, 0.68, 1), top 220ms cubic-bezier(0.33, 1, 0.68, 1)',
+              ['--grow-ox' as any]: originX,
+              ['--grow-oy' as any]: originY,
+            }}
+          >
+            <div
+              className="slime-big-king-body"
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+                filter: glowFilter,
+              }}
+            >
+              <span className="slime-goo slime-goo-big" aria-hidden />
+              {renderPiece(g.color === 'w' ? 'wK' : 'bK', size * 0.92)}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Slime shift arrows — when a blob tile is selected, its legal slides
+          render as arrows radiating from the blob's centre (replacing the
+          per-square target dots). Green = slide, red = crushing slide. */}
+      {slimeArrowsActive && (() => {
+        const group = (slimeBigKings ?? []).find((g) => g.tiles.includes(selectedSquare!));
+        if (!group || group.tiles.length === 0) return null;
+        const cs = group.tiles.map((t) => center(t));
+        const cx = cs.reduce((a, c) => a + c.x, 0) / cs.length;
+        const cy = cs.reduce((a, c) => a + c.y, 0) / cs.length;
+        const stroke = effectiveSize / 44;
+        return (
+          <svg
+            width={effectiveSize}
+            height={effectiveSize}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              pointerEvents: 'none',
+              zIndex: 9,
+            }}
+          >
+            {slimeShiftArrows!.map((a, i) => {
+              // Board direction → screen direction (black orientation flips
+              // both axes; +rank is up the screen for white).
+              const sx = orientation === 'white' ? a.df : -a.df;
+              const sy = orientation === 'white' ? -a.dr : a.dr;
+              const from = { x: cx + sx * squarePx * 0.55, y: cy + sy * squarePx * 0.55 };
+              const to = { x: cx + sx * squarePx * 1.45, y: cy + sy * squarePx * 1.45 };
+              const color = a.isCapture ? '#ff5a5a' : '#7ed957';
+              const markerId = `slime-shift-arrow-${i}`;
+              return (
+                <g key={`${a.df}:${a.dr}`}>
+                  <marker
+                    id={markerId}
+                    markerWidth="2"
+                    markerHeight="2.5"
+                    refX="1.25"
+                    refY="1.25"
+                    orient="auto"
+                  >
+                    <polygon points="0.3 0, 2 1.25, 0.3 2.5" fill={color} />
+                  </marker>
+                  <line
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    stroke={color}
+                    strokeWidth={stroke}
+                    strokeLinecap="round"
+                    opacity={0.85}
+                    markerEnd={`url(#${markerId})`}
+                    style={{ filter: `drop-shadow(0 0 3px ${color}aa)` }}
+                  />
+                </g>
+              );
+            })}
+          </svg>
+        );
+      })()}
+
       {/* Arrow overlay — drawn on top of pieces, ignored by mouse. */}
       {renderedArrows.length > 0 && (
         <svg
@@ -1261,6 +1494,7 @@ export function MergeBoard({
           squarePx={squarePx}
           x={drag.x}
           y={drag.y}
+          neutralKing={jugBySq.has(drag.from)}
         />,
         document.body,
       )}
@@ -1277,11 +1511,14 @@ function DragFloater({
   squarePx,
   x,
   y,
+  neutralKing,
 }: {
   piece: Piece;
   squarePx: number;
   x: number;
   y: number;
+  // Juggernaut in flight — keep the colorless stone king under the cursor.
+  neutralKing?: boolean;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
@@ -1306,7 +1543,9 @@ function DragFloater({
         filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.4))',
       }}
     >
-      {!isMerged ? (
+      {neutralKing ? (
+        renderNeutralKing(fullSize)
+      ) : !isMerged ? (
         renderPiece(keys[0], fullSize)
       ) : (
         <div style={{ position: 'relative', width: fullSize, height: fullSize }}>
@@ -1703,7 +1942,140 @@ function AbilityOverlay({
       </div>
     );
   }
+  if (anim.kind === 'slime-expand' && anim.fromSq) {
+    // Goo burst at the centre of the new 2×2 quadrant (midpoint between the
+    // mini king and the far corner) while the blob layer plays its grow.
+    const from = centerOf(anim.fromSq);
+    const cx = (from.x + to.x) / 2;
+    const cy = (from.y + to.y) / 2;
+    return (
+      <div
+        className="ability-slime-expand"
+        style={{
+          ['--cx' as any]: `${cx}px`,
+          ['--cy' as any]: `${cy}px`,
+          ['--size' as any]: `${squarePx * 2}px`,
+        }}
+      >
+        <span className="slime-burst" aria-hidden />
+        <span className="slime-burst r2" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'slime-split') {
+    // Goo splatter at the destroyed blob tile — 7 droplets flung outward,
+    // same drift-variable scheme as the frost shards.
+    const drops = Array.from({ length: 7 }, (_, i) => {
+      const angle = (i / 7) * Math.PI * 2 + Math.PI / 9;
+      const dist = squarePx * (0.7 + (i % 3) * 0.22);
+      const dx = Math.cos(angle) * dist;
+      const dy = Math.sin(angle) * dist;
+      const scale = 0.6 + (i % 3) * 0.3;
+      return (
+        <span
+          key={i}
+          className="slime-drop"
+          aria-hidden
+          style={{
+            ['--drop-dx' as any]: `${dx}px`,
+            ['--drop-dy' as any]: `${dy}px`,
+            ['--drop-scale' as any]: `${scale}`,
+            animationDelay: `${i * 14}ms`,
+          }}
+        />
+      );
+    });
+    return (
+      <div
+        className="ability-slime-split"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="slime-splat" aria-hidden />
+        {drops}
+      </div>
+    );
+  }
+  if (anim.kind === 'juggernaut' || anim.kind === 'juggernaut-leap' || anim.kind === 'jug-absorb') {
+    // Earthquake at the Juggernaut's square — expanding ground-shock rings
+    // with a scatter of rubble chips flung outward. Pairs with the deep
+    // quake SFX. The 'jug-absorb' variant additionally slides the doomed
+    // attacker's sprite onto the (unmoving) Juggernaut and explodes it at
+    // impact, with the quake parts delayed to fire at the moment it lands.
+    const isAbsorb = anim.kind === 'jug-absorb' && !!anim.fromSq;
+    const isLeap = anim.kind === 'juggernaut-leap';
+    const impactDelay = isAbsorb ? 320 : isLeap ? 520 : 0;
+    const chips = Array.from({ length: 6 }, (_, i) => {
+      const angle = (i / 6) * Math.PI * 2 + Math.PI / 7;
+      const dist = squarePx * (0.75 + (i % 3) * 0.2);
+      const dx = Math.cos(angle) * dist;
+      const dy = Math.sin(angle) * dist - squarePx * 0.25; // bias upward, gravity pulls back
+      return (
+        <span
+          key={i}
+          className="jug-rubble"
+          aria-hidden
+          style={{
+            ['--rubble-dx' as any]: `${dx}px`,
+            ['--rubble-dy' as any]: `${dy}px`,
+            animationDelay: `${impactDelay + i * 16}ms`,
+          }}
+        />
+      );
+    });
+    const attackerKeys = isAbsorb && anim.flyerLetter
+      ? lettersToPieceKeys(anim.flyerLetter as PieceLetter)
+      : [];
+    const from = isAbsorb ? centerOf(anim.fromSq!) : to;
+    return (
+      <div
+        className={isAbsorb ? 'ability-jug-absorb' : isLeap ? 'ability-juggernaut ability-juggernaut-leap' : 'ability-juggernaut'}
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        {isAbsorb && attackerKeys.length > 0 && (
+          <span
+            className="jug-absorb-piece"
+            aria-hidden
+            style={{
+              ['--from-x' as any]: `${from.x}px`,
+              ['--from-y' as any]: `${from.y}px`,
+              ['--dx' as any]: `${to.x - from.x}px`,
+              ['--dy' as any]: `${to.y - from.y}px`,
+            }}
+          >
+            {renderPiece(attackerKeys[0], squarePx * 0.95)}
+          </span>
+        )}
+        <span className="jug-shock r1" aria-hidden style={{ animationDelay: `${impactDelay}ms` }} />
+        <span className="jug-shock r2" aria-hidden style={{ animationDelay: `${impactDelay + 140}ms` }} />
+        <span className="jug-dust" aria-hidden style={{ animationDelay: `${impactDelay}ms` }} />
+        {chips}
+      </div>
+    );
+  }
   return null;
+}
+
+function JugTierPips({ tier }: { tier: number }) {
+  const pipColors = ['#c9b896', '#e0913f', '#e03f3f'];
+  return (
+    <div className="jug-tier-pips" aria-hidden>
+      {[1, 2, 3].map((n) => (
+        <span
+          key={n}
+          className={`jug-pip${n <= tier ? ' filled' : ''}`}
+          style={n <= tier ? { background: pipColors[tier - 1] } : undefined}
+        />
+      ))}
+    </div>
+  );
 }
 
 function PieceSprite({
@@ -1721,6 +2093,9 @@ function PieceSprite({
   mergeFadeInSlots,
   flightArrival,
   necromancerSpawn,
+  neutralKing,
+  neutralKingTier,
+  juggernautLeap,
 }: {
   piece: Piece;
   squarePx: number;
@@ -1745,6 +2120,13 @@ function PieceSprite({
   // When set, the static pawn at the necromancer spawn square stays
   // hidden until the rising-pawn overlay has finished crawling up.
   necromancerSpawn?: boolean;
+  // Juggernaut: render the colorless stone king instead of the piece's own
+  // colour glyph. The underlying piece is still a normal 'K' of its side.
+  neutralKing?: boolean;
+  neutralKingTier?: number;
+  // Tier-2 Juggernaut Quake Leap: keep the normal square-to-square slide on
+  // the outer wrapper, then jump the body relative to that path.
+  juggernautLeap?: boolean;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
@@ -1760,7 +2142,9 @@ function PieceSprite({
     ? {
         ['--slide-dx' as any]: `${slideFrom.dx}px`,
         ['--slide-dy' as any]: `${slideFrom.dy}px`,
-        animation: 'piece-slide 260ms cubic-bezier(0.33, 1, 0.68, 1) both',
+        animation: juggernautLeap
+          ? 'piece-jug-leap-slide 680ms cubic-bezier(0.33, 0, 0.2, 1) both'
+          : 'piece-slide 260ms cubic-bezier(0.33, 1, 0.68, 1) both',
         // Slide above neighbouring pieces so a moving piece is never visually
         // cut off by a same-rank target square's overlay.
         zIndex: 3,
@@ -1795,6 +2179,16 @@ function PieceSprite({
         zIndex: 3,
       }
     : {};
+  const contentStyle: CSSProperties = juggernautLeap
+    ? (glowFilter ? { filter: glowFilter } : {})
+    : {
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      };
 
   return (
     <div
@@ -1816,61 +2210,74 @@ function PieceSprite({
         // the drag the moment the finger moves.
         touchAction: 'none',
         zIndex: 1,
-        filter: glowFilter,
+        filter: juggernautLeap ? undefined : glowFilter,
         visibility: hidden ? 'hidden' : undefined,
         ...slideStyle,
       }}
     >
       <div
         style={{
+          ['--size' as any]: `${squarePx}px`,
           width: '100%',
           height: '100%',
           position: 'relative',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          overflow: 'visible',
           ...popStyle,
         }}
       >
-        {!isMerged ? (
-          renderPiece(keys[0], fullSize)
-        ) : (
-          <>
-            <div
-              style={{
-                position: 'absolute',
-                left: squarePx * 0.03,
-                top: squarePx * 0.18,
-                filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
-                pointerEvents: 'none',
-                animation: mergeFadeInSlots && mergeFadeInSlots.includes(0)
-                  ? 'piece-merge-slot-fade-in 480ms ease-out both'
-                  : undefined,
-              }}
-            >
-              {renderPiece(keys[0], pairSize)}
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                // Use left/top (mirror of the slot 0 formula via the pair-size
-                // box: 1 - 0.03 - 0.7 = 0.27, 1 - 0.02 - 0.7 = 0.28) instead
-                // of right/bottom so phantom landing coords and static slot
-                // coords are computed by the exact same arithmetic and land
-                // on the same pixel.
-                left: squarePx * 0.27,
-                top: squarePx * 0.28,
-                filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
-                pointerEvents: 'none',
-                animation: mergeFadeInSlots && mergeFadeInSlots.includes(1)
-                  ? 'piece-merge-slot-fade-in 480ms ease-out both'
-                  : undefined,
-              }}
-            >
-              {renderPiece(keys[1], pairSize)}
-            </div>
-          </>
-        )}
+        {juggernautLeap && <span className="piece-jug-leap-shadow" aria-hidden />}
+        <div
+          className={juggernautLeap ? 'piece-jug-leap-body' : undefined}
+          style={contentStyle}
+        >
+          {neutralKing ? (
+            <>
+              {renderNeutralKing(fullSize)}
+              {neutralKingTier ? <JugTierPips tier={neutralKingTier} /> : null}
+            </>
+          ) : !isMerged ? (
+            renderPiece(keys[0], fullSize)
+          ) : (
+            <>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: squarePx * 0.03,
+                  top: squarePx * 0.18,
+                  filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+                  pointerEvents: 'none',
+                  animation: mergeFadeInSlots && mergeFadeInSlots.includes(0)
+                    ? 'piece-merge-slot-fade-in 480ms ease-out both'
+                    : undefined,
+                }}
+              >
+                {renderPiece(keys[0], pairSize)}
+              </div>
+              <div
+                style={{
+                  position: 'absolute',
+                  // Use left/top (mirror of the slot 0 formula via the pair-size
+                  // box: 1 - 0.03 - 0.7 = 0.27, 1 - 0.02 - 0.7 = 0.28) instead
+                  // of right/bottom so phantom landing coords and static slot
+                  // coords are computed by the exact same arithmetic and land
+                  // on the same pixel.
+                  left: squarePx * 0.27,
+                  top: squarePx * 0.28,
+                  filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+                  pointerEvents: 'none',
+                  animation: mergeFadeInSlots && mergeFadeInSlots.includes(1)
+                    ? 'piece-merge-slot-fade-in 480ms ease-out both'
+                    : undefined,
+                }}
+              >
+                {renderPiece(keys[1], pairSize)}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

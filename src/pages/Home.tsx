@@ -48,6 +48,11 @@ import {
   goofballLegalDestinations as heroGoofballLegalDestinations,
   twinJutsuLegalDestinations as heroTwinJutsuLegalDestinations,
   flightLegalDestinations as heroFlightLegalDestinations,
+  slimeLegalDestinations as heroSlimeLegalDestinations,
+  slimeShiftOptions,
+  resolveSlimeShiftClick,
+  type SlimeShiftOption,
+  jugTierOf as heroJugTierOf,
   turnsUntilReady as heroTurnsUntilReady,
   sqToIdx as heroSqToIdx,
   idxToSq as heroIdxToSq,
@@ -139,8 +144,10 @@ export function Home() {
   const [twinJutsuFrom, setTwinJutsuFrom] = useState<string | null>(null);
   // Flight is two-click too (pick piece → pick empty destination square).
   const [flightFrom, setFlightFrom] = useState<string | null>(null);
+  // Slime too (pick mini king → pick the diagonal corner it expands toward).
+  const [slimeFrom, setSlimeFrom] = useState<string | null>(null);
   useEffect(() => {
-    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); }
+    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null); }
   }, [heroAbilityArmed]);
   // Transient ability animation overlay (hero free play). Bumped to a fresh
   // key each time it should re-fire.
@@ -155,7 +162,7 @@ export function Home() {
   const [mergeAnim, setMergeAnim] = useState<{ from: string; to: string; fromLetter: string; toLetter: string; mergedLetter: string; key: number; releasePx?: { x: number; y: number } } | null>(null);
   useEffect(() => {
     if (!slideAnim) return;
-    const t = window.setTimeout(() => setSlideAnim(null), 320);
+    const t = window.setTimeout(() => setSlideAnim(null), 760);
     return () => clearTimeout(t);
   }, [slideAnim]);
   useEffect(() => {
@@ -376,8 +383,21 @@ export function Home() {
     if (heroViewState.heroes[heroViewState.turn].hero === 'flight' && flightFrom) {
       return new Set(heroFlightLegalDestinations(heroViewState, heroSqToIdx(flightFrom)).map(heroIdxToSq));
     }
+    // Slime: once a mini king is picked, surface the expansion corners.
+    if (heroViewState.heroes[heroViewState.turn].hero === 'slime' && slimeFrom) {
+      return new Set(heroSlimeLegalDestinations(heroViewState, heroSqToIdx(slimeFrom)).map(heroIdxToSq));
+    }
     return new Set(heroAbilityTargets(heroViewState).map((idx) => heroIdxToSq(idx)));
-  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length, goofballFrom, twinJutsuFrom, flightFrom]);
+  }, [freeVariant, heroAbilityArmed, heroViewState, freeViewPly, heroResults.length, goofballFrom, twinJutsuFrom, flightFrom, slimeFrom]);
+
+  // Whole-blob shift options when a Slime big-king tile is selected — drives
+  // the direction-arrow UI and click/drop resolution.
+  const heroSlimeShiftOpts = useMemo<SlimeShiftOption[]>(() => {
+    if (freeVariant !== 'hero' || heroAbilityArmed || !freeSelected) return [];
+    const p = heroViewState.board[heroSqToIdx(freeSelected)];
+    if (!p || p.color !== heroViewState.turn || p.letter.toUpperCase() !== 'S') return [];
+    return slimeShiftOptions(heroViewState, heroSqToIdx(freeSelected));
+  }, [freeVariant, heroAbilityArmed, freeSelected, heroViewState]);
 
   const heroLegalTargets = useMemo(() => {
     if (freeVariant !== 'hero') return [];
@@ -390,10 +410,17 @@ export function Home() {
       }));
     }
     if (!freeSelected) return [];
+    // Selected blob tile: every square the blob can slide onto is clickable.
+    // MergeBoard suppresses the dots for these and draws direction arrows.
+    if (heroSlimeShiftOpts.length > 0) {
+      return heroSlimeShiftOpts.flatMap((o) => o.entered.map((i) => ({
+        to: heroIdxToSq(i), isCapture: o.isCapture, isMerge: false,
+      })));
+    }
     return heroLegal(heroViewState, freeSelected).map((m) => ({
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
-  }, [freeVariant, freeSelected, heroViewState, heroAbilityArmed, heroAbilityTargetSet]);
+  }, [freeVariant, freeSelected, heroViewState, heroAbilityArmed, heroAbilityTargetSet, heroSlimeShiftOpts]);
 
   // Subtle dark tint on the previous move's from/to squares. Ability (`!`)
   // UCIs have no meaningful "from" and are skipped; cash buys (`+Lxx`) tint
@@ -433,8 +460,9 @@ export function Home() {
         if (bRevealed) return { from: b, to: b };
         return null;
       }
-      if (hero === 'G' || hero === 'L') {
-        // Goofball / Flight both move a visible piece from → to.
+      if (hero === 'G' || hero === 'L' || hero === 'S') {
+        // Goofball / Flight move a visible piece from → to; Slime grows a
+        // mini king (from) toward an empty corner (to) — tint both ends.
         return { from: uci.slice(2, 4), to: uci.slice(4, 6) };
       }
       const sq = uci.slice(2, 4);
@@ -633,15 +661,19 @@ export function Home() {
     else if (res.result.abilityUsed === 'icbm') sfx.playMissileLaunch();
     else if (res.result.abilityUsed === 'goofball') sfx.playGoofball();
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
+    else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
+    else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if (res.result.checkmate) sfx.playWin();
-    else if (res.result.check) sfx.playCheck();
+    // jugPhantomCheck: a sub-tier-3 Juggernaut can't actually be checked but
+    // the design calls for the check sound to play anyway as a flavor cue.
+    else if (res.result.check || res.result.jugPhantomCheck) sfx.playCheck();
     if (res.result.abilityUsed && animationsEnabled) {
       const ab = res.result.abilityUsed;
       // harem is passive and icbm has its own missile UI; skip overlay.
-      if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
+      if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut') {
         const moverColor = base.turn;
         if (ab === 'flight') {
           // !L<from><to>[<promo>] — fly the selected piece from → to.
@@ -656,19 +688,44 @@ export function Home() {
             flyerLetter: flyer?.letter,
             key: `${base.ply}-${res.result.uci}-${Date.now()}`,
           });
+        } else if (ab === 'slime') {
+          // !S<from><to> — the mini king grows toward the corner.
+          setHeroAbilityAnim({
+            kind: 'slime-expand',
+            fromSq: res.result.uci.slice(2, 4),
+            toSq: res.result.uci.slice(4, 6),
+            color: moverColor,
+            key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+          });
         } else {
           const targetSq = res.result.uci.slice(2);
           let fromSq: string | undefined;
           if (ab === 'warlord') {
             fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
           }
-          setHeroAbilityAnim({
-            kind: ab,
-            fromSq,
-            toSq: targetSq,
-            color: moverColor,
-            key: `${base.ply}-${res.result.uci}-${Date.now()}`,
-          });
+          let handledJugLeap = false;
+          if (ab === 'juggernaut' && heroJugTierOf(base, moverColor) === 2) {
+            fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
+            if (fromSq) {
+              setHeroAbilityAnim({
+                kind: 'juggernaut-leap',
+                fromSq,
+                toSq: targetSq,
+                color: moverColor,
+                key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+              });
+              handledJugLeap = true;
+            }
+          }
+          if (!handledJugLeap) {
+            setHeroAbilityAnim({
+              kind: ab,
+              fromSq,
+              toSq: targetSq,
+              color: moverColor,
+              key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+            });
+          }
         }
       }
     }
@@ -738,6 +795,61 @@ export function Home() {
         }
       }
     }
+    // Slime split — a big-king tile was captured / crushed / blasted and the
+    // blob burst into mini kings. Squelch + goo splatter + pop the minis in.
+    if (res.result.slimeSplits && res.result.slimeSplits.length > 0) {
+      sfx.playSlimeSplit();
+      if (animationsEnabled) {
+        const tile = res.result.slimeSplits[0].tiles[0];
+        if (tile) {
+          setHeroAbilityAnim({
+            kind: 'slime-split',
+            toSq: tile,
+            color: 'w',
+            key: `slime-split-${base.ply}-${tile}-${Date.now()}`,
+          });
+        }
+        const minis = res.result.slimeSplits.flatMap((s) => s.minis);
+        if (minis.length > 0) setPopAnim({ squares: minis, key: Date.now() });
+      }
+    }
+    // Juggernaut tier-up — a capture attempt (or missile) fed the boss this
+    // move: the attacker died and the Juggernaut powered up. A board-move
+    // capture slides the doomed attacker onto the (unmoving) Juggernaut and
+    // explodes it at impact; missile feeds just quake immediately.
+    let jugAbsorbed = false;
+    for (const c of ['w', 'b'] as const) {
+      if (heroJugTierOf(res.state, c) > heroJugTierOf(base, c)) {
+        const jugSq = heroKingSquareOf(res.state.board, c);
+        const isBoardMove = /^[a-h][1-8][a-h][1-8]/.test(uci);
+        const fromSq = isBoardMove ? uci.slice(0, 2) : null;
+        const attacker = fromSq ? base.board[heroSqToIdx(fromSq)] : null;
+        if (jugSq && isBoardMove && uci.slice(2, 4) === jugSq && attacker) {
+          jugAbsorbed = true;
+          window.setTimeout(() => sfx.playJugQuake(), 320);
+          if (animationsEnabled) {
+            setHeroAbilityAnim({
+              kind: 'jug-absorb',
+              fromSq: fromSq!,
+              toSq: jugSq,
+              color: c,
+              flyerLetter: attacker.letter,
+              key: `jug-absorb-${base.ply}-${c}-${Date.now()}`,
+            });
+          }
+        } else {
+          sfx.playJugQuake();
+          if (animationsEnabled && jugSq) {
+            setHeroAbilityAnim({
+              kind: 'juggernaut',
+              toSq: jugSq,
+              color: c,
+              key: `jug-tier-${base.ply}-${c}-${Date.now()}`,
+            });
+          }
+        }
+      }
+    }
     setHeroStates([...truncStates, res.state]);
     setHeroResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
@@ -746,7 +858,9 @@ export function Home() {
     // Skip slide on ability moves — abilityAnim already shows the movement
     // effect for Flight, and the others don't move a piece at all. Twin-Jutsu
     // does swap two pieces, so we drive a pair of slides at each endpoint.
-    if (slides && slides.length > 0 && !res.result.abilityUsed && animationsEnabled) {
+    // A Juggernaut absorb also skips it — the jug-absorb overlay carries the
+    // attacker's motion, and the Juggernaut itself must not appear to move.
+    if (slides && slides.length > 0 && !res.result.abilityUsed && !jugAbsorbed && animationsEnabled) {
       setSlideAnim({ moves: slides, key: Date.now() });
     } else if (res.result.abilityUsed === 'twin-jutsu' && animationsEnabled) {
       const a = uci.slice(2, 4);
@@ -757,6 +871,14 @@ export function Home() {
       const from = uci.slice(2, 4);
       const to = uci.slice(4, 6);
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
+      // Quake leap / rampage (tiers 2-3) move the Juggernaut — slide it from
+      // its pre-move square. Convert (tier 1) keeps it in place: pop the
+      // flipped piece instead.
+      const from = heroKingSquareOf(base.board, base.turn);
+      const to = uci.slice(2, 4);
+      if (heroJugTierOf(base, base.turn) === 1) setPopAnim({ squares: [to], key: Date.now() });
+      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     }
     // Pop the destination on promotions and necromancer spawns.
     if (animationsEnabled) {
@@ -895,6 +1017,19 @@ export function Home() {
         }
       }
       return false;
+    }
+    // Dragging the big king: the grabbed tile's travel gives the slide
+    // direction; drops further out resolve like a click on an entered square.
+    const fromPiece2 = heroViewState.board[heroSqToIdx(from)];
+    if (fromPiece2 && fromPiece2.color === heroViewState.turn && fromPiece2.letter.toUpperCase() === 'S') {
+      const opts = slimeShiftOptions(heroViewState, heroSqToIdx(from));
+      const df = to.charCodeAt(0) - from.charCodeAt(0);
+      const dr = parseInt(to[1], 10) - parseInt(from[1], 10);
+      const opt = (Math.abs(df) <= 1 && Math.abs(dr) <= 1
+        ? opts.find((o) => o.df === df && o.dr === dr)
+        : undefined) ?? resolveSlimeShiftClick(opts, heroSqToIdx(to));
+      if (!opt) return false;
+      return applyHeroMove(opt.uci.slice(0, 2), opt.uci.slice(2, 4));
     }
     if (isPromotionMove('hero', from, to)) {
       setFreePromo({ from, to, variant: 'hero', viaClick: false });
@@ -1047,12 +1182,40 @@ export function Home() {
         setFlightFrom(null);
         return;
       }
+      if (armedHero === 'slime') {
+        // Two-click expansion: pick a mini king, then the diagonal corner of
+        // the 2×2 quadrant it grows into.
+        if (!slimeFrom) {
+          if (heroAbilityTargetSet.has(square)) {
+            setSlimeFrom(square);
+          } else {
+            setHeroAbilityArmed(false);
+          }
+          return;
+        }
+        if (heroAbilityTargetSet.has(square)) {
+          applyHeroAbility(square, slimeFrom);
+          setSlimeFrom(null);
+          return;
+        }
+        setSlimeFrom(null);
+        return;
+      }
       if (heroAbilityTargetSet.has(square)) {
         applyHeroAbility(square);
         return;
       }
       setHeroAbilityArmed(false);
       return;
+    }
+    // Selected blob: resolve the click to a whole-blob slide and fire its
+    // canonical uci (shared entered squares resolve orthogonal-first).
+    if (freeSelected && heroSlimeShiftOpts.length > 0) {
+      const opt = resolveSlimeShiftClick(heroSlimeShiftOpts, heroSqToIdx(square));
+      if (opt) {
+        applyHeroMove(opt.uci.slice(0, 2), opt.uci.slice(2, 4));
+        return;
+      }
     }
     if (freeSelected && heroLegalTargets.some((t) => t.to === square)) {
       if (isPromotionMove('hero', freeSelected, square)) {
@@ -1226,10 +1389,12 @@ export function Home() {
               else if (r.abilityUsed === 'icbm') sfx.playMissileLaunch();
               else if (r.abilityUsed === 'goofball') sfx.playGoofball();
               else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
+              else if (r.abilityUsed === 'slime') sfx.playSlimeExpand();
+              else if (r.abilityUsed === 'juggernaut') sfx.playJugQuake();
               else if (r.castled) sfx.playCastle();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
-              if (r.check && !r.checkmate) sfx.playCheck();
+              if ((r.check || r.jugPhantomCheck) && !r.checkmate) sfx.playCheck();
             } else {
               if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
               if (r.check) sfx.playCheckReversed();
@@ -1244,7 +1409,7 @@ export function Home() {
         const nextState = heroStates[p + 1];
         if (r && r.abilityUsed && prevState && nextState) {
           const ab = r.abilityUsed;
-          if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation') {
+          if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut') {
             const moverColor = prevState.turn;
             if (ab === 'flight') {
               // !L<from><to>[<promo>] — fly the selected piece from → to.
@@ -1259,19 +1424,45 @@ export function Home() {
                 flyerLetter: flyer?.letter,
                 key: `${prevState.ply}-${r.uci}-${Date.now()}`,
               });
+            } else if (ab === 'slime') {
+              // !S<from><to> — the mini king grows toward the corner.
+              setHeroAbilityAnim({
+                kind: 'slime-expand',
+                fromSq: r.uci.slice(2, 4),
+                toSq: r.uci.slice(4, 6),
+                color: moverColor,
+                key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+              });
             } else {
               const targetSq = r.uci.slice(2);
               let fromSq: string | undefined;
               if (ab === 'warlord') {
                 fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
               }
-              setHeroAbilityAnim({
-                kind: ab,
-                fromSq,
-                toSq: targetSq,
-                color: moverColor,
-                key: `${prevState.ply}-${r.uci}-${Date.now()}`,
-              });
+              let handledJugLeap = false;
+              if (ab === 'juggernaut' && heroJugTierOf(prevState, moverColor) === 2) {
+                fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
+                if (fromSq) {
+                  setHeroAbilityAnim({
+                    kind: 'juggernaut-leap',
+                    fromSq,
+                    toSq: targetSq,
+                    color: moverColor,
+                    key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+                  });
+                  setSlideAnim({ moves: [{ from: fromSq, to: targetSq }], key: Date.now() });
+                  handledJugLeap = true;
+                }
+              }
+              if (!handledJugLeap) {
+                setHeroAbilityAnim({
+                  kind: ab,
+                  fromSq,
+                  toSq: targetSq,
+                  color: moverColor,
+                  key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+                });
+              }
             }
           }
         }
@@ -1328,6 +1519,54 @@ export function Home() {
                 color: 'w',
                 key: `frost-shatter-${prevState.ply}-${f.idx}-${Date.now()}`,
               });
+            }
+          }
+          // Replay the slime split (squelch + splatter + mini pops) when
+          // scrubbing into the ply on which a blob burst.
+          if (r.slimeSplits && r.slimeSplits.length > 0) {
+            sfx.playSlimeSplit();
+            const tile = r.slimeSplits[0].tiles[0];
+            if (tile) {
+              setHeroAbilityAnim({
+                kind: 'slime-split',
+                toSq: tile,
+                color: 'w',
+                key: `slime-split-${prevState.ply}-${tile}-${Date.now()}`,
+              });
+            }
+            const minis = r.slimeSplits.flatMap((s) => s.minis);
+            if (minis.length > 0) setPopAnim({ squares: minis, key: Date.now() });
+          }
+          // Replay the Juggernaut tier-up when scrubbing into the ply on
+          // which a capture attempt fed it — attacker slides in + explodes
+          // for board-move captures, plain quake otherwise.
+          for (const c of ['w', 'b'] as const) {
+            if (heroJugTierOf(nextState, c) > heroJugTierOf(prevState, c)) {
+              const jugSq = heroKingSquareOf(nextState.board, c);
+              const isBoardMove = /^[a-h][1-8][a-h][1-8]/.test(r.uci);
+              const fromSq = isBoardMove ? r.uci.slice(0, 2) : null;
+              const attacker = fromSq ? prevState.board[heroSqToIdx(fromSq)] : null;
+              if (jugSq && isBoardMove && r.uci.slice(2, 4) === jugSq && attacker) {
+                window.setTimeout(() => sfx.playJugQuake(), 320);
+                setHeroAbilityAnim({
+                  kind: 'jug-absorb',
+                  fromSq: fromSq!,
+                  toSq: jugSq,
+                  color: c,
+                  flyerLetter: attacker.letter,
+                  key: `jug-absorb-${prevState.ply}-${c}-${Date.now()}`,
+                });
+              } else {
+                sfx.playJugQuake();
+                if (jugSq) {
+                  setHeroAbilityAnim({
+                    kind: 'juggernaut',
+                    toSq: jugSq,
+                    color: c,
+                    key: `jug-tier-${prevState.ply}-${c}-${Date.now()}`,
+                  });
+                }
+              }
             }
           }
         }
@@ -1626,6 +1865,8 @@ export function Home() {
                         else if (next === 'icbm') sfx.playMissileLaunch();
                         else if (next === 'goofball') sfx.playGoofball();
                         else if (next === 'twin-jutsu') sfx.playTwinJutsu();
+                        else if (next === 'slime') sfx.playSlimeExpand();
+                        else if (next === 'juggernaut') sfx.playJugQuake();
                       }
                       setHeroW(next);
                     }}
@@ -1650,6 +1891,8 @@ export function Home() {
                         else if (next === 'icbm') sfx.playMissileLaunch();
                         else if (next === 'goofball') sfx.playGoofball();
                         else if (next === 'twin-jutsu') sfx.playTwinJutsu();
+                        else if (next === 'slime') sfx.playSlimeExpand();
+                        else if (next === 'juggernaut') sfx.playJugQuake();
                       }
                       setHeroB(next);
                     }}
@@ -1669,6 +1912,8 @@ export function Home() {
                 onArm={() => { setFreeSelected(null); setHeroAbilityArmed(true); sfx.playSelect(); }}
                 onCancel={() => setHeroAbilityArmed(false)}
                 compact
+                myJugTier={heroJugTierOf(heroViewState, heroViewState.turn)}
+                oppJugTier={heroJugTierOf(heroViewState, heroViewState.turn === 'w' ? 'b' : 'w')}
               />
             </div>
           )}
@@ -1802,7 +2047,7 @@ export function Home() {
                 <MergeBoard
                   board={heroViewState.board as unknown as (MergePiece | null)[]}
                   orientation={freeOrientation}
-                  selectedSquare={heroAbilityArmed ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? null) : freeSelected}
+                  selectedSquare={heroAbilityArmed ? (goofballFrom ?? twinJutsuFrom ?? flightFrom ?? slimeFrom ?? null) : freeSelected}
                   legalTargets={heroLegalTargets}
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleHeroDrop}
@@ -1866,6 +2111,34 @@ export function Home() {
                     }
                     return out;
                   })()}
+                  slimeShiftArrows={heroSlimeShiftOpts.map((o) => ({ df: o.df, dr: o.dr, isCapture: o.isCapture }))}
+                  slimeBigKings={heroViewState.slimes
+                    .map((g) => {
+                      const ref = heroViewState.board[g.tiles[0]];
+                      return ref ? { tiles: g.tiles.map(heroIdxToSq), color: ref.color } : null;
+                    })
+                    .filter((g): g is { tiles: string[]; color: 'w' | 'b' } => g !== null)}
+                  slimeKingSquares={(() => {
+                    const out: string[] = [];
+                    for (let i = 0; i < 64; i++) {
+                      const p = heroViewState.board[i];
+                      if (!p || p.letter.toUpperCase() !== 'K') continue;
+                      if (heroViewState.heroes[p.color].hero === 'slime') out.push(heroIdxToSq(i));
+                    }
+                    return out;
+                  })()}
+                  juggernauts={(() => {
+                    const out: { sq: string; tier: number }[] = [];
+                    for (const c of ['w', 'b'] as const) {
+                      if (heroViewState.heroes[c].hero !== 'juggernaut') continue;
+                      const sq = heroKingSquareOf(heroViewState.board, c);
+                      if (sq) out.push({ sq, tier: heroViewState.jugTier[c] });
+                    }
+                    return out;
+                  })()}
+                  stunnedSquares={heroViewState.stunned
+                    .filter((s) => heroViewState.ply < s.expiresAtPly)
+                    .map((s) => heroIdxToSq(s.idx))}
                 />
               )}
               {freePromo && (
