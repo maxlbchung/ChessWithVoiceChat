@@ -1129,5 +1129,8 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'promotion': return 'by pawn promotion';
+    case 'pawns-cleared': return 'all pawns captured';
+    case 'queen-captured': return 'queen captured';
   }
 }

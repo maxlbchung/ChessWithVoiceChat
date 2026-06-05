@@ -33,6 +33,12 @@ import {
   type MoveResult as HeroResult,
   type HeroKind,
 } from './heroChess';
+import {
+  applyMove as farmerApply,
+  initialState as farmerInitial,
+  type GameState as FarmerState,
+  type MoveResult as FarmerResult,
+} from './farmerChess';
 import type {
   GameEndReason,
   GameOutcome,
@@ -175,7 +181,7 @@ export function parseGameImport(text: string): ExportedGame {
   const o = raw as Record<string, unknown>;
 
   const variant = o.variant;
-  if (variant !== 'normal' && variant !== 'merge' && variant !== 'two' && variant !== 'cash' && variant !== 'hero') {
+  if (variant !== 'normal' && variant !== 'merge' && variant !== 'two' && variant !== 'cash' && variant !== 'hero' && variant !== 'farmer') {
     throw new GameImportError('Missing or unknown variant.');
   }
 
@@ -273,7 +279,8 @@ function isReason(v: unknown): v is GameEndReason {
   return (
     v === 'checkmate' || v === 'stalemate' || v === 'threefold' ||
     v === 'insufficient' || v === 'fifty-move' || v === 'resignation' ||
-    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect'
+    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' ||
+    v === 'promotion' || v === 'pawns-cleared' || v === 'queen-captured'
   );
 }
 
@@ -318,7 +325,13 @@ export type ReplayHero = {
   heroes: { w: HeroKind; b: HeroKind };
 };
 
-export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero;
+export type ReplayFarmer = {
+  variant: 'farmer';
+  states: FarmerState[];
+  results: FarmerResult[];
+};
+
+export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplayFarmer;
 
 export function buildReplay(exp: ExportedGame): Replay {
   if (exp.variant === 'normal') {
@@ -374,6 +387,17 @@ export function buildReplay(exp: ExportedGame): Replay {
       results.push(res.result);
     }
     return { variant: 'cash', states, results };
+  }
+  if (exp.variant === 'farmer') {
+    const states: FarmerState[] = [farmerInitial()];
+    const results: FarmerResult[] = [];
+    for (let i = 0; i < exp.moves.length; i++) {
+      const res = farmerApply(states[states.length - 1], exp.moves[i].uci);
+      if (!res) throw new GameImportError(`Illegal farmer move at ply ${i + 1} (${exp.moves[i].uci}).`);
+      states.push(res.state);
+      results.push(res.result);
+    }
+    return { variant: 'farmer', states, results };
   }
   if (!exp.heroes) throw new GameImportError('Hero match is missing heroes.');
   // heroBackRanks rebuilds a shuffled Twin-Jutsu start; absent → standard.

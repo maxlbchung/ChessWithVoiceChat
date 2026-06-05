@@ -826,7 +826,6 @@ export function FarmerGame() {
             {connState === 'connecting' && <span>connecting{connDetail ? ` (${connDetail})` : '…'}</span>}
             {connState === 'failed' && <span className="neg">failed: {connDetail}</span>}
           </div>
-          {inCheck && <div className="small neg">Check.</div>}
           <VoiceControls
             inline
             remoteStream={remoteStream}
@@ -1055,5 +1054,8 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'promotion': return 'by pawn promotion';
+    case 'pawns-cleared': return 'all pawns captured';
+    case 'queen-captured': return 'queen captured';
   }
 }

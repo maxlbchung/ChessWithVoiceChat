@@ -482,6 +482,7 @@ const VARIANT_LABEL: Record<ExportedGame['variant'], string> = {
   two: 'Guerrilla',
   cash: 'Cash Money',
   hero: 'Hero',
+  farmer: 'Farmer',
 };
 
 function totalPlyOf(r: Replay): number {
@@ -550,6 +551,11 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
         lastMove = { from: uci.slice(0, 2), to: uci.slice(2, 4) };
       }
     }
+    return { board: state.board as unknown as (MergePiece | null)[], lastMove };
+  }
+  if (r.variant === 'farmer') {
+    const state = r.states[viewPly] ?? r.states[0];
+    const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));
     return { board: state.board as unknown as (MergePiece | null)[], lastMove };
   }
   // hero
@@ -717,6 +723,8 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'promotion': return 'by pawn promotion';
+    case 'pawns-cleared': return 'all pawns captured';
+    case 'queen-captured': return 'queen captured';
   }
 }
-

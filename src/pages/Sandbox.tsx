@@ -38,7 +38,6 @@ import {
   flightLegalDestinations,
   slimeLegalDestinations,
   slimeShiftOptions,
-  resolveSlimeShiftClick,
   type SlimeShiftOption,
   isInCheck as heroIsInCheck,
   isCheckmate as heroIsCheckmate,
