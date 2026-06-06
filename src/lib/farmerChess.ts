@@ -1,16 +1,16 @@
 // Farmer - queen versus a full row of pawns.
 //
-// White is the queen side and starts with one queen on d1.
-// Black is the farmer side and starts with pawns on a7-h7.
+// White is the farmer side and starts with pawns on a2-h2.
+// Black is the queen side and starts with one queen on d8.
 //
 // Win conditions:
-//   - a black pawn reaches rank 1: farmer side wins immediately
-//   - white captures every pawn: queen side wins immediately
+//   - a white pawn reaches rank 8: farmer side wins immediately
+//   - black captures every pawn: queen side wins immediately
 //   - a pawn captures the queen: farmer side wins immediately
 
 export type FarmerColor = 'w' | 'b';
 
-export type PieceLetter = 'Q' | 'p';
+export type PieceLetter = 'P' | 'q';
 
 export type Piece = {
   color: FarmerColor;
@@ -80,9 +80,9 @@ function frOfIdx(idx: number): [number, number] {
 
 export function initialState(): GameState {
   const board: (Piece | null)[] = new Array(64).fill(null);
-  board[idxFR(3, 0)] = { color: 'w', letter: 'Q' };
+  board[idxFR(3, 7)] = { color: 'b', letter: 'q' };
   for (let f = 0; f < 8; f++) {
-    board[idxFR(f, 6)] = { color: 'b', letter: 'p' };
+    board[idxFR(f, 1)] = { color: 'w', letter: 'P' };
   }
   const state: GameState = {
     board,
@@ -99,11 +99,11 @@ function pseudoMoves(state: GameState, from: number): PseudoMove[] {
   const piece = state.board[from];
   if (!piece) return [];
   const [ff, fr] = frOfIdx(from);
-  if (piece.letter === 'Q') return pseudoQueen(state, from, ff, fr);
-  return pseudoPawn(state, from, ff, fr);
+  if (piece.letter === 'q') return pseudoQueen(state, from, ff, fr, piece.color);
+  return pseudoPawn(state, from, ff, fr, piece.color);
 }
 
-function pseudoQueen(state: GameState, from: number, ff: number, fr: number): PseudoMove[] {
+function pseudoQueen(state: GameState, from: number, ff: number, fr: number, color: FarmerColor): PseudoMove[] {
   const out: PseudoMove[] = [];
   for (const [df, dr] of QUEEN_DIRS) {
     let f = ff + df;
@@ -112,7 +112,7 @@ function pseudoQueen(state: GameState, from: number, ff: number, fr: number): Ps
       const t = idxFR(f, r);
       const dest = state.board[t];
       if (dest) {
-        if (dest.color === 'b') out.push({ from, to: t });
+        if (dest.color !== color) out.push({ from, to: t });
         break;
       }
       out.push({ from, to: t });
@@ -123,24 +123,26 @@ function pseudoQueen(state: GameState, from: number, ff: number, fr: number): Ps
   return out;
 }
 
-function pseudoPawn(state: GameState, from: number, ff: number, fr: number): PseudoMove[] {
+function pseudoPawn(state: GameState, from: number, ff: number, fr: number, color: FarmerColor): PseudoMove[] {
   const out: PseudoMove[] = [];
-  const oneR = fr - 1;
+  const dir = color === 'w' ? 1 : -1;
+  const startRank = color === 'w' ? 1 : 6;
+  const oneR = fr + dir;
   if (onBoard(ff, oneR) && !state.board[idxFR(ff, oneR)]) {
     out.push({ from, to: idxFR(ff, oneR) });
-    const twoR = fr - 2;
-    if (fr === 6 && onBoard(ff, twoR) && !state.board[idxFR(ff, twoR)]) {
+    const twoR = fr + 2 * dir;
+    if (fr === startRank && onBoard(ff, twoR) && !state.board[idxFR(ff, twoR)]) {
       out.push({ from, to: idxFR(ff, twoR), doublePawn: true });
     }
   }
 
   for (const df of [-1, 1]) {
     const f = ff + df;
-    const r = fr - 1;
+    const r = fr + dir;
     if (!onBoard(f, r)) continue;
     const t = idxFR(f, r);
     const dest = state.board[t];
-    if (dest && dest.color === 'w') out.push({ from, to: t });
+    if (dest && dest.color !== color) out.push({ from, to: t });
   }
 
   return out;
@@ -157,7 +159,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
 
   const mover = next.board[mv.from]!;
   const dest = next.board[mv.to];
-  if (dest || mover.letter === 'p') next.halfmove = 0;
+  if (dest || mover.letter === 'P') next.halfmove = 0;
   next.board[mv.to] = mover;
   next.board[mv.from] = null;
 
@@ -213,20 +215,20 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   const capturedPiece = state.board[toIdx];
   const next = applyPseudo(state, chosen);
   const [, toRank] = frOfIdx(toIdx);
-  const promoted = mover.letter === 'p' && toRank === 0;
-  const queenCaptured = capturedPiece?.letter === 'Q' || !hasQueen(next);
+  const promoted = mover.letter === 'P' && toRank === 7;
+  const queenCaptured = capturedPiece?.letter === 'q' || !hasQueen(next);
   const pawnsCleared = countPawns(next) === 0;
   let winner: FarmerColor | null = null;
   let winReason: FarmerWinReason | null = null;
 
   if (promoted) {
-    winner = 'b';
+    winner = 'w';
     winReason = 'promotion';
   } else if (queenCaptured) {
-    winner = 'b';
+    winner = 'w';
     winReason = 'queen-captured';
   } else if (pawnsCleared) {
-    winner = 'w';
+    winner = 'b';
     winReason = 'pawns-cleared';
   }
 
@@ -251,24 +253,24 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
 export function winnerOf(state: GameState): { winner: FarmerColor; reason: FarmerWinReason } | null {
   for (let i = 0; i < 64; i++) {
     const piece = state.board[i];
-    if (piece?.letter === 'p') {
+    if (piece?.letter === 'P') {
       const [, rank] = frOfIdx(i);
-      if (rank === 0) return { winner: 'b', reason: 'promotion' };
+      if (rank === 7) return { winner: 'w', reason: 'promotion' };
     }
   }
-  if (!hasQueen(state)) return { winner: 'b', reason: 'queen-captured' };
-  if (countPawns(state) === 0) return { winner: 'w', reason: 'pawns-cleared' };
+  if (!hasQueen(state)) return { winner: 'w', reason: 'queen-captured' };
+  if (countPawns(state) === 0) return { winner: 'b', reason: 'pawns-cleared' };
   return null;
 }
 
 function hasQueen(state: GameState): boolean {
-  return state.board.some((piece) => piece?.letter === 'Q');
+  return state.board.some((piece) => piece?.letter === 'q');
 }
 
 function countPawns(state: GameState): number {
   let count = 0;
   for (const piece of state.board) {
-    if (piece?.letter === 'p') count++;
+    if (piece?.letter === 'P') count++;
   }
   return count;
 }
@@ -313,8 +315,8 @@ export function fromFen(fen: string): GameState {
     for (const ch of row) {
       if (/[1-8]/.test(ch)) {
         f += parseInt(ch, 10);
-      } else if (ch === 'Q' || ch === 'p') {
-        board[idxFR(f, r)] = { color: ch === 'Q' ? 'w' : 'b', letter: ch };
+      } else if (ch === 'P' || ch === 'q') {
+        board[idxFR(f, r)] = { color: ch === 'P' ? 'w' : 'b', letter: ch };
         f++;
       }
     }

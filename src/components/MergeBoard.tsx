@@ -116,9 +116,12 @@ type Props = {
   // neutral stone king with `tier` pips (1-3) under it. The hero glow still
   // flows through kingGlows like any other hero king.
   juggernauts?: { sq: Square; tier: number }[] | null;
-  // Squares holding pieces stunned by the Juggernaut's quake leap — dizzy
-  // stars overlay. Stunned pieces can still be captured (unlike frozen).
+  // Squares holding pieces stunned by the Juggernaut's slam — dizzy stars
+  // overlay. Stunned pieces can still be captured (unlike frozen).
   stunnedSquares?: Square[] | null;
+  // Live earthquakes (Juggernaut tier-1). Each renders a shaking ground
+  // crack on its current square plus a small arrow indicating direction.
+  earthquakes?: { sq: Square; df: number; dr: number; color: 'w' | 'b' }[] | null;
 };
 
 export type MergeAnim = {
@@ -206,6 +209,7 @@ export function MergeBoard({
   slimeShiftArrows,
   juggernauts,
   stunnedSquares,
+  earthquakes,
 }: Props) {
   // Indexed map for O(1) per-square missile lookup during render.
   const missilesBySq = useMemo(() => {
@@ -352,6 +356,11 @@ export function MergeBoard({
     return m;
   }, [juggernauts]);
   const stunnedSet = useMemo(() => new Set(stunnedSquares ?? []), [stunnedSquares]);
+  const earthquakesBySq = useMemo(() => {
+    const m = new Map<Square, { df: number; dr: number; color: 'w' | 'b' }>();
+    for (const eq of earthquakes ?? []) m.set(eq.sq, { df: eq.df, dr: eq.dr, color: eq.color });
+    return m;
+  }, [earthquakes]);
 
   const slideMap = useMemo(() => {
     const m = new Map<Square, { dx: number; dy: number }>();
@@ -1084,6 +1093,53 @@ export function MergeBoard({
                         {m.pliesLeft}
                       </span>
                     </div>
+                  </div>
+                );
+              })()}
+              {(() => {
+                // Earthquake overlay — a shaking brown crack with a small
+                // directional arrow so the player can see where the wave
+                // is heading next ply.
+                const eq = earthquakesBySq.get(sq);
+                if (!eq) return null;
+                const size = squarePx;
+                // Arrow rotation: df is a file delta (+ = right), dr is a
+                // rank delta (+ = up the board). Screen y grows downward,
+                // so the visual angle uses -dr.
+                const angle = Math.atan2(-eq.dr, eq.df) * 180 / Math.PI;
+                return (
+                  <div
+                    className="earthquake-marker"
+                    aria-hidden
+                    style={{
+                      position: 'absolute',
+                      inset: '12%',
+                      pointerEvents: 'none',
+                      zIndex: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        borderRadius: '20%',
+                        background: 'radial-gradient(circle at 35% 30%, rgba(120, 70, 30, 0.55), rgba(60, 30, 10, 0.7))',
+                        boxShadow: '0 0 0.4rem rgba(150, 80, 30, 0.55), inset 0 0 0.3rem rgba(0, 0, 0, 0.6)',
+                      }}
+                    />
+                    <svg viewBox="0 0 24 24" width={size * 0.5} height={size * 0.5} style={{ position: 'relative', transform: `rotate(${angle}deg)`, filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.7))' }}>
+                      <path
+                        d="M 4 12 L 18 12 M 13 7 L 18 12 L 13 17"
+                        stroke="#ffd28a"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        fill="none"
+                      />
+                    </svg>
                   </div>
                 );
               })()}

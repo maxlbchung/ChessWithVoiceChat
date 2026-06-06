@@ -214,9 +214,9 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
   slime: {
     kind: 'slime',
     name: 'Slime',
-    blurb: 'Only pawns (on the 3rd rank) and a giant 2×2 king that slides one square, crushing what it lands on. Capturing one of its tiles splits it into three mini kings — you can’t be checked until a single king remains. Active: grow a mini king back into a big king.',
+    blurb: 'Starts with normal pieces. Active: grow your king into a giant 2×2 king that slides one square, crushing what it lands on. Capturing one of its tiles splits it into three mini kings — you can’t be checked until a single king remains. Active: grow a mini king back into a big king.',
     glowColor: '#7ed957',
-    cooldownTurns: 10,
+    cooldownTurns: 5,
   },
   juggernaut: {
     kind: 'juggernaut',
@@ -231,9 +231,9 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 // GameState.jugTier (1-3). The picker/abilities panel renders these so the
 // player always sees what their current tier does.
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
-  1: { name: 'Convert',    move: 'moves like a king',   blurb: 'Turn an enemy piece adjacent to the Juggernaut to your side.' },
-  2: { name: 'Quake Leap', move: 'moves like a knight', blurb: 'Jump like a knight — everything within 2 tiles of the landing is stunned for a turn.' },
-  3: { name: 'Rampage',    move: 'moves like a queen',  blurb: 'Charge to the left or right board edge, destroying everything in the path.' },
+  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile per ply in the chosen direction, killing the first enemy it lands on.' },
+  2: { name: 'Diagonal Charge', move: 'moves like a rook',  blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
+  3: { name: 'Slam',            move: 'moves like a king',  blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
 };
 
 export type AbilitySide = {
@@ -280,12 +280,27 @@ export type GameState = {
   // 'juggernaut'; stays at 1 otherwise. Rises when an enemy spends a piece
   // capturing the Juggernaut (the attacker dies, the Juggernaut powers up).
   jugTier: { w: number; b: number };
-  // Stunned pieces (Juggernaut quake leap). Like frozen but capturable: a
-  // stunned piece can't move and doesn't attack, but CAN be taken.
+  // Stunned pieces (Juggernaut slam). Like frozen but capturable: a stunned
+  // piece can't move and doesn't attack, but CAN be taken.
   stunned: { idx: number; expiresAtPly: number }[];
+  // Travelling earthquakes (Juggernaut tier-1 ability). Each one creeps one
+  // tile per ply in the direction it was launched, killing the first enemy
+  // it lands on and dissipating at the board edge.
+  earthquakes: Earthquake[];
 };
 
 export type SlimeGroup = { tiles: number[] };
+
+export type Earthquake = {
+  idx: number;
+  df: number;
+  dr: number;
+  // Side that spawned the wave — its own pieces ride it out untouched.
+  color: C2Color;
+  // Ply on which the wave was spawned; it sits still until ply advances
+  // past this value so its first move feels like "next turn".
+  spawnedAtPly: number;
+};
 
 export type Missile = {
   idx: number;
@@ -417,16 +432,12 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
   const haremBackRank: (PieceLetter | null)[]    = ['Q', 'N', 'Q', 'Q', 'K', 'Q', 'N', 'Q'];
   const mutationBackRank: (PieceLetter | null)[] = ['R', 'B', 'B', 'Q', 'K', 'B', 'B', 'R'];
   const warlordBackRank: (PieceLetter | null)[]  = ['R', 'N', 'B', null, 'K', 'B', 'N', 'R'];
-  // Slime fields no back-rank pieces at all — just pawns (moved up a rank
-  // below) and the 2×2 blob king.
-  const slimeBackRank: (PieceLetter | null)[]    = [null, null, null, null, null, null, null, null];
   // Juggernaut fields ONLY its king — no pawns either (cleared below).
   const jugBackRank: (PieceLetter | null)[]      = [null, null, null, null, 'K', null, null, null];
   const backRankFor = (hero: HeroKind): (PieceLetter | null)[] => {
     if (hero === 'harem') return haremBackRank;
     if (hero === 'mutation') return mutationBackRank;
     if (hero === 'warlord') return warlordBackRank;
-    if (hero === 'slime') return slimeBackRank;
     if (hero === 'juggernaut') return jugBackRank;
     return standardBackRank;
   };
@@ -450,22 +461,9 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
   if (heroB === 'warlord') {
     for (let f = 0; f < 8; f++) board[idxFR(f, 5)] = { color: 'b', letter: 'p' };
   }
-  // Slime: the pawn line moves one rank forward (3rd / 6th rank — no
-  // double-step from there, same as Warlord's forward pawns) and the king is
-  // a 2×2 blob of 'S' tiles centred on the d/e files of ranks 1-2 (7-8).
+  // Slime starts with a standard back rank and king — the player grows the
+  // king into a 2×2 blob via the active ability.
   const startSlimes: SlimeGroup[] = [];
-  if (heroW === 'slime') {
-    for (let f = 0; f < 8; f++) { board[idxFR(f, 1)] = null; board[idxFR(f, 2)] = { color: 'w', letter: 'P' }; }
-    const tiles = [idxFR(3, 0), idxFR(4, 0), idxFR(3, 1), idxFR(4, 1)];
-    for (const t of tiles) board[t] = { color: 'w', letter: 'S' };
-    startSlimes.push({ tiles });
-  }
-  if (heroB === 'slime') {
-    for (let f = 0; f < 8; f++) { board[idxFR(f, 6)] = null; board[idxFR(f, 5)] = { color: 'b', letter: 'p' }; }
-    const tiles = [idxFR(3, 7), idxFR(4, 7), idxFR(3, 6), idxFR(4, 6)];
-    for (const t of tiles) board[t] = { color: 'b', letter: 's' };
-    startSlimes.push({ tiles });
-  }
   // Juggernaut: a lone king and nothing else — clear that side's pawn line
   // (the back rank is already empty apart from the king).
   if (heroW === 'juggernaut') {
@@ -475,14 +473,13 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
     for (let f = 0; f < 8; f++) board[idxFR(f, 6)] = null;
   }
   // A side on a non-standard back rank (Harem's all-queens row, a Twin-Jutsu
-  // shuffle, or Slime's / Juggernaut's empty rank) can't castle — its
-  // king/rooks aren't on the squares the castling rules assume. Old replays
-  // without an override keep their standard rank, so their castling moves
-  // stay legal.
+  // shuffle, or Juggernaut's empty rank) can't castle — its king/rooks aren't
+  // on the squares the castling rules assume. Old replays without an override
+  // keep their standard rank, so their castling moves stay legal.
   const wStandard = !backRanks?.w || backRanks.w === 'RNBQKBNR';
   const bStandard = !backRanks?.b || backRanks.b === 'RNBQKBNR';
-  const wCastles = heroW !== 'harem' && heroW !== 'slime' && heroW !== 'juggernaut' && wStandard;
-  const bCastles = heroB !== 'harem' && heroB !== 'slime' && heroB !== 'juggernaut' && bStandard;
+  const wCastles = heroW !== 'harem' && heroW !== 'juggernaut' && wStandard;
+  const bCastles = heroB !== 'harem' && heroB !== 'juggernaut' && bStandard;
   const state: GameState = {
     board,
     turn: 'w',
@@ -507,6 +504,7 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
     slimes: startSlimes,
     jugTier: { w: 1, b: 1 },
     stunned: [],
+    earthquakes: [],
   };
   // Twin-Jutsu: mask every piece of that side at game-start. Pieces unmask
   // when they move (or are captured); the swap ability re-masks both endpoints.
@@ -595,6 +593,55 @@ function processMissileLandings(next: GameState): { kingDestroyed: C2Color | nul
   return { kingDestroyed };
 }
 
+// Advance every live earthquake one tile in its direction. Waves dissipate
+// at the board edge; an enemy piece on the new tile dies and the wave dies
+// with it. Friendly pieces ride out the wave untouched. Newly-spawned waves
+// sit still on the ply they were created — their first move happens on the
+// next ply.
+function processEarthquakes(next: GameState): { kingDestroyed: C2Color | null } {
+  if (next.earthquakes.length === 0) return { kingDestroyed: null };
+  const hadW = hasAnyKingSquare(next, 'w');
+  const hadB = hasAnyKingSquare(next, 'b');
+  const surviving: Earthquake[] = [];
+  for (const eq of next.earthquakes) {
+    if (eq.spawnedAtPly >= next.ply) {
+      surviving.push(eq);
+      continue;
+    }
+    const [f, r] = frOfIdx(eq.idx);
+    const nf = f + eq.df, nr = r + eq.dr;
+    if (!onBoard(nf, nr)) continue;
+    const newIdx = idxFR(nf, nr);
+    const victim = next.board[newIdx];
+    if (victim && victim.color !== eq.color) {
+      // Sub-tier-3 Juggernaut absorbs the wave and tiers up, exactly like
+      // an ICBM hit. The wave dies on contact either way.
+      const jt = jugTierAt(next, newIdx);
+      if (jt >= 1 && jt < 3) {
+        next.jugTier[victim.color] = jt + 1;
+        continue;
+      }
+      const up = victim.letter.toUpperCase();
+      if (up === 'S') splitSlimeGroupAt(next, newIdx);
+      next.board[newIdx] = null;
+      next.frozen = next.frozen.filter((fz) => fz.idx !== newIdx);
+      next.stunned = next.stunned.filter((s) => s.idx !== newIdx);
+      if (newIdx === 56) next.castling.wQ = false;
+      if (newIdx === 63) next.castling.wK = false;
+      if (newIdx === 0)  next.castling.bQ = false;
+      if (newIdx === 7)  next.castling.bK = false;
+      if (next.masked) next.masked[newIdx] = false;
+      continue;
+    }
+    surviving.push({ ...eq, idx: newIdx });
+  }
+  next.earthquakes = surviving;
+  let kingDestroyed: C2Color | null = null;
+  if (hadW && !hasAnyKingSquare(next, 'w')) kingDestroyed = 'w';
+  else if (hadB && !hasAnyKingSquare(next, 'b')) kingDestroyed = 'b';
+  return { kingDestroyed };
+}
+
 // ------------------------------------------------------------------
 // Pseudo-move generation (standard chess; no castling)
 // ------------------------------------------------------------------
@@ -631,12 +678,12 @@ function pseudoMoves(state: GameState, from: number): PseudoMove[] {
   const up = p.letter.toUpperCase();
   if (up === 'P') pseudoPawn(state, from, ff, fr, p, out);
   else if (up === 'K') {
-    // Juggernaut passive: movement grows with tier — king steps at tier 1,
-    // knight jumps at tier 2, queen slides at tier 3. A Juggernaut side has
+    // Juggernaut passive: tier 1 slides like a queen, tier 2 like a rook,
+    // tier 3 falls back to single-square king steps. A Juggernaut side has
     // no castling rights, so pseudoKing's castle block stays dormant.
     const jt = jugTierAt(state, from);
-    if (jt === 2) pseudoKnight(state, from, ff, fr, p, out);
-    else if (jt >= 3) pseudoSliding(state, from, ff, fr, p, EIGHT_DIRS, out);
+    if (jt === 1) pseudoSliding(state, from, ff, fr, p, EIGHT_DIRS, out);
+    else if (jt === 2) pseudoSliding(state, from, ff, fr, p, ROOK_DIRS, out);
     else pseudoKing(state, from, ff, fr, p, out);
   }
   // Slime big-king tile — shifts the whole 2×2 blob one square.
@@ -846,12 +893,7 @@ function pseudoKnight(s: GameState, from: number, ff: number, fr: number, p: Pie
 
 function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece, out: PseudoMove[]) {
   const dir = p.color === 'w' ? 1 : -1;
-  // Slime pawns start one rank forward (3rd / 6th) — that's their home rank,
-  // so the initial double-step (and the en-passant window it opens) moves up
-  // with them. Pawns can't move backward, so a slime pawn on the 3rd rank is
-  // always still on its home square.
-  const isSlime = s.heroes[p.color].hero === 'slime';
-  const startRank = p.color === 'w' ? (isSlime ? 2 : 1) : (isSlime ? 5 : 6);
+  const startRank = p.color === 'w' ? 1 : 6;
   const promoRank = p.color === 'w' ? 7 : 0;
   // Mutation-hero side gets +knight-fused promotion options (Z=Q+N, C=R+N,
   // A=B+N). Plain N is in the base list — the Z/C/A variants add a knight
@@ -925,7 +967,9 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     const up = p.letter.toUpperCase();
     if (up === 'K') {
       const jt = jugTierAt(state, idx);
-      if (jt === 0 || jt === 1) return true;
+      // Non-jug kings (tier 0) and tier-3 jugs (king movement) threaten
+      // adjacent squares. Tier 1/2 use the queen/rook ray sections below.
+      if (jt === 0 || jt === 3) return true;
     }
     if (up === 'S') {
       const group = state.slimes.find((g) => g.tiles.includes(idx));
@@ -936,8 +980,7 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
       }
     }
   }
-  // Knight — N plus the merged forms (A/C/Z all carry knight movement) and
-  // a tier-2 Juggernaut king.
+  // Knight — N plus the merged forms (A/C/Z all carry knight movement).
   for (const [df, dr] of KNIGHT_OFFSETS) {
     const f = tf + df, r = tr + dr;
     if (!onBoard(f, r)) continue;
@@ -947,10 +990,9 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (inert(idx)) continue;
     const up = p.letter.toUpperCase();
     if (up === 'N' || up === 'A' || up === 'C' || up === 'Z') return true;
-    if (up === 'K' && jugTierAt(state, idx) === 2) return true;
   }
   // Orthogonal rays — R / Q plus merged C (rook+N), Z (queen+N) and a
-  // tier-3 Juggernaut king.
+  // tier-1 (queen) or tier-2 (rook) Juggernaut king.
   for (const [df, dr] of ROOK_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
@@ -960,7 +1002,7 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
         if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'R' || up === 'Q' || up === 'C' || up === 'Z') return true;
-          if (up === 'K' && jugTierAt(state, idx) === 3) return true;
+          if (up === 'K' && (jugTierAt(state, idx) === 1 || jugTierAt(state, idx) === 2)) return true;
         }
         break;
       }
@@ -968,7 +1010,7 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     }
   }
   // Diagonal rays — B / Q plus merged A (bishop+N), Z (queen+N) and a
-  // tier-3 Juggernaut king.
+  // tier-1 Juggernaut king (queen movement).
   for (const [df, dr] of BISHOP_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
@@ -978,7 +1020,7 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
         if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'B' || up === 'Q' || up === 'A' || up === 'Z') return true;
-          if (up === 'K' && jugTierAt(state, idx) === 3) return true;
+          if (up === 'K' && jugTierAt(state, idx) === 1) return true;
         }
         break;
       }
@@ -1145,45 +1187,32 @@ export function abilityTargets(state: GameState): number[] {
     }
     return out;
   } else if (hero === 'juggernaut') {
-    // Tier-dependent, all single-click. Tier 1: convert an adjacent enemy.
-    // Tier 2: quake-leap to a knight square. Tier 3: rampage to a rank edge.
+    // Tier-dependent, all single-click. Tier 1: pick an adjacent square to
+    // spawn an earthquake heading that direction. Tier 2: pick a diagonal
+    // edge corner to charge into. Tier 3: click the king itself to slam.
     const tier = state.jugTier[color];
     const k = findKing(state, color);
     if (k === -1) return [];
     const [kf, kr] = frOfIdx(k);
     if (tier === 1) {
-      // Adjacent enemy pieces — kings and Slime blob tiles excluded.
+      // Earthquake direction picker — every on-board adjacent square.
       for (const [df, dr] of EIGHT_DIRS) {
         const f = kf + df, r = kr + dr;
         if (!onBoard(f, r)) continue;
-        const idx = idxFR(f, r);
-        const p = state.board[idx];
-        if (!p || p.color === color) continue;
-        const up = p.letter.toUpperCase();
-        if (up === 'K' || up === 'S') continue;
-        out.push(idx);
+        out.push(idxFR(f, r));
       }
     } else if (tier === 2) {
-      // Knight-jump landings: empty squares or capturable enemy pieces
-      // (frozen pieces can't be captured; kings/blob tiles can't be taken
-      // by a move).
-      for (const [df, dr] of KNIGHT_OFFSETS) {
-        const f = kf + df, r = kr + dr;
+      // Diagonal charge: walk each of the four diagonals to the board
+      // edge and surface that corner-most square as the target.
+      for (const [df, dr] of BISHOP_DIRS) {
+        let f = kf + df, r = kr + dr;
         if (!onBoard(f, r)) continue;
-        const idx = idxFR(f, r);
-        const p = state.board[idx];
-        if (p) {
-          if (p.color === color) continue;
-          const up = p.letter.toUpperCase();
-          if (up === 'K' || up === 'S') continue;
-          if (isFrozen(state, idx)) continue;
-        }
-        out.push(idx);
+        while (onBoard(f + df, r + dr)) { f += df; r += dr; }
+        out.push(idxFR(f, r));
       }
     } else {
-      // Rampage destinations: the left and right edges of the current rank.
-      if (kf !== 0) out.push(idxFR(0, kr));
-      if (kf !== 7) out.push(idxFR(7, kr));
+      // Slam fires from the king's own square — clicking it confirms.
+      out.push(k);
     }
   } else if (hero === 'goofball') {
     // Goofball picks an OPPONENT'S piece to force-move. The "targets"
@@ -1379,6 +1408,7 @@ function applyAbility(
     slimes: state.slimes.map((g) => ({ tiles: g.tiles.slice() })),
     jugTier: { ...state.jugTier },
     stunned: state.stunned.slice(),
+    earthquakes: state.earthquakes.slice(),
   };
 
   if (hero === 'frost') {
@@ -1525,71 +1555,48 @@ function applyAbility(
     const k = findKing(next, color);
     if (k !== -1) {
       if (tier === 1) {
-        // Convert: flip the adjacent enemy piece to this side. The piece
-        // keeps its square and letter; only the allegiance (and case)
-        // changes. Counts as material progress for the 50-move clock.
-        const p = next.board[targetIdx];
-        if (p) {
-          const up = p.letter.toUpperCase();
-          next.board[targetIdx] = {
-            color,
-            letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter,
-          };
+        // Earthquake: spawn a creeping wave on the adjacent square in the
+        // chosen direction. If an enemy is already there it dies and the
+        // wave dissipates with it; otherwise the wave sits this ply and
+        // advances next ply via processEarthquakes.
+        const [kf, kr] = frOfIdx(k);
+        const [tf, tr] = frOfIdx(targetIdx);
+        const df = Math.sign(tf - kf);
+        const dr = Math.sign(tr - kr);
+        const victim = next.board[targetIdx];
+        if (victim && victim.color !== color) {
+          const up = victim.letter.toUpperCase();
+          if (up === 'S') splitSlimeGroupAt(next, targetIdx);
+          next.board[targetIdx] = null;
+          next.frozen = next.frozen.filter((fz) => fz.idx !== targetIdx);
+          next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
+          if (targetIdx === 56) next.castling.wQ = false;
+          if (targetIdx === 63) next.castling.wK = false;
+          if (targetIdx === 0)  next.castling.bQ = false;
+          if (targetIdx === 7)  next.castling.bK = false;
           next.masked[targetIdx] = false;
           next.halfmove = 0;
-          // Converting a rook off its owner's home corner forfeits that
-          // wing, exactly as if the rook had been captured there.
-          if (targetIdx === 56) next.castling.wQ = false;
-          if (targetIdx === 63) next.castling.wK = false;
-          if (targetIdx === 0)  next.castling.bQ = false;
-          if (targetIdx === 7)  next.castling.bK = false;
+        } else {
+          next.earthquakes = [
+            ...next.earthquakes,
+            { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
+          ];
         }
       } else if (tier === 2) {
-        // Quake leap: knight-jump to the target (capturing whatever's
-        // there), then stun every piece — BOTH sides — within a 2-tile
-        // radius of the landing square for one turn each.
-        const victim = next.board[targetIdx];
-        if (victim) {
-          if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, targetIdx);
-          next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
-          next.halfmove = 0;
-          if (targetIdx === 56) next.castling.wQ = false;
-          if (targetIdx === 63) next.castling.wK = false;
-          if (targetIdx === 0)  next.castling.bQ = false;
-          if (targetIdx === 7)  next.castling.bK = false;
-        }
-        next.board[targetIdx] = next.board[k];
-        next.board[k] = null;
-        next.masked[k] = false;
-        next.masked[targetIdx] = false;
-        // expiresAtPly = next.ply + 2 keeps the stun active through the
-        // opponent's next move AND the Juggernaut side's own next move —
-        // one lost turn for every piece caught in the quake.
-        const [tf, tr] = frOfIdx(targetIdx);
-        for (let df = -2; df <= 2; df++) {
-          for (let dr = -2; dr <= 2; dr++) {
-            if (df === 0 && dr === 0) continue;
-            const f = tf + df, r = tr + dr;
-            if (!onBoard(f, r)) continue;
-            const idx = idxFR(f, r);
-            if (!next.board[idx]) continue;
-            if (isStunned(next, idx)) continue;
-            next.stunned.push({ idx, expiresAtPly: next.ply + 2 });
-          }
-        }
-      } else {
-        // Rampage: charge along the rank to the chosen edge, destroying
-        // every piece in the path (both sides' — and, like ICBM, the charge
-        // ignores Frost). A destroyed king ends the game via the
+        // Diagonal charge: slide to the chosen edge corner, destroying
+        // everything in the path (both sides' — and, like ICBM, the
+        // charge ignores Frost). A destroyed king ends the game via the
         // king-destroyed pathway.
         const [kf, kr] = frOfIdx(k);
-        const [tf] = frOfIdx(targetIdx);
-        const step = tf > kf ? 1 : -1;
+        const [tf, tr] = frOfIdx(targetIdx);
+        const df = tf > kf ? 1 : -1;
+        const dr = tr > kr ? 1 : -1;
         const jug = next.board[k]!;
         next.board[k] = null;
         next.masked[k] = false;
-        for (let f = kf + step; f >= 0 && f < 8; f += step) {
-          const idx = idxFR(f, kr);
+        let f = kf + df, r = kr + dr;
+        while (onBoard(f, r)) {
+          const idx = idxFR(f, r);
           const victim = next.board[idx];
           if (victim) {
             if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
@@ -1603,9 +1610,46 @@ function applyAbility(
             if (idx === 7)  next.castling.bK = false;
           }
           next.masked[idx] = false;
-          if (f === tf) break;
+          if (idx === targetIdx) break;
+          f += df; r += dr;
         }
         next.board[targetIdx] = jug;
+      } else {
+        // Slam: jump in place. Pieces at chebyshev distance 1 are
+        // destroyed (both sides — even the jug's own); pieces at distance
+        // 2 are stunned for the next opponent + own move.
+        const [kf, kr] = frOfIdx(k);
+        let destroyed = false;
+        for (let df = -2; df <= 2; df++) {
+          for (let dr = -2; dr <= 2; dr++) {
+            if (df === 0 && dr === 0) continue;
+            const f = kf + df, r = kr + dr;
+            if (!onBoard(f, r)) continue;
+            const idx = idxFR(f, r);
+            const dist = Math.max(Math.abs(df), Math.abs(dr));
+            if (dist === 1) {
+              const victim = next.board[idx];
+              if (victim) {
+                const up = victim.letter.toUpperCase();
+                if (up === 'S') splitSlimeGroupAt(next, idx);
+                next.board[idx] = null;
+                next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
+                next.stunned = next.stunned.filter((s) => s.idx !== idx);
+                if (idx === 56) next.castling.wQ = false;
+                if (idx === 63) next.castling.wK = false;
+                if (idx === 0)  next.castling.bQ = false;
+                if (idx === 7)  next.castling.bK = false;
+                destroyed = true;
+              }
+              next.masked[idx] = false;
+            } else if (dist === 2) {
+              if (next.board[idx] && !isStunned(next, idx)) {
+                next.stunned.push({ idx, expiresAtPly: next.ply + 2 });
+              }
+            }
+          }
+        }
+        if (destroyed) next.halfmove = 0;
       }
     }
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
@@ -1615,6 +1659,9 @@ function applyAbility(
   // only path that mutates board this way; it bypasses Frost (the freeze
   // applies to capture/move, not to explosions).
   processMissileLandings(next);
+  // Same beat for earthquakes — they creep one tile per ply (skipping the
+  // ply they were spawned on so the wave is visible before it moves).
+  processEarthquakes(next);
 
   // Expire any active freezes / stuns whose lifetime has now ended.
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
@@ -1649,6 +1696,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     slimes: state.slimes.map((g) => ({ tiles: g.tiles.slice() })),
     jugTier: { ...state.jugTier },
     stunned: state.stunned.slice(),
+    earthquakes: state.earthquakes.slice(),
   };
 
   // Slime big-king shift: the whole 2×2 blob containing mv.from slides one
@@ -1698,6 +1746,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       if (crushed) next.halfmove = 0;
     }
     processMissileLandings(next);
+    processEarthquakes(next);
     next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
     next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
     const hist = state.positionHistory.slice();
@@ -1731,6 +1780,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       if (mv.from === 0)  next.castling.bQ = false;
       if (mv.from === 7)  next.castling.bK = false;
       processMissileLandings(next);
+      processEarthquakes(next);
       next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
       next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
       const hist = state.positionHistory.slice();
@@ -1818,6 +1868,9 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   // Process any missile landings before freeze expiration so a missile that
   // demolishes a frozen piece also clears the freeze entry.
   processMissileLandings(next);
+  // Same pass for earthquakes — they creep one tile this ply (the wave
+  // that was just spawned, if any, sits until next ply via spawnedAtPly).
+  processEarthquakes(next);
 
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
   next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
@@ -1983,29 +2036,44 @@ export function pieceAtImpactBeforeBlast(
       }
       return state.board[impactIdx] ?? null;
     }
-    // Juggernaut: tier 1 flips the target's allegiance in place; tiers 2/3
-    // move the Juggernaut itself (and rampage clears its whole path).
+    // Juggernaut: tier 1 (Earthquake) spawns a wave on the adjacent square,
+    // possibly killing whatever's there. Tier 2 charges diagonally. Tier 3
+    // slams in place (radius-1 destroyed, radius-2 stunned but still alive).
     if (parsed.hero === 'juggernaut') {
       const color = state.turn;
       const tier = state.heroes[color].hero === 'juggernaut' ? state.jugTier[color] : 0;
       const jugIdx = findKing(state, color);
       const targetIdx2 = sqToIdx(parsed.to);
-      if (tier === 1 && impactIdx === targetIdx2) {
-        const p = state.board[impactIdx];
-        if (!p) return null;
-        const up = p.letter.toUpperCase();
-        return { color, letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter };
+      if (tier === 3 && jugIdx !== -1) {
+        const [kf, kr] = frOfIdx(jugIdx);
+        const [pf, pr] = frOfIdx(impactIdx);
+        const dist = Math.max(Math.abs(pf - kf), Math.abs(pr - kr));
+        if (dist === 1) return null;
+        return state.board[impactIdx] ?? null;
       }
-      if (tier >= 2 && jugIdx !== -1) {
+      if (tier === 1 && jugIdx !== -1) {
+        // Earthquake spawn: only the spawn square changes, and only if it
+        // held an enemy (the wave kills on contact, then dies).
+        if (impactIdx === targetIdx2) {
+          const p = state.board[impactIdx];
+          if (p && p.color !== color) return null;
+        }
+        return state.board[impactIdx] ?? null;
+      }
+      if (tier === 2 && jugIdx !== -1) {
         if (impactIdx === jugIdx) return null;
         if (impactIdx === targetIdx2) return state.board[jugIdx];
-        if (tier >= 3) {
-          // Squares strictly between the Juggernaut and the edge it charged
-          // to were flattened by the rampage.
-          const [kf, kr] = frOfIdx(jugIdx);
-          const [tf] = frOfIdx(targetIdx2);
-          const [pf, pr] = frOfIdx(impactIdx);
-          if (pr === kr && ((pf > Math.min(kf, tf) && pf < Math.max(kf, tf)))) return null;
+        // Squares strictly between the Juggernaut and the diagonal corner
+        // it charged to were flattened by the slide.
+        const [kf, kr] = frOfIdx(jugIdx);
+        const [tf, tr] = frOfIdx(targetIdx2);
+        const [pf, pr] = frOfIdx(impactIdx);
+        const df = tf > kf ? 1 : -1;
+        const dr = tr > kr ? 1 : -1;
+        const steps = pf - kf;
+        if (steps !== 0 && (pr - kr) === steps * (dr / df) && Math.abs(steps) < Math.abs(tf - kf)
+            && Math.sign(pf - kf) === df) {
+          return null;
         }
       }
       return state.board[impactIdx] ?? null;
@@ -2303,11 +2371,15 @@ export function toFen(state: GameState): string {
   const slimes = state.slimes.length === 0
     ? '-'
     : state.slimes.map((g) => g.tiles.join('.')).join(',');
-  // Stunned pieces (Juggernaut quake leap) — same `idx:exp` format as frozen.
+  // Stunned pieces (Juggernaut slam) — same `idx:exp` format as frozen.
   const stunned = state.stunned.length === 0
     ? '-'
     : state.stunned.map((s) => `${s.idx}:${s.expiresAtPly}`).join(',');
-  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked} ${slimes} ${stunned}`;
+  // Travelling earthquakes (Juggernaut tier 1) — `idx:df:dr:color:spawnPly`.
+  const earthquakes = state.earthquakes.length === 0
+    ? '-'
+    : state.earthquakes.map((e) => `${e.idx}:${e.df}:${e.dr}:${e.color}:${e.spawnedAtPly}`).join(',');
+  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked} ${slimes} ${stunned} ${earthquakes}`;
 }
 
 function positionKey(state: GameState): string {

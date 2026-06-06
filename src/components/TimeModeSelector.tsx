@@ -96,7 +96,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Farmer" open={open.farmer} onToggle={() => toggle('farmer')}>
         <div className="muted small time-mode-blurb">
-          White starts with one queen. Black starts with eight pawns.
+          White starts with eight pawns. Black starts with one queen.
           A pawn promotion wins instantly; clearing all pawns wins for the queen.
         </div>
         {renderGrid(timeControlsForVariant('farmer'))}

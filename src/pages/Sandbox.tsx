@@ -95,7 +95,7 @@ const PALETTE_LETTERS: Record<SandboxVariant, PaletteSpec> = {
   two: standardPalette,
   cash: standardPalette,
   hero: standardPalette,
-  farmer: { w: ['Q'], b: ['P'] },
+  farmer: { w: ['P'], b: ['Q'] },
   // Merge exposes the three combo pieces too — chancellor (R+N),
   // archbishop (B+N), amazon (Q+N).
   merge: {
@@ -1383,8 +1383,11 @@ export function Sandbox() {
     }
 
     // Juggernaut: single-click, tier-dependent (tier comes from the dial).
-    // Tier 1 converts the adjacent enemy; tier 2 quake-leaps and stuns the
-    // 2-tile radius; tier 3 rampages to the rank edge, flattening the path.
+    // Tier 1 fires an earthquake (sandbox spawns the wave in place and
+    // also kills any enemy on the spawn square — without ply tracking the
+    // wave doesn't auto-advance here); tier 2 charges along a diagonal to
+    // the board edge, flattening the path; tier 3 slams (destroys radius 1,
+    // stuns radius 2).
     if (hero === 'juggernaut') {
       if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
       const tier = color === 'w' ? jugTierW : jugTierB;
@@ -1398,49 +1401,31 @@ export function Sandbox() {
       const nextMasked = current.masked.slice();
       let nextFrozen = current.frozenIdxs;
       let nextStunned = current.stunnedIdxs;
-      let jugLeapFromSq: string | undefined;
       if (tier === 1) {
+        // Earthquake spawn: kill any enemy on the chosen adjacent square.
+        // (Sandbox doesn't simulate the wave creeping further.)
         const p = nextBoard[idx];
-        if (!p) { setAbilityArmed(null); return; }
-        const up = p.letter.toUpperCase();
-        nextBoard[idx] = { color, letter: (color === 'w' ? up : up.toLowerCase()) as PieceLetter };
-        nextMasked[idx] = false;
+        if (p && p.color !== color) {
+          nextBoard[idx] = null;
+          nextFrozen = frozenAfterClear(nextFrozen, idx);
+          nextStunned = stunnedAfterClear(nextStunned, idx);
+          nextMasked[idx] = false;
+        }
         if (animationsEnabled) setPopAnim({ squares: [targetSq], key: Date.now() });
       } else if (tier === 2) {
         if (k === -1) { setAbilityArmed(null); return; }
-        jugLeapFromSq = heroIdxToSq(k);
-        nextFrozen = frozenAfterClear(nextFrozen, idx);
-        nextStunned = stunnedAfterClear(nextStunned, idx);
-        nextBoard[idx] = nextBoard[k];
-        nextBoard[k] = null;
-        nextMasked[k] = false;
-        nextMasked[idx] = false;
-        // Stun everything (both sides) within a 2-tile radius of the landing.
-        const tCol = idx % 8, tRow = Math.floor(idx / 8);
-        for (let dc = -2; dc <= 2; dc++) {
-          for (let dr = -2; dr <= 2; dr++) {
-            if (dc === 0 && dr === 0) continue;
-            const c2 = tCol + dc, r2 = tRow + dr;
-            if (c2 < 0 || c2 > 7 || r2 < 0 || r2 > 7) continue;
-            const sIdx = r2 * 8 + c2;
-            if (nextBoard[sIdx] && !nextStunned.includes(sIdx)) {
-              nextStunned = [...nextStunned, sIdx];
-            }
-          }
-        }
-        if (animationsEnabled) setSlideAnim({ moves: [{ from: heroIdxToSq(k), to: targetSq }], key: Date.now() });
-      } else {
-        if (k === -1) { setAbilityArmed(null); return; }
-        // Rampage: flatten every square between the Juggernaut and the
-        // chosen rank edge (Slime tiles split as they're crushed).
+        // Diagonal charge: flatten every square between the Juggernaut and
+        // the chosen diagonal corner (Slime tiles split as they're crushed).
         const kCol = k % 8, kRow = Math.floor(k / 8);
-        const tCol = idx % 8;
-        const step = tCol > kCol ? 1 : -1;
+        const tCol = idx % 8, tRow = Math.floor(idx / 8);
+        const dCol = tCol > kCol ? 1 : -1;
+        const dRow = tRow > kRow ? 1 : -1;
         const groups = deriveSlimeGroups(current.board);
         nextBoard[k] = null;
         nextMasked[k] = false;
-        for (let c2 = kCol + step; c2 >= 0 && c2 < 8; c2 += step) {
-          const pIdx = kRow * 8 + c2;
+        let c2 = kCol + dCol, r2 = kRow + dRow;
+        while (c2 >= 0 && c2 < 8 && r2 >= 0 && r2 < 8) {
+          const pIdx = r2 * 8 + c2;
           const victim = nextBoard[pIdx];
           if (victim) {
             if (victim.letter.toUpperCase() === 'S') {
@@ -1459,17 +1444,43 @@ export function Sandbox() {
             nextStunned = stunnedAfterClear(nextStunned, pIdx);
           }
           nextMasked[pIdx] = false;
-          if (c2 === tCol) break;
+          if (pIdx === idx) break;
+          c2 += dCol; r2 += dRow;
         }
         nextBoard[idx] = current.board[k];
         if (animationsEnabled) setSlideAnim({ moves: [{ from: heroIdxToSq(k), to: targetSq }], key: Date.now() });
+      } else {
+        if (k === -1) { setAbilityArmed(null); return; }
+        // Slam: destroy at chebyshev distance 1, stun at distance 2.
+        const kCol = k % 8, kRow = Math.floor(k / 8);
+        for (let dc = -2; dc <= 2; dc++) {
+          for (let dr = -2; dr <= 2; dr++) {
+            if (dc === 0 && dr === 0) continue;
+            const c2 = kCol + dc, r2 = kRow + dr;
+            if (c2 < 0 || c2 > 7 || r2 < 0 || r2 > 7) continue;
+            const aIdx = r2 * 8 + c2;
+            const dist = Math.max(Math.abs(dc), Math.abs(dr));
+            if (dist === 1) {
+              if (nextBoard[aIdx]) {
+                nextBoard[aIdx] = null;
+                nextFrozen = frozenAfterClear(nextFrozen, aIdx);
+                nextStunned = stunnedAfterClear(nextStunned, aIdx);
+              }
+              nextMasked[aIdx] = false;
+            } else if (dist === 2) {
+              if (nextBoard[aIdx] && !nextStunned.includes(aIdx)) {
+                nextStunned = [...nextStunned, aIdx];
+              }
+            }
+          }
+        }
+        if (animationsEnabled) setPopAnim({ squares: [targetSq], key: Date.now() });
       }
       pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked, stunnedIdxs: nextStunned });
       sfx.playJugQuake();
       if (animationsEnabled) {
         setAbilityAnim({
-          kind: tier === 2 && jugLeapFromSq ? 'juggernaut-leap' : 'juggernaut',
-          fromSq: tier === 2 ? jugLeapFromSq : undefined,
+          kind: 'juggernaut',
           toSq: targetSq,
           color,
           key: `jug-${Date.now()}`,
@@ -1820,7 +1831,10 @@ export function Sandbox() {
   const frozenSquares = current.frozenIdxs.map((i) => heroIdxToSq(i));
 
   const kingGlows = variant === 'hero'
-    ? { w: HERO_INFO[current.heroW].glowColor, b: HERO_INFO[current.heroB].glowColor }
+    ? {
+        w: current.heroW === 'slime' ? undefined : HERO_INFO[current.heroW].glowColor,
+        b: current.heroB === 'slime' ? undefined : HERO_INFO[current.heroB].glowColor,
+      }
     : undefined;
 
   // For each side, can their hero ability fire? Defers to the engine's
@@ -2292,9 +2306,9 @@ function SandboxHeroPanel({
   onJugTierB: (t: number) => void;
 }) {
   const tierOptions = [
-    { value: '1', label: 'Tier 1 · Convert' },
-    { value: '2', label: 'Tier 2 · Quake Leap' },
-    { value: '3', label: 'Tier 3 · Rampage' },
+    { value: '1', label: 'Tier 1 · Earthquake' },
+    { value: '2', label: 'Tier 2 · Diagonal Charge' },
+    { value: '3', label: 'Tier 3 · Slam' },
   ];
   return (
     <div className="hero-panel compact sandbox-hero">

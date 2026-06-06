@@ -755,29 +755,15 @@ export function Home() {
           if (ab === 'warlord') {
             fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
           }
-          let handledJugLeap = false;
-          if (ab === 'juggernaut' && heroJugTierOf(base, moverColor) === 2) {
-            fromSq = heroKingSquareOf(base.board, moverColor) ?? undefined;
-            if (fromSq) {
-              setHeroAbilityAnim({
-                kind: 'juggernaut-leap',
-                fromSq,
-                toSq: targetSq,
-                color: moverColor,
-                key: `${base.ply}-${res.result.uci}-${Date.now()}`,
-              });
-              handledJugLeap = true;
-            }
-          }
-          if (!handledJugLeap) {
-            setHeroAbilityAnim({
-              kind: ab,
-              fromSq,
-              toSq: targetSq,
-              color: moverColor,
-              key: `${base.ply}-${res.result.uci}-${Date.now()}`,
-            });
-          }
+          // Juggernaut no longer leaps — tier 2's diagonal slide uses the
+          // regular slide track (handled below by the standard ability anim).
+          setHeroAbilityAnim({
+            kind: ab,
+            fromSq,
+            toSq: targetSq,
+            color: moverColor,
+            key: `${base.ply}-${res.result.uci}-${Date.now()}`,
+          });
         }
       }
     }
@@ -924,13 +910,14 @@ export function Home() {
       const to = uci.slice(4, 6);
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
-      // Quake leap / rampage (tiers 2-3) move the Juggernaut — slide it from
-      // its pre-move square. Convert (tier 1) keeps it in place: pop the
-      // flipped piece instead.
+      // Diagonal charge (tier 2) slides the Juggernaut to a corner — animate
+      // it sliding from its pre-move square. Earthquake (tier 1) and Slam
+      // (tier 3) keep it in place, so just pop the target square.
       const from = heroKingSquareOf(base.board, base.turn);
       const to = uci.slice(2, 4);
-      if (heroJugTierOf(base, base.turn) === 1) setPopAnim({ squares: [to], key: Date.now() });
-      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      const tier = heroJugTierOf(base, base.turn);
+      if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      else setPopAnim({ squares: [to], key: Date.now() });
     }
     // Pop the destination on promotions and necromancer spawns.
     if (animationsEnabled) {
@@ -1526,30 +1513,15 @@ export function Home() {
               if (ab === 'warlord') {
                 fromSq = heroKingSquareOf(nextState.board, moverColor) ?? undefined;
               }
-              let handledJugLeap = false;
-              if (ab === 'juggernaut' && heroJugTierOf(prevState, moverColor) === 2) {
-                fromSq = heroKingSquareOf(prevState.board, moverColor) ?? undefined;
-                if (fromSq) {
-                  setHeroAbilityAnim({
-                    kind: 'juggernaut-leap',
-                    fromSq,
-                    toSq: targetSq,
-                    color: moverColor,
-                    key: `${prevState.ply}-${r.uci}-${Date.now()}`,
-                  });
-                  setSlideAnim({ moves: [{ from: fromSq, to: targetSq }], key: Date.now() });
-                  handledJugLeap = true;
-                }
-              }
-              if (!handledJugLeap) {
-                setHeroAbilityAnim({
-                  kind: ab,
-                  fromSq,
-                  toSq: targetSq,
-                  color: moverColor,
-                  key: `${prevState.ply}-${r.uci}-${Date.now()}`,
-                });
-              }
+              // Juggernaut tier 2 slide is driven by the standard ability
+              // anim + slide track; tier 1/3 just pop.
+              setHeroAbilityAnim({
+                kind: ab,
+                fromSq,
+                toSq: targetSq,
+                color: moverColor,
+                key: `${prevState.ply}-${r.uci}-${Date.now()}`,
+              });
             }
           }
         }
@@ -2159,8 +2131,8 @@ export function Home() {
                   onPieceDrop={handleHeroDrop}
                   onDragStartSquare={onFreeDragStart}
                   kingGlows={{
-                    w: HERO_INFO[heroViewState.heroes.w.hero].glowColor,
-                    b: HERO_INFO[heroViewState.heroes.b.hero].glowColor,
+                    w: heroViewState.heroes.w.hero === 'slime' ? undefined : HERO_INFO[heroViewState.heroes.w.hero].glowColor,
+                    b: heroViewState.heroes.b.hero === 'slime' ? undefined : HERO_INFO[heroViewState.heroes.b.hero].glowColor,
                   }}
                   frozenSquares={
                     heroViewState.frozen
@@ -2245,6 +2217,12 @@ export function Home() {
                   stunnedSquares={heroViewState.stunned
                     .filter((s) => heroViewState.ply < s.expiresAtPly)
                     .map((s) => heroIdxToSq(s.idx))}
+                  earthquakes={(heroViewState.earthquakes ?? []).map((eq) => ({
+                    sq: heroIdxToSq(eq.idx),
+                    df: eq.df,
+                    dr: eq.dr,
+                    color: eq.color,
+                  }))}
                 />
               )}
               {freePromo && (

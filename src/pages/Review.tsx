@@ -336,6 +336,7 @@ export function Review() {
             slimeKingSquares={display.slimeKingSquares ?? null}
             juggernauts={display.juggernauts ?? null}
             stunnedSquares={display.stunnedSquares ?? null}
+            earthquakes={display.earthquakes ?? null}
             interactive={false}
             draggable={false}
           />
@@ -500,6 +501,7 @@ type DisplaySnapshot = {
   slimeKingSquares?: string[];
   juggernauts?: { sq: string; tier: number }[];
   stunnedSquares?: string[];
+  earthquakes?: { sq: string; df: number; dr: number; color: 'w' | 'b' }[];
 };
 
 function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
@@ -582,8 +584,8 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
   }
   const board = state.board as unknown as (MergePiece | null)[];
   const kingGlows = {
-    w: HERO_INFO[state.heroes.w.hero].glowColor,
-    b: HERO_INFO[state.heroes.b.hero].glowColor,
+    w: state.heroes.w.hero === 'slime' ? undefined : HERO_INFO[state.heroes.w.hero].glowColor,
+    b: state.heroes.b.hero === 'slime' ? undefined : HERO_INFO[state.heroes.b.hero].glowColor,
   };
   const frozenSquares = state.frozen
     .filter((f) => state.ply < f.expiresAtPly)
@@ -625,7 +627,13 @@ function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
   const stunnedSquares = state.stunned
     .filter((s) => state.ply < s.expiresAtPly)
     .map((s) => heroIdxToSq(s.idx));
-  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares, slimeBigKings, slimeKingSquares, juggernauts, stunnedSquares };
+  const earthquakes = (state.earthquakes ?? []).map((eq) => ({
+    sq: heroIdxToSq(eq.idx),
+    df: eq.df,
+    dr: eq.dr,
+    color: eq.color,
+  }));
+  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares, slimeBigKings, slimeKingSquares, juggernauts, stunnedSquares, earthquakes };
 }
 
 function lastMoveFromUci(viewPly: number, ucis: string[]): { from: string; to: string } | null {

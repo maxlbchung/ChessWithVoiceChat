@@ -3465,3 +3465,16 @@ a { color: inherit; text-decoration: none; }
   100% { transform: translate(var(--dx), var(--dy)) scale(1.8);  opacity: 0; }
 }
 
+
+/* Juggernaut earthquake — a small brown crater tile that shakes constantly
+   so the player can see it idling between advances. */
+.earthquake-marker {
+  animation: earthquake-shake 280ms ease-in-out infinite;
+}
+@keyframes earthquake-shake {
+  0%, 100% { transform: translate(0, 0); }
+  20%      { transform: translate(-1px, 1px); }
+  40%      { transform: translate(1px, -1px); }
+  60%      { transform: translate(-1px, -1px); }
+  80%      { transform: translate(1px, 1px); }
+}

@@ -120,10 +120,10 @@ function noTargetHint(hero: HeroKind, jugTier?: number): string {
     case 'slime':       return 'No mini king with room to expand.';
     case 'juggernaut':
       return jugTier === 1
-        ? 'No enemy piece adjacent to convert.'
+        ? 'No safe direction to spawn an earthquake.'
         : jugTier === 2
-          ? 'No square to quake-leap to.'
-          : 'No rampage lane is safe right now.';
+          ? 'No diagonal charge lane is safe right now.'
+          : 'Nothing to slam.';
     default:            return 'No legal target right now.';
   }
 }

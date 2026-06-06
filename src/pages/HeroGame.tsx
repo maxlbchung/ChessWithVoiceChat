@@ -666,18 +666,8 @@ export function HeroGame() {
     if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
     }
-    if (ab === 'juggernaut' && jugTierOf(prev, moverColor) === 2) {
-      fromSq = kingSquareOf(prev.board, moverColor) ?? undefined;
-      if (fromSq) {
-        return {
-          kind: 'juggernaut-leap',
-          fromSq,
-          toSq: targetSq,
-          color: moverColor,
-          key: `${prev.ply}-${result.uci}-${Date.now()}`,
-        };
-      }
-    }
+    // No tier of the Juggernaut leaps anymore — tier 2's diagonal charge
+    // uses the regular slide animation, tier 1/3 keep the jug in place.
     return {
       kind: ab,
       fromSq,
@@ -772,13 +762,15 @@ export function HeroGame() {
       const to = uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
-      // Quake leap / rampage (tiers 2-3) move the Juggernaut itself — slide
-      // it from its pre-move square. Convert (tier 1) keeps it in place: pop
-      // the flipped piece instead. Tier comes from the PRE-move state.
+      // Diagonal charge (tier 2) moves the Juggernaut itself — slide it from
+      // its pre-move square. Earthquake (tier 1) and Slam (tier 3) keep the
+      // jug in place: pop the target square instead. Tier comes from the
+      // PRE-move state.
       const from = kingSquareOf(game.board, beforeTurn);
       const to = uci.slice(2, 4) as Square;
-      if (jugTierOf(game, beforeTurn) === 1) setPopAnim({ squares: [to], key: Date.now() });
-      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      const tier = jugTierOf(game, beforeTurn);
+      if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      else setPopAnim({ squares: [to], key: Date.now() });
     }
     // Pop the destination on promotions and on Necromancer spawns (a new
     // piece materialises). The uci's 5th char marks a promotion.
@@ -873,11 +865,13 @@ export function HeroGame() {
       const to = move.uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
-      // Mirror the mover's quake-leap / rampage slide on this screen too.
+      // Mirror the mover's diagonal charge slide on this screen too. The
+      // Earthquake (tier 1) and Slam (tier 3) abilities keep the jug put.
       const from = kingSquareOf(prev.board, prev.turn);
       const to = move.uci.slice(2, 4) as Square;
-      if (jugTierOf(prev, prev.turn) === 1) setPopAnim({ squares: [to], key: Date.now() });
-      else if (from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      const tier = jugTierOf(prev, prev.turn);
+      if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      else setPopAnim({ squares: [to], key: Date.now() });
     }
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
@@ -1451,12 +1445,15 @@ export function HeroGame() {
     && !(game.turn !== myEngineColor && game.heroes[game.turn].hero === 'twin-jutsu')
     && isInCheck(game, game.turn);
 
-  // King glows from the heroes picked.
+  // King glows from the heroes picked. Slime suppresses the halo — its
+  // animated goo bubble already reads as the slime king.
   const kingGlows = useMemo(() => {
     if (!viewedState) return undefined;
+    const w = viewedState.heroes.w.hero;
+    const b = viewedState.heroes.b.hero;
     return {
-      w: HERO_INFO[viewedState.heroes.w.hero].glowColor,
-      b: HERO_INFO[viewedState.heroes.b.hero].glowColor,
+      w: w === 'slime' ? undefined : HERO_INFO[w].glowColor,
+      b: b === 'slime' ? undefined : HERO_INFO[b].glowColor,
     };
   }, [viewedState]);
 
@@ -1507,11 +1504,12 @@ export function HeroGame() {
     return { slimeBigKings: bigs, slimeKingSqs: minis };
   }, [viewedState]);
 
-  // Juggernaut rendering: the colorless king + tier pips, plus quake-leap
-  // stun overlays on affected squares.
-  const { juggernauts, stunnedSqs } = useMemo(() => {
+  // Juggernaut rendering: the colorless king + tier pips, plus stun overlays
+  // on slammed squares and the live earthquake waves.
+  const { juggernauts, stunnedSqs, earthquakeOverlays } = useMemo(() => {
     const jugs: { sq: Square; tier: number }[] = [];
     const stuns: Square[] = [];
+    const eqs: { sq: Square; df: number; dr: number; color: 'w' | 'b' }[] = [];
     if (viewedState) {
       for (const c of ['w', 'b'] as const) {
         if (viewedState.heroes[c].hero !== 'juggernaut') continue;
@@ -1521,8 +1519,11 @@ export function HeroGame() {
       for (const s of viewedState.stunned) {
         if (viewedState.ply < s.expiresAtPly) stuns.push(idxToSq(s.idx));
       }
+      for (const eq of viewedState.earthquakes ?? []) {
+        eqs.push({ sq: idxToSq(eq.idx), df: eq.df, dr: eq.dr, color: eq.color });
+      }
     }
-    return { juggernauts: jugs, stunnedSqs: stuns };
+    return { juggernauts: jugs, stunnedSqs: stuns, earthquakeOverlays: eqs };
   }, [viewedState]);
 
   const bothPicked = myHero != null && oppHero != null;
@@ -1631,6 +1632,7 @@ export function HeroGame() {
             slimeKingSquares={slimeKingSqs}
             juggernauts={juggernauts}
             stunnedSquares={stunnedSqs}
+            earthquakes={earthquakeOverlays}
           />
           {pendingPromo && game && (
             <PromotionPicker
