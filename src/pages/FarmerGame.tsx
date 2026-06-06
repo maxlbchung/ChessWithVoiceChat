@@ -6,6 +6,7 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
@@ -589,6 +590,10 @@ export function FarmerGame() {
   // --------------------------------------------------------------------
   const viewedState: GameState = states[viewPly] ?? states[0];
   const atPresent = viewPly === moves.length;
+  const captures = useMemo(
+    () => computeCaptures(viewedState.board as any, initialState().board as any),
+    [viewedState.board],
+  );
 
   const legalTargets = useMemo(() => {
     if (!atPresent) return [];
@@ -806,6 +811,8 @@ export function FarmerGame() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <PlayerCard
           avatarDataUrl={avatar}
@@ -816,6 +823,8 @@ export function FarmerGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
           <div className="game-meta-title">Merge · {tc.label}</div>

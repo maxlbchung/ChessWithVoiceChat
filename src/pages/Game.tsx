@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
@@ -826,6 +827,21 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewedChess, fen]);
 
+  // Captured-piece counters — diffing displayBoard against the standard
+  // starting army tells us what each side has taken.
+  const captures = useMemo(() => {
+    const init = new Chess();
+    const board: (MergePiece | null)[] = [];
+    for (const row of init.board()) {
+      for (const cell of row) {
+        if (!cell) { board.push(null); continue; }
+        const letter = cell.color === 'w' ? cell.type.toUpperCase() : cell.type;
+        board.push({ color: cell.color, letter: letter as MergePiece['letter'] });
+      }
+    }
+    return computeCaptures(displayBoard, board);
+  }, [displayBoard]);
+
   // Legal targets in MergeBoard's shape — `isMerge` is unused for Normal play
   // (no merge / push interactions), so it's always false.
   const legalTargetsForBoard = useMemo(() => {
@@ -997,6 +1013,8 @@ export function Game() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <PlayerCard
           avatarDataUrl={avatar}
@@ -1007,6 +1025,8 @@ export function Game() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
           <div className="game-meta-title">{tc.label}</div>

@@ -6,6 +6,7 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { CashShop } from '../components/CashShop';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
@@ -782,6 +783,10 @@ export function CashGame() {
   // cashChess.Piece has the same shape as mergeChess.Piece structurally; the
   // letter unions overlap but TS still needs the cast.
   const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
+  const captures = useMemo(
+    () => computeCaptures(boardForRender, initialState().board as unknown as (MergePieceShape | null)[]),
+    [boardForRender],
+  );
 
   return (
     <div className="game-layout">
@@ -881,6 +886,8 @@ export function CashGame() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <PlayerCard
           avatarDataUrl={avatar}
@@ -891,6 +898,8 @@ export function CashGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
           <div className="game-meta-title">Cash Money · {tc.label}</div>

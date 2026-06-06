@@ -6,6 +6,7 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
@@ -631,6 +632,11 @@ export function MergeGame() {
   const viewedState: GameState = states[viewPly] ?? states[0];
   const atPresent = viewPly === moves.length;
 
+  const captures = useMemo(
+    () => computeCaptures(viewedState.board, initialState().board),
+    [viewedState.board],
+  );
+
   const legalTargets = useMemo(() => {
     if (!atPresent) return [];
     if (!selectedSquare) return [];
@@ -884,6 +890,8 @@ export function MergeGame() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <PlayerCard
           avatarDataUrl={avatar}
@@ -894,6 +902,8 @@ export function MergeGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
           <div className="game-meta-title">Merge · {tc.label}</div>

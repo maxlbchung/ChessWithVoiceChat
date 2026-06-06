@@ -6,6 +6,7 @@ import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
@@ -770,6 +771,10 @@ export function TwoGame() {
   // is a structural superset, so passing through works at runtime but TS needs
   // the explicit conversion.
   const boardForRender = viewedState.board as unknown as (MergePieceShape | null)[];
+  const captures = useMemo(
+    () => computeCaptures(boardForRender, initialState().board as unknown as (MergePieceShape | null)[]),
+    [boardForRender],
+  );
 
   return (
     <div className="game-layout">
@@ -857,6 +862,8 @@ export function TwoGame() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <PlayerCard
           avatarDataUrl={avatar}
@@ -867,6 +874,8 @@ export function TwoGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
           <div className="game-meta-title">Guerrilla · {tc.label}</div>

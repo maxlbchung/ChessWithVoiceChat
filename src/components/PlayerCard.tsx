@@ -1,4 +1,6 @@
 import { formatClock } from '../lib/timeControls';
+import { CapturedPieces } from './CapturedPieces';
+import type { CaptureSummary } from '../lib/captures';
 
 export type VoiceState = 'off' | 'muted' | 'active';
 
@@ -11,6 +13,13 @@ type Props = {
   ms: number;
   lowMs: number;
   active: boolean;
+  // Optional captured-piece readout for this card's side. When supplied,
+  // a compact strip of taken pieces renders below the handle/rating line,
+  // showing what this side has captured plus a material advantage badge.
+  captures?: CaptureSummary | null;
+  // Which side this card represents — drives which half of the summary
+  // gets shown (white card shows "pieces white has captured", etc).
+  captureSide?: 'w' | 'b';
 };
 
 export function PlayerCard({
@@ -22,6 +31,8 @@ export function PlayerCard({
   ms,
   lowMs,
   active,
+  captures,
+  captureSide,
 }: Props) {
   const low = ms < lowMs;
   const initial = (handle?.[0] ?? '?').toUpperCase();
@@ -37,6 +48,9 @@ export function PlayerCard({
       <div className="player-meta">
         <div className="player-handle">{handle}</div>
         <div className="player-rating">{rating}</div>
+        {captures && captureSide && (
+          <CapturedPieces summary={captures} side={captureSide} glyphSize={16} />
+        )}
       </div>
       <VoiceIndicator state={voiceState} volume={volume} />
       <div className="player-clock-time">{formatClock(ms)}</div>

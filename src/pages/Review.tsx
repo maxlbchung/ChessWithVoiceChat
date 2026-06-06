@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { PlayerCard } from '../components/PlayerCard';
 import { ResultAvatar } from '../components/EndScreenAvatars';
 import type { Piece as MergePiece } from '../lib/mergeChess';
@@ -306,6 +307,15 @@ export function Review() {
   const { exp, replay } = loaded;
   const total = totalPlyOf(replay);
   const display = displayAt(replay, viewPly);
+  // Captures = diff of the currently-displayed board against the same
+  // replay's ply-0 board. Works uniformly across every variant since
+  // displayAt() already normalizes each engine's piece state into the
+  // shared MergePiece shape.
+  const initialDisplay = useMemo(() => displayAt(replay, 0), [replay]);
+  const captures = useMemo(
+    () => computeCaptures(display.board, initialDisplay.board),
+    [display.board, initialDisplay.board],
+  );
   const canUndo = viewPly > 0;
   const canRedo = viewPly < total;
   const tc = getTimeControl(exp.timeControlId);
@@ -353,6 +363,8 @@ export function Review() {
           ms={clockAt('b')}
           lowMs={0}
           active={false}
+          captures={captures}
+          captureSide="b"
         />
         <PlayerCard
           avatarDataUrl={null}
@@ -363,6 +375,8 @@ export function Review() {
           ms={clockAt('w')}
           lowMs={0}
           active={false}
+          captures={captures}
+          captureSide="w"
         />
 
         <div className="game-meta">

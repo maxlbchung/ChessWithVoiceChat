@@ -5,6 +5,7 @@ import { VoiceControls } from '../components/VoiceControls';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
+import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { HeroPicker } from '../components/HeroPicker';
 import { HeroAbilities } from '../components/HeroAbilities';
@@ -1461,6 +1462,20 @@ export function HeroGame() {
     ? (viewedState.board as unknown as (MergePieceShape | null)[])
     : (new Array(64).fill(null) as (MergePieceShape | null)[]);
 
+  const captures = useMemo(() => {
+    // Replay the engine's starting army for this matchup so the diff lines
+    // up with whatever variants the heroes inject (different back ranks,
+    // hero-specific letter variations, etc).
+    const wHero = handoff.iAmWhite ? myHero : oppHero;
+    const bHero = handoff.iAmWhite ? oppHero : myHero;
+    if (!viewedState || !wHero || !bHero) {
+      return { byWhite: { P: 0, N: 0, B: 0, R: 0, Q: 0 }, byBlack: { P: 0, N: 0, B: 0, R: 0, Q: 0 }, advantage: 0 };
+    }
+    const initBoard = initialState(wHero, bHero, backRanksForGame(wHero, bHero, gameId!)).board as unknown as (MergePieceShape | null)[];
+    return computeCaptures(boardForRender, initBoard);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardForRender, myHero, oppHero, handoff.iAmWhite, gameId]);
+
   // Cooldown turn counts (for the abilities panel).
   const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
   const oppCooldownTurns = game ? turnsUntilReady(game, myEngineColor === 'w' ? 'b' : 'w') : 0;
@@ -1574,6 +1589,8 @@ export function HeroGame() {
           ms={oppColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(oppColor)}
+          captures={captures}
+          captureSide={oppColor === 'white' ? 'w' : 'b'}
         />
         <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
@@ -1702,6 +1719,8 @@ export function HeroGame() {
           ms={myColor === 'white' ? whiteMs : blackMs}
           lowMs={lowMs}
           active={isActiveSide(myColor)}
+          captures={captures}
+          captureSide={myColor === 'white' ? 'w' : 'b'}
         />
       </div>
 

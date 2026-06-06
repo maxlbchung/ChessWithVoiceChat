@@ -383,6 +383,32 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
+/* Wraps the captures strip + board-wrap so captures sit to the LEFT of the
+   chessboard. Top-row captures (opposite the orientation) stack at the
+   column's top edge; bottom-row at the bottom, matching the board's flank. */
+.free-play-board-row {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: calc(var(--max-board) + 4.5rem);
+  min-width: 0;
+}
+.free-play-board-row > .free-play-board-wrap {
+  align-self: stretch;
+  flex: 0 1 var(--max-board);
+}
+.free-play-captures-col {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+  min-width: 2rem;
+}
 .free-play-header {
   align-self: flex-end;
   width: 100%;

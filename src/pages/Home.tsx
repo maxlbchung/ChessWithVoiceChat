@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { MergeBoard } from '../components/MergeBoard';
+import { CapturedPieces } from '../components/CapturedPieces';
+import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { CustomSelect } from '../components/CustomSelect';
 import { CashShop } from '../components/CashShop';
@@ -320,6 +322,33 @@ export function Home() {
     if (!r?.checkmate) return null;
     return { winner: heroViewState.turn === 'w' ? 'b' : 'w' };
   }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, farmerResults, cashResults, cashViewState.turn, heroResults, heroViewState.turn]);
+
+  // Captured-piece summary for the strip above/below the board. Each variant
+  // has its own starting army — we diff the currently-viewed board against
+  // each engine's pristine initial state so wild armies (Farmer's lone queen)
+  // and zero-move positions read correctly.
+  const freeCaptures = useMemo(() => {
+    if (freeVariant === 'normal') {
+      const init = new Chess();
+      const board: (MergePiece | null)[] = [];
+      for (const row of init.board()) {
+        for (const cell of row) {
+          if (!cell) { board.push(null); continue; }
+          const letter = cell.color === 'w' ? cell.type.toUpperCase() : cell.type;
+          board.push({ color: cell.color, letter: letter as MergePiece['letter'] });
+        }
+      }
+      return computeCaptures(freeDisplayBoard, board);
+    }
+    if (freeVariant === 'merge') return computeCaptures(mergeViewState.board, mergeInitial().board);
+    if (freeVariant === 'two') return computeCaptures(twoViewState.board as unknown as (MergePiece | null)[], twoInitial().board as unknown as (MergePiece | null)[]);
+    if (freeVariant === 'cash') return computeCaptures(cashViewState.board as unknown as (MergePiece | null)[], cashInitial().board as unknown as (MergePiece | null)[]);
+    if (freeVariant === 'farmer') return computeCaptures(farmerViewState.board as unknown as (MergePiece | null)[], farmerInitial().board as unknown as (MergePiece | null)[]);
+    return computeCaptures(
+      heroViewState.board as unknown as (MergePiece | null)[],
+      heroInitial(heroW, heroB).board as unknown as (MergePiece | null)[],
+    );
+  }, [freeVariant, freeDisplayBoard, mergeViewState, twoViewState, cashViewState, farmerViewState, heroViewState, heroW, heroB]);
 
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
@@ -2026,6 +2055,19 @@ export function Home() {
               <button className="free-play-btn" onClick={resetFreePlay} type="button">Reset</button>
             </div>
           </div>
+          <div className="free-play-board-row">
+            <div className="free-play-captures-col">
+              <CapturedPieces
+                summary={freeCaptures}
+                side={freeOrientation === 'white' ? 'b' : 'w'}
+                orientation="column"
+              />
+              <CapturedPieces
+                summary={freeCaptures}
+                side={freeOrientation === 'white' ? 'w' : 'b'}
+                orientation="column"
+              />
+            </div>
           <div className="free-play-board-wrap">
               {freeVariant === 'normal' ? (
                 <MergeBoard
@@ -2255,6 +2297,7 @@ export function Home() {
                   </div>
                 </div>
               )}
+          </div>
           </div>
         </div>
 
