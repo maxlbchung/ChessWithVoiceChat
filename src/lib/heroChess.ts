@@ -1585,9 +1585,10 @@ function applyAbility(
     if (k !== -1) {
       if (tier === 1) {
         // Earthquake: spawn a creeping wave on the adjacent square in the
-        // chosen direction. If an enemy is already there it dies and the
-        // wave dissipates with it; otherwise the wave sits this ply and
-        // advances next ply via processEarthquakes.
+        // chosen direction. If an enemy is already there it dies on the
+        // spot; the wave still spawns and starts rolling on the next
+        // Jug move. (A sub-tier-3 enemy Juggernaut would have been
+        // filtered out by abilityTargets, so we don't handle absorb here.)
         const [kf, kr] = frOfIdx(k);
         const [tf, tr] = frOfIdx(targetIdx);
         const df = Math.sign(tf - kf);
@@ -1605,12 +1606,11 @@ function applyAbility(
           if (targetIdx === 7)  next.castling.bK = false;
           next.masked[targetIdx] = false;
           next.halfmove = 0;
-        } else {
-          next.earthquakes = [
-            ...next.earthquakes,
-            { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
-          ];
         }
+        next.earthquakes = [
+          ...next.earthquakes,
+          { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
+        ];
       } else if (tier === 2) {
         // Diagonal charge: slide to the chosen edge corner, destroying
         // everything in the path (both sides' — and, like ICBM, the
