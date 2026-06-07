@@ -221,7 +221,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
   juggernaut: {
     kind: 'juggernaut',
     name: 'Juggernaut',
-    blurb: 'Fields only a lone colorless king with three lives. Capturing it kills the attacker and only enrages it — it tiers up from king to knight to queen movement, with a new ability each tier — and it can’t be checked until tier 3, where the next hit finally fells it.',
+    blurb: 'Fields only a lone colorless king with three lives. Capturing it kills the attacker and only enrages it — it tiers up, swapping its active ability each time, and it can’t be checked until tier 3, where the next hit finally fells it. Walks one square in any direction at every tier; the tier abilities carry the reach.',
     glowColor: '#b08d57',
     cooldownTurns: 3,
   },
@@ -231,9 +231,9 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 // GameState.jugTier (1-3). The picker/abilities panel renders these so the
 // player always sees what their current tier does.
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
-  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Quake tiles are impassable terrain: sliders, pawns and kings can\'t cross them and nothing lands on them. Only knights can jump over.' },
-  2: { name: 'Diagonal Charge', move: 'moves like a rook',  blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
-  3: { name: 'Slam',            move: 'moves like a king',  blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
+  1: { name: 'Earthquake',      move: 'moves like a king', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Quake tiles are impassable terrain: sliders, pawns and kings can\'t cross them and nothing lands on them. Only knights can jump over.' },
+  2: { name: 'Diagonal Charge', move: 'moves like a king', blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
+  3: { name: 'Slam',            move: 'moves like a king', blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
 };
 
 export type AbilitySide = {
@@ -692,13 +692,11 @@ function pseudoMoves(state: GameState, from: number): PseudoMove[] {
   const up = p.letter.toUpperCase();
   if (up === 'P') pseudoPawn(state, from, ff, fr, p, out);
   else if (up === 'K') {
-    // Juggernaut passive: tier 1 slides like a queen, tier 2 like a rook,
-    // tier 3 falls back to single-square king steps. A Juggernaut side has
-    // no castling rights, so pseudoKing's castle block stays dormant.
-    const jt = jugTierAt(state, from);
-    if (jt === 1) pseudoSliding(state, from, ff, fr, p, EIGHT_DIRS, out);
-    else if (jt === 2) pseudoSliding(state, from, ff, fr, p, ROOK_DIRS, out);
-    else pseudoKing(state, from, ff, fr, p, out);
+    // Juggernaut passive: the king walks one square at all tiers. The
+    // tier abilities (Earthquake, Diagonal Charge, Slam) carry the
+    // extra reach. A Juggernaut side has no castling rights, so
+    // pseudoKing's castle block stays dormant.
+    pseudoKing(state, from, ff, fr, p, out);
   }
   // Slime big-king tile — shifts the whole 2×2 blob one square.
   else if (up === 'S') pseudoSlimeShift(state, from, ff, fr, p, out);
@@ -992,10 +990,8 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (!p || p.color !== byColor || inert(idx)) continue;
     const up = p.letter.toUpperCase();
     if (up === 'K') {
-      const jt = jugTierAt(state, idx);
-      // Non-jug kings (tier 0) and tier-3 jugs (king movement) threaten
-      // adjacent squares. Tier 1/2 use the queen/rook ray sections below.
-      if (jt === 0 || jt === 3) return true;
+      // Every king (Juggernaut or not) threatens its 8 adjacent squares.
+      return true;
     }
     if (up === 'S') {
       const group = state.slimes.find((g) => g.tiles.includes(idx));
@@ -1017,9 +1013,8 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     const up = p.letter.toUpperCase();
     if (up === 'N' || up === 'A' || up === 'C' || up === 'Z') return true;
   }
-  // Orthogonal rays — R / Q plus merged C (rook+N), Z (queen+N) and a
-  // tier-1 (queen) or tier-2 (rook) Juggernaut king. Earthquake tiles
-  // block the ray exactly like a piece would.
+  // Orthogonal rays — R / Q plus merged C (rook+N), Z (queen+N).
+  // Earthquake tiles block the ray exactly like a piece would.
   for (const [df, dr] of ROOK_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
@@ -1030,15 +1025,14 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
         if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'R' || up === 'Q' || up === 'C' || up === 'Z') return true;
-          if (up === 'K' && (jugTierAt(state, idx) === 1 || jugTierAt(state, idx) === 2)) return true;
         }
         break;
       }
       f += df; r += dr;
     }
   }
-  // Diagonal rays — B / Q plus merged A (bishop+N), Z (queen+N) and a
-  // tier-1 Juggernaut king (queen movement). Earthquakes block here too.
+  // Diagonal rays — B / Q plus merged A (bishop+N), Z (queen+N).
+  // Earthquakes block here too.
   for (const [df, dr] of BISHOP_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
@@ -1049,7 +1043,6 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
         if (p.color === byColor && !inert(idx)) {
           const up = p.letter.toUpperCase();
           if (up === 'B' || up === 'Q' || up === 'A' || up === 'Z') return true;
-          if (up === 'K' && jugTierAt(state, idx) === 1) return true;
         }
         break;
       }
@@ -1942,13 +1935,13 @@ export function legalMovesFrom(state: GameState, from: Square): LegalMove[] {
   if (!p || p.color !== state.turn) return [];
   const pseudos = pseudoMoves(state, idx);
   const moverColor = p.color;
-  // Juggernaut sides field a lone king that moves like queen/rook/king by
-  // tier — but it should refuse to walk into attacked squares the same way
-  // a normal king does, AT EVERY TIER. `isInCheck` only fires at tier 3, so
+  // Juggernaut sides field a lone king that walks one square at every tier
+  // — but it should refuse to walk into attacked squares the same way a
+  // normal king does at every tier. `isInCheck` only fires at tier 3, so
   // this extra filter covers tiers 1 and 2 (and is a redundant no-op at
-  // tier 3). The destination check naturally also bans capturing a defended
-  // piece, since the defender still attacks the square the Juggernaut would
-  // land on.
+  // tier 3). The destination check naturally also bans capturing a
+  // defended piece, since the defender still attacks the square the
+  // Juggernaut would land on.
   const isJugMover =
     state.heroes[moverColor].hero === 'juggernaut' && p.letter.toUpperCase() === 'K';
   const enemy: C2Color = moverColor === 'w' ? 'b' : 'w';
