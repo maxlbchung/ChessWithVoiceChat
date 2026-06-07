@@ -1144,12 +1144,12 @@ export function MergeBoard({
                       />
                       {isDiagonal ? (
                         <>
-                          {/* Diagonal crack network — every segment shares
-                              both endpoints with another segment, so the
-                              fissures branch into a connected web instead
-                              of floating as disjoint strokes. Junctions are
-                              reused verbatim across polylines so React /
-                              SVG renders them as the same point. */}
+                          {/* Diagonal crack network — many SHORT segments,
+                              each its own line, glued together only at the
+                              shared junctions. No segment runs more than
+                              a tile-eighth long and no two consecutive
+                              ones share a heading, so the floor reads as
+                              shattered rather than striped. */}
                           <g
                             stroke="#2a1808"
                             strokeWidth="3.2"
@@ -1157,26 +1157,41 @@ export function MergeBoard({
                             strokeLinejoin="round"
                             fill="none"
                           >
-                            {/* Main spine: trailing corner → leading corner */}
-                            <polyline points="8,92 24,76 40,60 54,46 70,30 84,14" />
-                            {/* West branches off the spine */}
-                            <polyline points="24,76 12,68 20,56" />
-                            <polyline points="40,60 28,52 22,40" />
-                            <polyline points="54,46 44,32 50,20" />
-                            <polyline points="70,30 60,22 64,10" />
-                            {/* East branches off the spine */}
-                            <polyline points="24,76 32,86 22,92" />
-                            <polyline points="40,60 52,68 46,82" />
-                            <polyline points="54,46 66,54 62,70" />
-                            <polyline points="70,30 82,40 78,54" />
-                            {/* Cross-links: connect adjacent branch tips so
-                                no endpoint is left dangling in space. */}
-                            <polyline points="20,56 28,52" />
-                            <polyline points="22,40 28,52" />
-                            <polyline points="50,20 60,22" />
-                            <polyline points="46,82 52,68" />
-                            <polyline points="62,70 66,54" />
-                            <polyline points="78,54 82,40" />
+                            <line x1="8"  y1="92" x2="20" y2="84" />
+                            <line x1="20" y1="84" x2="14" y2="72" />
+                            <line x1="14" y1="72" x2="26" y2="66" />
+                            <line x1="20" y1="84" x2="34" y2="78" />
+                            <line x1="34" y1="78" x2="26" y2="66" />
+                            <line x1="34" y1="78" x2="44" y2="68" />
+                            <line x1="26" y1="66" x2="38" y2="56" />
+                            <line x1="44" y1="68" x2="38" y2="56" />
+                            <line x1="44" y1="68" x2="56" y2="60" />
+                            <line x1="38" y1="56" x2="50" y2="46" />
+                            <line x1="56" y1="60" x2="50" y2="46" />
+                            <line x1="56" y1="60" x2="66" y2="50" />
+                            <line x1="50" y1="46" x2="60" y2="38" />
+                            <line x1="66" y1="50" x2="60" y2="38" />
+                            <line x1="66" y1="50" x2="76" y2="42" />
+                            <line x1="60" y1="38" x2="72" y2="28" />
+                            <line x1="76" y1="42" x2="72" y2="28" />
+                            <line x1="76" y1="42" x2="86" y2="32" />
+                            <line x1="72" y1="28" x2="82" y2="20" />
+                            <line x1="86" y1="32" x2="82" y2="20" />
+                            <line x1="82" y1="20" x2="92" y2="10" />
+                            {/* West-side branches drop off the main run. */}
+                            <line x1="14" y1="72" x2="6"  y2="60" />
+                            <line x1="38" y1="56" x2="28" y2="44" />
+                            <line x1="6"  y1="60" x2="22" y2="50" />
+                            <line x1="22" y1="50" x2="28" y2="44" />
+                            <line x1="50" y1="46" x2="40" y2="32" />
+                            <line x1="40" y1="32" x2="50" y2="22" />
+                            <line x1="60" y1="38" x2="50" y2="22" />
+                            {/* South-east tail branches splay toward the
+                                trailing-side rocks. */}
+                            <line x1="44" y1="68" x2="52" y2="82" />
+                            <line x1="52" y1="82" x2="38" y2="92" />
+                            <line x1="56" y1="60" x2="68" y2="68" />
+                            <line x1="68" y1="68" x2="76" y2="80" />
                           </g>
                           {/* Rock wall along the TOP edge (one face of the
                               leading corner). */}
@@ -1235,10 +1250,11 @@ export function MergeBoard({
                         </>
                       ) : (
                         <>
-                          {/* Cardinal crack network — three horizontal
-                              spines, branching up/down and cross-linking
-                              between them so every endpoint sits on at
-                              least one other segment. */}
+                          {/* Cardinal crack network — same short-segment
+                              treatment as the diagonal layout. Three loose
+                              chains walking left→right, with cross-bridges
+                              between them, all built from individual short
+                              lines so the network reads as fragmented. */}
                           <g
                             stroke="#2a1808"
                             strokeWidth="3.2"
@@ -1246,24 +1262,51 @@ export function MergeBoard({
                             strokeLinejoin="round"
                             fill="none"
                           >
-                            {/* Three jagged spines walking left→right. */}
-                            <polyline points="6,28 22,34 38,26 54,38 70,30 86,40" />
-                            <polyline points="6,56 20,62 36,54 52,66 68,58 84,68" />
-                            <polyline points="8,82 24,76 40,84 56,76 72,84 86,78" />
-                            {/* Vertical bridges joining the three spines. */}
-                            <polyline points="22,34 20,62" />
-                            <polyline points="54,38 52,66" />
-                            <polyline points="70,30 68,58" />
-                            <polyline points="36,54 40,84" />
-                            <polyline points="68,58 72,84" />
-                            {/* Branch off the top spine northward, each
-                                ending at the same point another branch
-                                shares — so no stray tips. */}
-                            <polyline points="38,26 30,16 22,34" />
-                            <polyline points="70,30 64,18 54,38" />
-                            {/* Branch off the bottom spine southward. */}
-                            <polyline points="24,76 26,90 40,84" />
-                            <polyline points="56,76 58,90 72,84" />
+                            {/* Top chain. */}
+                            <line x1="8"  y1="30" x2="20" y2="24" />
+                            <line x1="20" y1="24" x2="26" y2="36" />
+                            <line x1="26" y1="36" x2="38" y2="28" />
+                            <line x1="38" y1="28" x2="44" y2="40" />
+                            <line x1="44" y1="40" x2="56" y2="32" />
+                            <line x1="56" y1="32" x2="62" y2="42" />
+                            <line x1="62" y1="42" x2="74" y2="34" />
+                            <line x1="74" y1="34" x2="86" y2="40" />
+                            {/* Middle chain. */}
+                            <line x1="6"  y1="56" x2="18" y2="62" />
+                            <line x1="18" y1="62" x2="24" y2="50" />
+                            <line x1="24" y1="50" x2="34" y2="58" />
+                            <line x1="34" y1="58" x2="46" y2="50" />
+                            <line x1="46" y1="50" x2="52" y2="62" />
+                            <line x1="52" y1="62" x2="64" y2="54" />
+                            <line x1="64" y1="54" x2="72" y2="64" />
+                            <line x1="72" y1="64" x2="84" y2="58" />
+                            {/* Bottom chain. */}
+                            <line x1="10" y1="80" x2="22" y2="74" />
+                            <line x1="22" y1="74" x2="28" y2="86" />
+                            <line x1="28" y1="86" x2="40" y2="78" />
+                            <line x1="40" y1="78" x2="48" y2="88" />
+                            <line x1="48" y1="88" x2="58" y2="76" />
+                            <line x1="58" y1="76" x2="68" y2="86" />
+                            <line x1="68" y1="86" x2="78" y2="78" />
+                            <line x1="78" y1="78" x2="86" y2="86" />
+                            {/* Cross-bridges between rows — every endpoint
+                                is a junction that another row's segment
+                                also lands on. */}
+                            <line x1="26" y1="36" x2="24" y2="50" />
+                            <line x1="44" y1="40" x2="46" y2="50" />
+                            <line x1="62" y1="42" x2="64" y2="54" />
+                            <line x1="34" y1="58" x2="40" y2="78" />
+                            <line x1="52" y1="62" x2="58" y2="76" />
+                            <line x1="72" y1="64" x2="68" y2="86" />
+                            <line x1="18" y1="62" x2="22" y2="74" />
+                            {/* Stubby drops off the top edge, anchoring back
+                                onto the top chain. */}
+                            <line x1="20" y1="24" x2="14" y2="14" />
+                            <line x1="14" y1="14" x2="26" y2="36" />
+                            <line x1="56" y1="32" x2="50" y2="20" />
+                            <line x1="50" y1="20" x2="62" y2="42" />
+                            <line x1="74" y1="34" x2="80" y2="22" />
+                            <line x1="80" y1="22" x2="86" y2="40" />
                           </g>
                           {/* Rock wall on the leading edge. */}
                           <g>
