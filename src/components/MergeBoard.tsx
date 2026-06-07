@@ -1097,48 +1097,205 @@ export function MergeBoard({
                 );
               })()}
               {(() => {
-                // Earthquake overlay — a shaking brown crack with a small
-                // directional arrow so the player can see where the wave
-                // is heading next ply.
+                // Earthquake overlay — jagged cracks across the floor with
+                // a piled-rock wall along the leading edge so the player can
+                // see at a glance which way the wave is rolling.
+                //
+                // df is a file delta (+ = right), dr is a rank delta
+                // (+ = up the board). Screen y grows downward, so the visual
+                // angle uses -dr.
+                //
+                // Two base layouts, each rotated to the actual heading:
+                //   • cardinal: rock wall on the east edge, cracks running
+                //     left → right. canonical heading = east (0°).
+                //   • diagonal: rocks pile along the top + right edges so
+                //     both faces of the leading corner show stone. cracks
+                //     run from the trailing corner up to the leading one.
+                //     canonical heading = northeast (-45° in atan2 terms).
                 const eq = earthquakesBySq.get(sq);
                 if (!eq) return null;
-                const size = squarePx;
-                // Arrow rotation: df is a file delta (+ = right), dr is a
-                // rank delta (+ = up the board). Screen y grows downward,
-                // so the visual angle uses -dr.
-                const angle = Math.atan2(-eq.dr, eq.df) * 180 / Math.PI;
+                const isDiagonal = eq.df !== 0 && eq.dr !== 0;
+                const heading = Math.atan2(-eq.dr, eq.df) * 180 / Math.PI;
+                const canonical = isDiagonal ? -45 : 0;
+                const rotation = heading - canonical;
                 return (
                   <div
                     className="earthquake-marker"
                     aria-hidden
                     style={{
                       position: 'absolute',
-                      inset: '12%',
+                      inset: 0,
                       pointerEvents: 'none',
                       zIndex: 4,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
                     }}
                   >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        borderRadius: '20%',
-                        background: 'radial-gradient(circle at 35% 30%, rgba(120, 70, 30, 0.55), rgba(60, 30, 10, 0.7))',
-                        boxShadow: '0 0 0.4rem rgba(150, 80, 30, 0.55), inset 0 0 0.3rem rgba(0, 0, 0, 0.6)',
-                      }}
-                    />
-                    <svg viewBox="0 0 24 24" width={size * 0.5} height={size * 0.5} style={{ position: 'relative', transform: `rotate(${angle}deg)`, filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.7))' }}>
-                      <path
-                        d="M 4 12 L 18 12 M 13 7 L 18 12 L 13 17"
-                        stroke="#ffd28a"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        fill="none"
+                    <svg
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                      width="100%"
+                      height="100%"
+                      style={{ display: 'block', transform: `rotate(${rotation}deg)` }}
+                    >
+                      {/* Dust haze under the cracks so the cell reads as
+                          disturbed earth even before any pieces are nearby. */}
+                      <rect
+                        x="2" y="2" width="96" height="96" rx="6"
+                        fill="rgba(80, 50, 22, 0.28)"
                       />
+                      {isDiagonal ? (
+                        <>
+                          {/* Diagonal crack network — every segment shares
+                              both endpoints with another segment, so the
+                              fissures branch into a connected web instead
+                              of floating as disjoint strokes. Junctions are
+                              reused verbatim across polylines so React /
+                              SVG renders them as the same point. */}
+                          <g
+                            stroke="#2a1808"
+                            strokeWidth="3.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                          >
+                            {/* Main spine: trailing corner → leading corner */}
+                            <polyline points="8,92 24,76 40,60 54,46 70,30 84,14" />
+                            {/* West branches off the spine */}
+                            <polyline points="24,76 12,68 20,56" />
+                            <polyline points="40,60 28,52 22,40" />
+                            <polyline points="54,46 44,32 50,20" />
+                            <polyline points="70,30 60,22 64,10" />
+                            {/* East branches off the spine */}
+                            <polyline points="24,76 32,86 22,92" />
+                            <polyline points="40,60 52,68 46,82" />
+                            <polyline points="54,46 66,54 62,70" />
+                            <polyline points="70,30 82,40 78,54" />
+                            {/* Cross-links: connect adjacent branch tips so
+                                no endpoint is left dangling in space. */}
+                            <polyline points="20,56 28,52" />
+                            <polyline points="22,40 28,52" />
+                            <polyline points="50,20 60,22" />
+                            <polyline points="46,82 52,68" />
+                            <polyline points="62,70 66,54" />
+                            <polyline points="78,54 82,40" />
+                          </g>
+                          {/* Rock wall along the TOP edge (one face of the
+                              leading corner). */}
+                          <g>
+                            <polygon
+                              points="2,2 18,0 30,8 28,20 14,22 4,16"
+                              fill="#6a4a26" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="28,4 46,2 60,10 56,22 38,24 28,16"
+                              fill="#7d5a30" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="56,2 74,0 88,8 84,22 64,22 56,14"
+                              fill="#6a4828" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                          </g>
+                          {/* Rock wall along the RIGHT edge (other face of
+                              the leading corner). */}
+                          <g>
+                            <polygon
+                              points="80,12 96,4 100,22 96,38 82,36 78,22"
+                              fill="#574023" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="78,36 96,38 100,52 94,64 80,62 76,48"
+                              fill="#7d5a30" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="76,62 94,64 100,80 92,92 78,88 72,76"
+                              fill="#6a4828" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                          </g>
+                          {/* Top-right keystone — anchors the two walls into
+                              a single pile at the leading corner. */}
+                          <polygon
+                            points="84,2 100,0 100,20 86,18 80,8"
+                            fill="#46331c" stroke="#2a1808" strokeWidth="2"
+                            strokeLinejoin="round"
+                          />
+                          {/* Highlight strokes on the tops of the rocks. */}
+                          <g stroke="#cfa874" strokeWidth="1.1" fill="none" strokeLinecap="round">
+                            <polyline points="4,4 18,2 28,8" />
+                            <polyline points="30,6 46,4 58,10" />
+                            <polyline points="58,4 74,2 86,8" />
+                            <polyline points="84,14 96,8 100,22" />
+                            <polyline points="82,40 96,42 100,52" />
+                            <polyline points="80,66 94,68 100,80" />
+                          </g>
+                        </>
+                      ) : (
+                        <>
+                          {/* Cardinal crack network — three horizontal
+                              spines, branching up/down and cross-linking
+                              between them so every endpoint sits on at
+                              least one other segment. */}
+                          <g
+                            stroke="#2a1808"
+                            strokeWidth="3.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                          >
+                            {/* Three jagged spines walking left→right. */}
+                            <polyline points="6,28 22,34 38,26 54,38 70,30 86,40" />
+                            <polyline points="6,56 20,62 36,54 52,66 68,58 84,68" />
+                            <polyline points="8,82 24,76 40,84 56,76 72,84 86,78" />
+                            {/* Vertical bridges joining the three spines. */}
+                            <polyline points="22,34 20,62" />
+                            <polyline points="54,38 52,66" />
+                            <polyline points="70,30 68,58" />
+                            <polyline points="36,54 40,84" />
+                            <polyline points="68,58 72,84" />
+                            {/* Branch off the top spine northward, each
+                                ending at the same point another branch
+                                shares — so no stray tips. */}
+                            <polyline points="38,26 30,16 22,34" />
+                            <polyline points="70,30 64,18 54,38" />
+                            {/* Branch off the bottom spine southward. */}
+                            <polyline points="24,76 26,90 40,84" />
+                            <polyline points="56,76 58,90 72,84" />
+                          </g>
+                          {/* Rock wall on the leading edge. */}
+                          <g>
+                            <polygon
+                              points="74,8 90,4 98,14 96,26 84,30 76,22"
+                              fill="#6a4a26" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="80,28 96,24 100,38 94,50 82,48 76,38"
+                              fill="#7d5a30" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="76,48 92,46 100,58 96,72 82,70 74,60"
+                              fill="#6a4828" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <polygon
+                              points="78,68 94,66 100,80 92,94 80,92 74,80"
+                              fill="#574023" stroke="#2a1808" strokeWidth="2"
+                              strokeLinejoin="round"
+                            />
+                            <g stroke="#cfa874" strokeWidth="1.1" fill="none" strokeLinecap="round">
+                              <polyline points="76,10 84,6 92,8" />
+                              <polyline points="82,30 90,27 96,30" />
+                              <polyline points="78,50 86,48 94,50" />
+                              <polyline points="80,70 88,68 96,70" />
+                            </g>
+                          </g>
+                        </>
+                      )}
                     </svg>
                   </div>
                 );

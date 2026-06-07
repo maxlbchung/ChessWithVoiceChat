@@ -185,7 +185,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     kind: 'mutation',
     name: 'Mutation',
     blurb: 'Mutate a bishop / rook / queen to also move like a knight. Promotions can fuse with a knight too.',
-    glowColor: '#3aa66b',
+    glowColor: '#1f7a44',
     cooldownTurns: 5,
   },
   icbm: {
@@ -594,10 +594,11 @@ function processMissileLandings(next: GameState): { kingDestroyed: C2Color | nul
 }
 
 // Advance every live earthquake one tile in its direction. Waves dissipate
-// at the board edge; an enemy piece on the new tile dies and the wave dies
-// with it. Friendly pieces ride out the wave untouched. Newly-spawned waves
-// sit still on the ply they were created — their first move happens on the
-// next ply.
+// only at the board edge — enemy pieces in the path die but the wave keeps
+// rolling. Friendly pieces ride out the wave untouched. A sub-tier-3
+// Juggernaut absorbs the wave (tiers up and the wave dies, same as an ICBM
+// hit). Newly-spawned waves sit still on the ply they were created — their
+// first move happens on the next ply.
 function processEarthquakes(next: GameState): { kingDestroyed: C2Color | null } {
   if (next.earthquakes.length === 0) return { kingDestroyed: null };
   const hadW = hasAnyKingSquare(next, 'w');
@@ -613,26 +614,27 @@ function processEarthquakes(next: GameState): { kingDestroyed: C2Color | null } 
     if (!onBoard(nf, nr)) continue;
     const newIdx = idxFR(nf, nr);
     const victim = next.board[newIdx];
+    let absorbed = false;
     if (victim && victim.color !== eq.color) {
-      // Sub-tier-3 Juggernaut absorbs the wave and tiers up, exactly like
-      // an ICBM hit. The wave dies on contact either way.
       const jt = jugTierAt(next, newIdx);
       if (jt >= 1 && jt < 3) {
+        // Sub-tier-3 Juggernaut absorbs the wave — wave dies, jug tiers up.
         next.jugTier[victim.color] = jt + 1;
-        continue;
+        absorbed = true;
+      } else {
+        const up = victim.letter.toUpperCase();
+        if (up === 'S') splitSlimeGroupAt(next, newIdx);
+        next.board[newIdx] = null;
+        next.frozen = next.frozen.filter((fz) => fz.idx !== newIdx);
+        next.stunned = next.stunned.filter((s) => s.idx !== newIdx);
+        if (newIdx === 56) next.castling.wQ = false;
+        if (newIdx === 63) next.castling.wK = false;
+        if (newIdx === 0)  next.castling.bQ = false;
+        if (newIdx === 7)  next.castling.bK = false;
+        if (next.masked) next.masked[newIdx] = false;
       }
-      const up = victim.letter.toUpperCase();
-      if (up === 'S') splitSlimeGroupAt(next, newIdx);
-      next.board[newIdx] = null;
-      next.frozen = next.frozen.filter((fz) => fz.idx !== newIdx);
-      next.stunned = next.stunned.filter((s) => s.idx !== newIdx);
-      if (newIdx === 56) next.castling.wQ = false;
-      if (newIdx === 63) next.castling.wK = false;
-      if (newIdx === 0)  next.castling.bQ = false;
-      if (newIdx === 7)  next.castling.bK = false;
-      if (next.masked) next.masked[newIdx] = false;
-      continue;
     }
+    if (absorbed) continue;
     surviving.push({ ...eq, idx: newIdx });
   }
   next.earthquakes = surviving;
@@ -1897,10 +1899,21 @@ export function legalMovesFrom(state: GameState, from: Square): LegalMove[] {
   if (!p || p.color !== state.turn) return [];
   const pseudos = pseudoMoves(state, idx);
   const moverColor = p.color;
+  // Juggernaut sides field a lone king that moves like queen/rook/king by
+  // tier — but it should refuse to walk into attacked squares the same way
+  // a normal king does, AT EVERY TIER. `isInCheck` only fires at tier 3, so
+  // this extra filter covers tiers 1 and 2 (and is a redundant no-op at
+  // tier 3). The destination check naturally also bans capturing a defended
+  // piece, since the defender still attacks the square the Juggernaut would
+  // land on.
+  const isJugMover =
+    state.heroes[moverColor].hero === 'juggernaut' && p.letter.toUpperCase() === 'K';
+  const enemy: C2Color = moverColor === 'w' ? 'b' : 'w';
   const out: LegalMove[] = [];
   for (const pm of pseudos) {
     const next = applyPseudo(state, pm);
     if (isInCheck(next, moverColor)) continue;
+    if (isJugMover && isSquareAttacked(next, pm.to, enemy)) continue;
     // Capturing a sub-tier-3 Juggernaut costs the attacker its life. A move
     // that would spend the mover's LAST king square (the king itself
     // charging in) is illegal, same as moving into check. A multi-king
