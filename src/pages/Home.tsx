@@ -755,7 +755,7 @@ export function Home() {
           if (ab === 'warlord') {
             fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
           }
-          // Juggernaut no longer leaps — tier 2's diagonal slide uses the
+          // Juggernaut no longer leaps — tier 2's edge-charge slide uses the
           // regular slide track (handled below by the standard ability anim).
           setHeroAbilityAnim({
             kind: ab,

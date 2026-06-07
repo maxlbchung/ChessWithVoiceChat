@@ -122,7 +122,7 @@ function noTargetHint(hero: HeroKind, jugTier?: number): string {
       return jugTier === 1
         ? 'No safe direction to spawn an earthquake.'
         : jugTier === 2
-          ? 'No diagonal charge lane is safe right now.'
+          ? 'No edge-charge lane is safe right now.'
           : 'Nothing to slam.';
     default:            return 'No legal target right now.';
   }

@@ -232,7 +232,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 // player always sees what their current tier does.
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
   1: { name: 'Earthquake',      move: 'moves like a king', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Quake tiles are impassable terrain: sliders, pawns and kings can\'t cross them and nothing lands on them. Only knights can jump over.' },
-  2: { name: 'Diagonal Charge', move: 'moves like a king', blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
+  2: { name: 'Edge Charge',     move: 'moves like a king', blurb: 'Charge in any queen direction to the board edge, destroying everything in the path.' },
   3: { name: 'Slam',            move: 'moves like a king', blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
 };
 
@@ -693,7 +693,7 @@ function pseudoMoves(state: GameState, from: number): PseudoMove[] {
   if (up === 'P') pseudoPawn(state, from, ff, fr, p, out);
   else if (up === 'K') {
     // Juggernaut passive: the king walks one square at all tiers. The
-    // tier abilities (Earthquake, Diagonal Charge, Slam) carry the
+    // tier abilities (Earthquake, Edge Charge, Slam) carry the
     // extra reach. A Juggernaut side has no castling rights, so
     // pseudoKing's castle block stays dormant.
     pseudoKing(state, from, ff, fr, p, out);
@@ -1224,9 +1224,10 @@ export function abilityTargets(state: GameState): number[] {
         out.push(idxFR(f, r));
       }
     } else if (tier === 2) {
-      // Diagonal charge: walk each of the four diagonals to the board
-      // edge and surface that corner-most square as the target.
-      for (const [df, dr] of BISHOP_DIRS) {
+      // Edge charge: walk every queen direction (8 total — rook + bishop
+      // rays) to the board edge and surface that edge-most square as the
+      // target.
+      for (const [df, dr] of EIGHT_DIRS) {
         let f = kf + df, r = kr + dr;
         if (!onBoard(f, r)) continue;
         while (onBoard(f + df, r + dr)) { f += df; r += dr; }
@@ -1611,8 +1612,10 @@ function applyAbility(
         // king-destroyed pathway.
         const [kf, kr] = frOfIdx(k);
         const [tf, tr] = frOfIdx(targetIdx);
-        const df = tf > kf ? 1 : -1;
-        const dr = tr > kr ? 1 : -1;
+        // Math.sign yields -1/0/+1 so the charge works for both cardinal
+        // (one delta is 0) and diagonal (both ±1) edge targets.
+        const df = Math.sign(tf - kf);
+        const dr = Math.sign(tr - kr);
         const jug = next.board[k]!;
         next.board[k] = null;
         next.masked[k] = false;
@@ -1683,7 +1686,7 @@ function applyAbility(
   processMissileLandings(next);
   // Same beat for earthquakes — but waves only advance when their owner's
   // Juggernaut just moved. Any of the Jug's tier abilities (earthquake
-  // spawn, diagonal charge, slam) count as the Jug acting.
+  // spawn, edge charge, slam) count as the Jug acting.
   const abilityJugColor = state.heroes[color].hero === 'juggernaut' ? color : null;
   processEarthquakes(next, abilityJugColor);
 
@@ -2118,17 +2121,19 @@ export function pieceAtImpactBeforeBlast(
       if (tier === 2 && jugIdx !== -1) {
         if (impactIdx === jugIdx) return null;
         if (impactIdx === targetIdx2) return state.board[jugIdx];
-        // Squares strictly between the Juggernaut and the diagonal corner
-        // it charged to were flattened by the slide.
+        // Squares strictly between the Juggernaut and the edge tile it
+        // charged to were flattened by the slide. Walk the ray (cardinal
+        // or diagonal, picked via Math.sign) and see if impactIdx sits
+        // on it before the endpoint.
         const [kf, kr] = frOfIdx(jugIdx);
         const [tf, tr] = frOfIdx(targetIdx2);
         const [pf, pr] = frOfIdx(impactIdx);
-        const df = tf > kf ? 1 : -1;
-        const dr = tr > kr ? 1 : -1;
-        const steps = pf - kf;
-        if (steps !== 0 && (pr - kr) === steps * (dr / df) && Math.abs(steps) < Math.abs(tf - kf)
-            && Math.sign(pf - kf) === df) {
-          return null;
+        const df = Math.sign(tf - kf);
+        const dr = Math.sign(tr - kr);
+        let f = kf + df, r = kr + dr;
+        while (f !== tf || r !== tr) {
+          if (f === pf && r === pr) return null;
+          f += df; r += dr;
         }
       }
       return state.board[impactIdx] ?? null;

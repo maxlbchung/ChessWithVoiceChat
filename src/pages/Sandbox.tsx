@@ -1385,9 +1385,9 @@ export function Sandbox() {
     // Juggernaut: single-click, tier-dependent (tier comes from the dial).
     // Tier 1 fires an earthquake (sandbox spawns the wave in place and
     // also kills any enemy on the spawn square — without ply tracking the
-    // wave doesn't auto-advance here); tier 2 charges along a diagonal to
-    // the board edge, flattening the path; tier 3 slams (destroys radius 1,
-    // stuns radius 2).
+    // wave doesn't auto-advance here); tier 2 charges along any queen
+    // direction (cardinal or diagonal) to the board edge, flattening the
+    // path; tier 3 slams (destroys radius 1, stuns radius 2).
     if (hero === 'juggernaut') {
       if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
       const tier = color === 'w' ? jugTierW : jugTierB;
@@ -1414,12 +1414,14 @@ export function Sandbox() {
         if (animationsEnabled) setPopAnim({ squares: [targetSq], key: Date.now() });
       } else if (tier === 2) {
         if (k === -1) { setAbilityArmed(null); return; }
-        // Diagonal charge: flatten every square between the Juggernaut and
-        // the chosen diagonal corner (Slime tiles split as they're crushed).
+        // Edge charge: flatten every square between the Juggernaut and the
+        // chosen edge-most tile along any queen direction (Slime tiles
+        // split as they're crushed). Math.sign supports cardinal directions
+        // (one delta is 0) alongside the diagonals.
         const kCol = k % 8, kRow = Math.floor(k / 8);
         const tCol = idx % 8, tRow = Math.floor(idx / 8);
-        const dCol = tCol > kCol ? 1 : -1;
-        const dRow = tRow > kRow ? 1 : -1;
+        const dCol = Math.sign(tCol - kCol);
+        const dRow = Math.sign(tRow - kRow);
         const groups = deriveSlimeGroups(current.board);
         nextBoard[k] = null;
         nextMasked[k] = false;
@@ -2307,7 +2309,7 @@ function SandboxHeroPanel({
 }) {
   const tierOptions = [
     { value: '1', label: 'Tier 1 · Earthquake' },
-    { value: '2', label: 'Tier 2 · Diagonal Charge' },
+    { value: '2', label: 'Tier 2 · Edge Charge' },
     { value: '3', label: 'Tier 3 · Slam' },
   ];
   return (

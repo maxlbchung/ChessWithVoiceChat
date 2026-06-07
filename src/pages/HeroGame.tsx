@@ -667,7 +667,7 @@ export function HeroGame() {
     if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
     }
-    // No tier of the Juggernaut leaps anymore — tier 2's diagonal charge
+    // No tier of the Juggernaut leaps anymore — tier 2's edge charge
     // uses the regular slide animation, tier 1/3 keep the jug in place.
     return {
       kind: ab,
@@ -866,7 +866,7 @@ export function HeroGame() {
       const to = move.uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
-      // Mirror the mover's diagonal charge slide on this screen too. The
+      // Mirror the mover's edge charge slide on this screen too. The
       // Earthquake (tier 1) and Slam (tier 3) abilities keep the jug put.
       const from = kingSquareOf(prev.board, prev.turn);
       const to = move.uci.slice(2, 4) as Square;
