@@ -839,6 +839,7 @@ export function MergeBoard({
                     neutralKing={jugBySq.has(sq)}
                     neutralKingTier={jugBySq.get(sq)}
                     juggernautLeap={isJugLeapDest}
+                    slimeGoo={slimeMiniSet.has(sq) && !slimeTileSet.has(sq)}
                   />
                 );
               })()}
@@ -909,11 +910,9 @@ export function MergeBoard({
                   </div>
                 );
               })()}
-              {piece && slimeMiniSet.has(sq) && !slimeTileSet.has(sq) && (
-                // Slime mini king — translucent goo blob hugging the piece so
-                // the swarm reads as slime at a glance.
-                <div className="slime-goo slime-goo-mini" aria-hidden />
-              )}
+              {/* Slime mini-king goo bubble lives inside PieceSprite now,
+                  so it slides + drags + hides with the piece instead of
+                  popping back to the cell at rest. */}
               {isFrozen && (
                 <div className={`frozen-overlay${isFrozenCracking ? ' cracking' : ''}`} aria-hidden>
                   {isFrozenCracking && (
@@ -1745,6 +1744,7 @@ export function MergeBoard({
           x={drag.x}
           y={drag.y}
           neutralKing={jugBySq.has(drag.from)}
+          slimeGoo={slimeMiniSet.has(drag.from) && !slimeTileSet.has(drag.from)}
         />,
         document.body,
       )}
@@ -1762,6 +1762,7 @@ function DragFloater({
   x,
   y,
   neutralKing,
+  slimeGoo,
 }: {
   piece: Piece;
   squarePx: number;
@@ -1769,6 +1770,9 @@ function DragFloater({
   y: number;
   // Juggernaut in flight — keep the colorless stone king under the cursor.
   neutralKing?: boolean;
+  // Slime mini-king in flight — wrap the king glyph in the goo bubble so the
+  // blob travels with the cursor instead of staying behind on the source.
+  slimeGoo?: boolean;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
@@ -1793,6 +1797,7 @@ function DragFloater({
         filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.4))',
       }}
     >
+      {slimeGoo && <span className="slime-goo slime-goo-mini" aria-hidden />}
       {neutralKing ? (
         renderNeutralKing(fullSize)
       ) : !isMerged ? (
@@ -2346,6 +2351,7 @@ function PieceSprite({
   neutralKing,
   neutralKingTier,
   juggernautLeap,
+  slimeGoo,
 }: {
   piece: Piece;
   squarePx: number;
@@ -2377,6 +2383,11 @@ function PieceSprite({
   // Tier-2 Juggernaut Quake Leap: keep the normal square-to-square slide on
   // the outer wrapper, then jump the body relative to that path.
   juggernautLeap?: boolean;
+  // Slime mini-king: render the green goo bubble inside the sprite wrapper
+  // so it slides, drags and hides in lockstep with the piece. (Previously
+  // the bubble was a sibling on the cell, which made it disappear during
+  // moves / drags and snap back at rest.)
+  slimeGoo?: boolean;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
@@ -2465,6 +2476,7 @@ function PieceSprite({
         ...slideStyle,
       }}
     >
+      {slimeGoo && <span className="slime-goo slime-goo-mini" aria-hidden />}
       <div
         style={{
           ['--size' as any]: `${squarePx}px`,
