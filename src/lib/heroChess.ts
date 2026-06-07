@@ -231,7 +231,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 // GameState.jugTier (1-3). The picker/abilities panel renders these so the
 // player always sees what their current tier does.
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
-  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Nothing can move onto a quake tile.' },
+  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Quake tiles are impassable terrain: sliders, pawns and kings can\'t cross them and nothing lands on them. Only knights can jump over.' },
   2: { name: 'Diagonal Charge', move: 'moves like a rook',  blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
   3: { name: 'Slam',            move: 'moves like a king',  blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
 };
@@ -883,6 +883,10 @@ function pseudoSliding(
     let f = ff + df, r = fr + dr;
     while (onBoard(f, r)) {
       const t = idxFR(f, r);
+      // Earthquake tiles are impassable terrain — they block the ray
+      // exactly like a piece would (and the slider can't land on the
+      // quake itself either).
+      if (s.earthquakes.some((eq) => eq.idx === t)) break;
       const dest = s.board[t];
       if (dest) {
         if (dest.color !== p.color) out.push({ from, to: t });
@@ -917,7 +921,10 @@ function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece
     ? ['Q', 'R', 'B', 'N', 'Z', 'C', 'A']
     : ['Q', 'R', 'B', 'N'];
   const oneR = fr + dir;
-  if (onBoard(ff, oneR) && !s.board[idxFR(ff, oneR)]) {
+  // Earthquake tiles block pawn pushes the same way another piece does —
+  // can't push onto the wave, and a double push can't hop over one.
+  const hasQuakeAt = (idx: number) => s.earthquakes.some((eq) => eq.idx === idx);
+  if (onBoard(ff, oneR) && !s.board[idxFR(ff, oneR)] && !hasQuakeAt(idxFR(ff, oneR))) {
     if (oneR === promoRank) {
       for (const promo of promos) {
         out.push({ from, to: idxFR(ff, oneR), promotion: promo });
@@ -925,7 +932,12 @@ function pseudoPawn(s: GameState, from: number, ff: number, fr: number, p: Piece
     } else {
       out.push({ from, to: idxFR(ff, oneR) });
       const twoR = fr + 2 * dir;
-      if (fr === startRank && onBoard(ff, twoR) && !s.board[idxFR(ff, twoR)]) {
+      if (
+        fr === startRank &&
+        onBoard(ff, twoR) &&
+        !s.board[idxFR(ff, twoR)] &&
+        !hasQuakeAt(idxFR(ff, twoR))
+      ) {
         out.push({ from, to: idxFR(ff, twoR), doublePawn: true });
       }
     }
@@ -1006,11 +1018,13 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     if (up === 'N' || up === 'A' || up === 'C' || up === 'Z') return true;
   }
   // Orthogonal rays — R / Q plus merged C (rook+N), Z (queen+N) and a
-  // tier-1 (queen) or tier-2 (rook) Juggernaut king.
+  // tier-1 (queen) or tier-2 (rook) Juggernaut king. Earthquake tiles
+  // block the ray exactly like a piece would.
   for (const [df, dr] of ROOK_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
       const idx = idxFR(f, r);
+      if (state.earthquakes.some((eq) => eq.idx === idx)) break;
       const p = state.board[idx];
       if (p) {
         if (p.color === byColor && !inert(idx)) {
@@ -1024,11 +1038,12 @@ export function isSquareAttacked(state: GameState, target: number, byColor: C2Co
     }
   }
   // Diagonal rays — B / Q plus merged A (bishop+N), Z (queen+N) and a
-  // tier-1 Juggernaut king (queen movement).
+  // tier-1 Juggernaut king (queen movement). Earthquakes block here too.
   for (const [df, dr] of BISHOP_DIRS) {
     let f = tf + df, r = tr + dr;
     while (onBoard(f, r)) {
       const idx = idxFR(f, r);
+      if (state.earthquakes.some((eq) => eq.idx === idx)) break;
       const p = state.board[idx];
       if (p) {
         if (p.color === byColor && !inert(idx)) {
