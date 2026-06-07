@@ -231,7 +231,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 // GameState.jugTier (1-3). The picker/abilities panel renders these so the
 // player always sees what their current tier does.
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
-  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile per ply in the chosen direction, killing the first enemy it lands on.' },
+  1: { name: 'Earthquake',      move: 'moves like a queen', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Nothing can move onto a quake tile.' },
   2: { name: 'Diagonal Charge', move: 'moves like a rook',  blurb: 'Charge along a diagonal to the board edge, destroying everything in the path.' },
   3: { name: 'Slam',            move: 'moves like a king',  blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
 };
@@ -593,18 +593,30 @@ function processMissileLandings(next: GameState): { kingDestroyed: C2Color | nul
   return { kingDestroyed };
 }
 
-// Advance every live earthquake one tile in its direction. Waves dissipate
-// only at the board edge — enemy pieces in the path die but the wave keeps
-// rolling. Friendly pieces ride out the wave untouched. A sub-tier-3
-// Juggernaut absorbs the wave (tiers up and the wave dies, same as an ICBM
-// hit). Newly-spawned waves sit still on the ply they were created — their
-// first move happens on the next ply.
-function processEarthquakes(next: GameState): { kingDestroyed: C2Color | null } {
+// Advance every live earthquake one tile in its direction — but ONLY for
+// waves whose owner just moved their Juggernaut. The wave is the Jug's
+// quake; it pulses one tile each time the Jug stomps. Waves owned by a
+// side that didn't move their Jug this ply just sit still.
+//
+// Waves dissipate only at the board edge — enemy pieces in the path die
+// but the wave keeps rolling. Friendly pieces ride out untouched. A sub-
+// tier-3 Juggernaut absorbs the wave (tiers up and the wave dies, same
+// as an ICBM hit). Newly-spawned waves sit still on the ply they were
+// created — their first move happens on the next jug move.
+function processEarthquakes(
+  next: GameState,
+  advanceColor: C2Color | null,
+): { kingDestroyed: C2Color | null } {
   if (next.earthquakes.length === 0) return { kingDestroyed: null };
   const hadW = hasAnyKingSquare(next, 'w');
   const hadB = hasAnyKingSquare(next, 'b');
   const surviving: Earthquake[] = [];
   for (const eq of next.earthquakes) {
+    // Wave only advances when its owner's Juggernaut just moved.
+    if (eq.color !== advanceColor) {
+      surviving.push(eq);
+      continue;
+    }
     if (eq.spawnedAtPly >= next.ply) {
       surviving.push(eq);
       continue;
@@ -1661,9 +1673,11 @@ function applyAbility(
   // only path that mutates board this way; it bypasses Frost (the freeze
   // applies to capture/move, not to explosions).
   processMissileLandings(next);
-  // Same beat for earthquakes — they creep one tile per ply (skipping the
-  // ply they were spawned on so the wave is visible before it moves).
-  processEarthquakes(next);
+  // Same beat for earthquakes — but waves only advance when their owner's
+  // Juggernaut just moved. Any of the Jug's tier abilities (earthquake
+  // spawn, diagonal charge, slam) count as the Jug acting.
+  const abilityJugColor = state.heroes[color].hero === 'juggernaut' ? color : null;
+  processEarthquakes(next, abilityJugColor);
 
   // Expire any active freezes / stuns whose lifetime has now ended.
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
@@ -1748,7 +1762,9 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       if (crushed) next.halfmove = 0;
     }
     processMissileLandings(next);
-    processEarthquakes(next);
+    // Slime shift — no Juggernaut moved on this ply (each side picks one
+    // hero), so no waves advance.
+    processEarthquakes(next, null);
     next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
     next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
     const hist = state.positionHistory.slice();
@@ -1782,7 +1798,14 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       if (mv.from === 0)  next.castling.bQ = false;
       if (mv.from === 7)  next.castling.bK = false;
       processMissileLandings(next);
-      processEarthquakes(next);
+      // The attacking piece was just absorbed by a Juggernaut. If that
+      // attacker happened to be the OTHER side's Juggernaut making a
+      // suicide rush, their waves advance as part of that final stomp.
+      const absorbJugColor = (
+        mover.letter.toUpperCase() === 'K' &&
+        state.heroes[mover.color].hero === 'juggernaut'
+      ) ? mover.color : null;
+      processEarthquakes(next, absorbJugColor);
       next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
       next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
       const hist = state.positionHistory.slice();
@@ -1870,9 +1893,14 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   // Process any missile landings before freeze expiration so a missile that
   // demolishes a frozen piece also clears the freeze entry.
   processMissileLandings(next);
-  // Same pass for earthquakes — they creep one tile this ply (the wave
-  // that was just spawned, if any, sits until next ply via spawnedAtPly).
-  processEarthquakes(next);
+  // Earthquakes only creep when their owner's Juggernaut piece itself just
+  // moved — so a player can stockpile waves and trigger advancement
+  // intentionally by walking the Jug forward.
+  const moverJugColor = (
+    mover.letter.toUpperCase() === 'K' &&
+    state.heroes[mover.color].hero === 'juggernaut'
+  ) ? mover.color : null;
+  processEarthquakes(next, moverJugColor);
 
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
   next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
@@ -1909,8 +1937,14 @@ export function legalMovesFrom(state: GameState, from: Square): LegalMove[] {
   const isJugMover =
     state.heroes[moverColor].hero === 'juggernaut' && p.letter.toUpperCase() === 'K';
   const enemy: C2Color = moverColor === 'w' ? 'b' : 'w';
+  // Squares currently occupied by ANY earthquake are impassable terrain
+  // (rocks + cracked floor — nothing walks through). Lookup keyed by tile
+  // index so the per-pseudo-move check is O(1).
+  const quakeTiles = new Set<number>();
+  for (const eq of state.earthquakes) quakeTiles.add(eq.idx);
   const out: LegalMove[] = [];
   for (const pm of pseudos) {
+    if (quakeTiles.has(pm.to)) continue;
     const next = applyPseudo(state, pm);
     if (isInCheck(next, moverColor)) continue;
     if (isJugMover && isSquareAttacked(next, pm.to, enemy)) continue;
@@ -2226,6 +2260,9 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   const promoChar = uci.length >= 5 ? uci[4].toUpperCase() : undefined;
   const fromIdx = sqToIdx(from);
   const toIdx = sqToIdx(to);
+  // Earthquake squares are impassable terrain — mirror the legalMovesFrom
+  // filter at the apply layer so a typed / wire UCI can't bypass it.
+  if (state.earthquakes.some((eq) => eq.idx === toIdx)) return null;
   const pseudos = pseudoMoves(state, fromIdx).filter((m) => m.to === toIdx);
   if (pseudos.length === 0) return null;
   const moverColor = state.board[fromIdx]?.color;

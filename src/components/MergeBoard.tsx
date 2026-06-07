@@ -1144,12 +1144,15 @@ export function MergeBoard({
                       />
                       {isDiagonal ? (
                         <>
-                          {/* Diagonal crack network — many SHORT segments,
-                              each its own line, glued together only at the
-                              shared junctions. No segment runs more than
-                              a tile-eighth long and no two consecutive
-                              ones share a heading, so the floor reads as
-                              shattered rather than striped. */}
+                          {/* Diagonal crack network — a tree-root /
+                              ice-shatter pattern: a few jagged main
+                              fissures grow from the trailing edge toward
+                              the leading corner, with sub-cracks and
+                              twigs forking off. Twig tips dangle free,
+                              like the way ice fractures branch outward.
+                              Joints share coordinates with the parent
+                              fissure so the network reads as continuous
+                              growth instead of disjoint strokes. */}
                           <g
                             stroke="#2a1808"
                             strokeWidth="3.2"
@@ -1157,41 +1160,37 @@ export function MergeBoard({
                             strokeLinejoin="round"
                             fill="none"
                           >
-                            <line x1="8"  y1="92" x2="20" y2="84" />
-                            <line x1="20" y1="84" x2="14" y2="72" />
-                            <line x1="14" y1="72" x2="26" y2="66" />
-                            <line x1="20" y1="84" x2="34" y2="78" />
-                            <line x1="34" y1="78" x2="26" y2="66" />
-                            <line x1="34" y1="78" x2="44" y2="68" />
-                            <line x1="26" y1="66" x2="38" y2="56" />
-                            <line x1="44" y1="68" x2="38" y2="56" />
-                            <line x1="44" y1="68" x2="56" y2="60" />
-                            <line x1="38" y1="56" x2="50" y2="46" />
-                            <line x1="56" y1="60" x2="50" y2="46" />
-                            <line x1="56" y1="60" x2="66" y2="50" />
-                            <line x1="50" y1="46" x2="60" y2="38" />
-                            <line x1="66" y1="50" x2="60" y2="38" />
-                            <line x1="66" y1="50" x2="76" y2="42" />
-                            <line x1="60" y1="38" x2="72" y2="28" />
-                            <line x1="76" y1="42" x2="72" y2="28" />
-                            <line x1="76" y1="42" x2="86" y2="32" />
-                            <line x1="72" y1="28" x2="82" y2="20" />
-                            <line x1="86" y1="32" x2="82" y2="20" />
-                            <line x1="82" y1="20" x2="92" y2="10" />
-                            {/* West-side branches drop off the main run. */}
-                            <line x1="14" y1="72" x2="6"  y2="60" />
-                            <line x1="38" y1="56" x2="28" y2="44" />
-                            <line x1="6"  y1="60" x2="22" y2="50" />
-                            <line x1="22" y1="50" x2="28" y2="44" />
-                            <line x1="50" y1="46" x2="40" y2="32" />
-                            <line x1="40" y1="32" x2="50" y2="22" />
-                            <line x1="60" y1="38" x2="50" y2="22" />
-                            {/* South-east tail branches splay toward the
-                                trailing-side rocks. */}
-                            <line x1="44" y1="68" x2="52" y2="82" />
-                            <line x1="52" y1="82" x2="38" y2="92" />
-                            <line x1="56" y1="60" x2="68" y2="68" />
-                            <line x1="68" y1="68" x2="76" y2="80" />
+                            {/* Main fissures growing SW → NE. */}
+                            <polyline points="4,92 14,84 22,78 30,68 40,60 50,50 60,40 70,30" />
+                            <polyline points="12,86 22,76 32,64 42,52 52,42 64,30 74,20" />
+                            <polyline points="30,94 40,86 50,76 60,64 70,52 78,40" />
+                            {/* Sub-fissures forking off — each starts on a
+                                main fissure's joint, then jags off in its
+                                own direction with a free tip. */}
+                            <polyline points="22,78 16,74 8,72" />
+                            <polyline points="40,60 32,54 24,52 18,46" />
+                            <polyline points="50,50 44,42 40,32" />
+                            <polyline points="60,40 56,30 60,22" />
+                            <polyline points="32,64 26,68 20,66" />
+                            <polyline points="52,42 48,32 52,22 50,12" />
+                            <polyline points="64,30 70,24 70,14" />
+                            <polyline points="50,76 56,82 64,86" />
+                            <polyline points="60,64 68,68 74,76" />
+                            <polyline points="70,52 78,56 82,62" />
+                            {/* Twigs — short forks off the sub-fissures,
+                                ends hanging free. */}
+                            <polyline points="44,42 38,38 36,30" />
+                            <polyline points="56,30 50,26 46,22" />
+                            <polyline points="26,68 22,74 24,80" />
+                            <polyline points="48,32 42,28" />
+                            <polyline points="32,54 30,46" />
+                            <polyline points="68,68 72,74 78,76" />
+                            <polyline points="56,82 60,90" />
+                            {/* Splinters at the leading tips of the mains,
+                                spraying into the rock wall. */}
+                            <polyline points="70,30 78,28 82,22" />
+                            <polyline points="74,20 82,16 86,10" />
+                            <polyline points="78,40 84,38 88,32" />
                           </g>
                           {/* Rock wall along the TOP edge (one face of the
                               leading corner). */}
@@ -1250,11 +1249,11 @@ export function MergeBoard({
                         </>
                       ) : (
                         <>
-                          {/* Cardinal crack network — same short-segment
-                              treatment as the diagonal layout. Three loose
-                              chains walking left→right, with cross-bridges
-                              between them, all built from individual short
-                              lines so the network reads as fragmented. */}
+                          {/* Cardinal crack network — same tree-root
+                              treatment as the diagonal layout. Main
+                              fissures grow from the trailing edge toward
+                              the rock wall, with sub-cracks and twigs
+                              forking off; tips can dangle free. */}
                           <g
                             stroke="#2a1808"
                             strokeWidth="3.2"
@@ -1262,51 +1261,46 @@ export function MergeBoard({
                             strokeLinejoin="round"
                             fill="none"
                           >
-                            {/* Top chain. */}
-                            <line x1="8"  y1="30" x2="20" y2="24" />
-                            <line x1="20" y1="24" x2="26" y2="36" />
-                            <line x1="26" y1="36" x2="38" y2="28" />
-                            <line x1="38" y1="28" x2="44" y2="40" />
-                            <line x1="44" y1="40" x2="56" y2="32" />
-                            <line x1="56" y1="32" x2="62" y2="42" />
-                            <line x1="62" y1="42" x2="74" y2="34" />
-                            <line x1="74" y1="34" x2="86" y2="40" />
-                            {/* Middle chain. */}
-                            <line x1="6"  y1="56" x2="18" y2="62" />
-                            <line x1="18" y1="62" x2="24" y2="50" />
-                            <line x1="24" y1="50" x2="34" y2="58" />
-                            <line x1="34" y1="58" x2="46" y2="50" />
-                            <line x1="46" y1="50" x2="52" y2="62" />
-                            <line x1="52" y1="62" x2="64" y2="54" />
-                            <line x1="64" y1="54" x2="72" y2="64" />
-                            <line x1="72" y1="64" x2="84" y2="58" />
-                            {/* Bottom chain. */}
-                            <line x1="10" y1="80" x2="22" y2="74" />
-                            <line x1="22" y1="74" x2="28" y2="86" />
-                            <line x1="28" y1="86" x2="40" y2="78" />
-                            <line x1="40" y1="78" x2="48" y2="88" />
-                            <line x1="48" y1="88" x2="58" y2="76" />
-                            <line x1="58" y1="76" x2="68" y2="86" />
-                            <line x1="68" y1="86" x2="78" y2="78" />
-                            <line x1="78" y1="78" x2="86" y2="86" />
-                            {/* Cross-bridges between rows — every endpoint
-                                is a junction that another row's segment
-                                also lands on. */}
-                            <line x1="26" y1="36" x2="24" y2="50" />
-                            <line x1="44" y1="40" x2="46" y2="50" />
-                            <line x1="62" y1="42" x2="64" y2="54" />
-                            <line x1="34" y1="58" x2="40" y2="78" />
-                            <line x1="52" y1="62" x2="58" y2="76" />
-                            <line x1="72" y1="64" x2="68" y2="86" />
-                            <line x1="18" y1="62" x2="22" y2="74" />
-                            {/* Stubby drops off the top edge, anchoring back
-                                onto the top chain. */}
-                            <line x1="20" y1="24" x2="14" y2="14" />
-                            <line x1="14" y1="14" x2="26" y2="36" />
-                            <line x1="56" y1="32" x2="50" y2="20" />
-                            <line x1="50" y1="20" x2="62" y2="42" />
-                            <line x1="74" y1="34" x2="80" y2="22" />
-                            <line x1="80" y1="22" x2="86" y2="40" />
+                            {/* Main fissures walking left → right (toward
+                                the leading rock wall on the east edge). */}
+                            <polyline points="4,28 14,32 22,26 32,32 42,28 52,34 62,28 72,32" />
+                            <polyline points="4,58 14,54 24,60 34,56 44,62 54,58 64,62 74,58" />
+                            <polyline points="6,84 16,80 26,86 36,80 46,86 56,80 66,84 76,80" />
+                            {/* Sub-fissures off the top main. */}
+                            <polyline points="22,26 20,16 26,8" />
+                            <polyline points="42,28 38,18 42,10" />
+                            <polyline points="62,28 60,18 66,12" />
+                            <polyline points="32,32 34,42 30,52" />
+                            <polyline points="52,34 54,44 50,54" />
+                            {/* Sub-fissures off the middle main. */}
+                            <polyline points="24,60 18,68 22,76" />
+                            <polyline points="44,62 40,70 44,80" />
+                            <polyline points="64,62 60,72 64,82" />
+                            <polyline points="14,54 12,44 18,38" />
+                            <polyline points="34,56 30,46 34,38" />
+                            {/* Sub-fissures off the bottom main. */}
+                            <polyline points="26,86 28,94" />
+                            <polyline points="46,86 50,94" />
+                            <polyline points="66,84 64,94" />
+                            <polyline points="36,80 32,72 36,64" />
+                            <polyline points="56,80 60,72 58,64" />
+                            {/* Twigs — short forks off the sub-fissures
+                                with free tips. */}
+                            <polyline points="20,16 14,12" />
+                            <polyline points="38,18 32,14" />
+                            <polyline points="60,18 56,10" />
+                            <polyline points="34,42 40,44" />
+                            <polyline points="54,44 60,42" />
+                            <polyline points="18,68 12,72" />
+                            <polyline points="40,70 36,74" />
+                            <polyline points="60,72 66,76" />
+                            <polyline points="28,94 24,90" />
+                            <polyline points="50,94 56,92" />
+                            {/* Splinters at the leading tips of the mains,
+                                spraying into the rock wall. */}
+                            <polyline points="72,32 80,30 84,24" />
+                            <polyline points="74,58 82,56 86,52" />
+                            <polyline points="76,80 84,82 88,76" />
                           </g>
                           {/* Rock wall on the leading edge. */}
                           <g>
