@@ -54,7 +54,7 @@ export function ChatComposer({ value, onChange, onSend, emojiEnabled = true }: P
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
-            ☺
+            <span className="emoji-glyph" aria-hidden>☺</span>
           </button>
         )}
         {emojiEnabled && open && (
@@ -69,7 +69,7 @@ export function ChatComposer({ value, onChange, onSend, emojiEnabled = true }: P
                 aria-label={`Send ${emoji}`}
                 onClick={() => sendEmoji(emoji)}
               >
-                {emoji}
+                <span className="emoji-glyph" aria-hidden>{emoji}</span>
               </button>
             ))}
           </div>

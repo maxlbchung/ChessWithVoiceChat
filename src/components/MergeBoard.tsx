@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type {
   CSSProperties,
@@ -1746,22 +1746,45 @@ export function MergeBoard({
       )}
       {emojiBubble && emojiBubble.squares.map((sq, i) => {
         const c = center(sq);
-        const side = c.x <= effectiveSize / 2 ? 'right' : 'left';
-        const x = side === 'right' ? c.x + squarePx * 0.42 : c.x - squarePx * 0.42;
-        const y = Math.max(squarePx * 0.32, Math.min(effectiveSize - squarePx * 0.32, c.y - squarePx * 0.45));
+        const bubbleW = squarePx * 0.82;
+        const bubbleH = squarePx * 0.82;
+        const pad = squarePx * 0.08;
+        const gap = squarePx * 0.34;
+        const horizontalDir = c.x <= effectiveSize / 2 ? 1 : -1;
+        const placement: 'above' | 'below' = c.y >= effectiveSize / 2 ? 'above' : 'below';
+        const rawX = c.x + horizontalDir * squarePx * 0.48 - bubbleW / 2;
+        const x = Math.max(pad, Math.min(effectiveSize - bubbleW - pad, rawX));
+        const rawY = placement === 'above' ? c.y - bubbleH - gap : c.y + gap;
+        const y = Math.max(pad, Math.min(effectiveSize - bubbleH - pad, rawY));
+        const bubbleCenterX = x + bubbleW / 2;
+        const baseLocalX = bubbleCenterX >= c.x ? bubbleW * 0.28 : bubbleW * 0.72;
+        const baseHalf = squarePx * 0.12;
+        const baseY = placement === 'above' ? y + bubbleH - 1 : y + 1;
+        const tailPoints = [
+          `${x + baseLocalX - baseHalf},${baseY}`,
+          `${x + baseLocalX + baseHalf},${baseY}`,
+          `${c.x},${c.y}`,
+        ].join(' ');
         return (
-          <div
-            key={`${emojiBubble.key}-${sq}-${i}`}
-            className={`king-emoji-bubble ${side}`}
-            style={{
-              ['--bubble-x' as any]: `${x}px`,
-              ['--bubble-y' as any]: `${y}px`,
-              ['--bubble-size' as any]: `${squarePx}px`,
-            }}
-            aria-hidden
-          >
-            {emojiBubble.emoji}
-          </div>
+          <Fragment key={`${emojiBubble.key}-${sq}-${i}`}>
+            <svg className={`king-emoji-tail ${placement}`} aria-hidden viewBox={`0 0 ${effectiveSize} ${effectiveSize}`}>
+              <polygon points={tailPoints} />
+            </svg>
+            <div
+              className={`king-emoji-bubble ${placement}`}
+              style={{
+                ['--bubble-x' as any]: `${x}px`,
+                ['--bubble-y' as any]: `${y}px`,
+                ['--bubble-size' as any]: `${squarePx}px`,
+                ['--bubble-w' as any]: `${bubbleW}px`,
+                ['--bubble-h' as any]: `${bubbleH}px`,
+                ['--bubble-pad' as any]: `${squarePx * 0.14}px`,
+              }}
+              aria-hidden
+            >
+              <span className="emoji-glyph king-emoji-glyph" aria-hidden>{emojiBubble.emoji}</span>
+            </div>
+          </Fragment>
         );
       })}
       {drag && typeof document !== 'undefined' && createPortal(

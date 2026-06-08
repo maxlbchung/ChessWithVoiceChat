@@ -1620,3 +1620,131 @@ export function playChat() {
   blip({ startAt: t, freq: 2400, durMs: 18, type: 'sine', peak: 0.12, attackMs: 0.5 });
 }
 
+function emojiNoise(opts: {
+  startAt: number;
+  durMs: number;
+  peak: number;
+  hpHz?: number;
+  lpHz?: number;
+  bpHz?: number;
+  q?: number;
+}) {
+  const dest = bus();
+  const ac: BaseAudioContext = dest.context;
+  const dur = opts.durMs / 1000;
+  const length = Math.max(1, Math.floor(dur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+
+  let tail: AudioNode = src;
+  if (opts.hpHz != null) {
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = opts.hpHz;
+    tail.connect(hp);
+    tail = hp;
+  }
+  if (opts.lpHz != null) {
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = opts.lpHz;
+    tail.connect(lp);
+    tail = lp;
+  }
+  if (opts.bpHz != null) {
+    const bp = ac.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = opts.bpHz;
+    bp.Q.value = opts.q ?? 1.4;
+    tail.connect(bp);
+    tail = bp;
+  }
+
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(0, opts.startAt);
+  gain.gain.linearRampToValueAtTime(opts.peak, opts.startAt + 0.002);
+  gain.gain.exponentialRampToValueAtTime(0.0001, opts.startAt + dur);
+  tail.connect(gain).connect(dest);
+  src.start(opts.startAt);
+  src.stop(opts.startAt + dur + 0.02);
+}
+
+export function playEmojiReaction(emoji: string) {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  switch (emoji) {
+    case '😂':
+      blip({ startAt: t, freq: 880, freqEnd: 1180, durMs: 70, type: 'triangle', peak: 0.18, attackMs: 1 });
+      blip({ startAt: t + 0.07, freq: 980, freqEnd: 700, durMs: 90, type: 'triangle', peak: 0.18, attackMs: 1 });
+      blip({ startAt: t + 0.16, freq: 760, freqEnd: 1060, durMs: 75, type: 'triangle', peak: 0.14, attackMs: 1 });
+      break;
+    case '😅':
+      blip({ startAt: t, freq: 1200, freqEnd: 760, durMs: 85, type: 'sine', peak: 0.18, attackMs: 1 });
+      blip({ startAt: t + 0.11, freq: 560, freqEnd: 430, durMs: 120, type: 'triangle', peak: 0.14, attackMs: 4 });
+      break;
+    case '😭':
+      blip({ startAt: t, freq: 840, freqEnd: 420, durMs: 190, type: 'sine', peak: 0.2, attackMs: 8 });
+      blip({ startAt: t + 0.16, freq: 700, freqEnd: 320, durMs: 220, type: 'sine', peak: 0.18, attackMs: 8 });
+      blip({ startAt: t + 0.34, freq: 560, freqEnd: 260, durMs: 210, type: 'sine', peak: 0.14, attackMs: 10 });
+      break;
+    case '😢':
+      blip({ startAt: t, freq: 660, freqEnd: 360, durMs: 190, type: 'sine', peak: 0.17, attackMs: 8 });
+      blip({ startAt: t + 0.18, freq: 440, freqEnd: 300, durMs: 140, type: 'triangle', peak: 0.1, attackMs: 6 });
+      break;
+    case '😴':
+      blip({ startAt: t, freq: 520, freqEnd: 420, durMs: 150, type: 'sine', peak: 0.12, attackMs: 8 });
+      blip({ startAt: t + 0.15, freq: 650, freqEnd: 520, durMs: 150, type: 'sine', peak: 0.1, attackMs: 8 });
+      blip({ startAt: t + 0.31, freq: 780, freqEnd: 620, durMs: 220, type: 'sine', peak: 0.08, attackMs: 10 });
+      break;
+    case '🔥':
+      emojiNoise({ startAt: t, durMs: 150, peak: 0.12, hpHz: 900, lpHz: 5200 });
+      blip({ startAt: t, freq: 420, freqEnd: 960, durMs: 130, type: 'sawtooth', peak: 0.12, attackMs: 10, lpHz: 1800 });
+      blip({ startAt: t + 0.08, freq: 900, freqEnd: 1500, durMs: 90, type: 'sine', peak: 0.08, attackMs: 2 });
+      break;
+    case '👏':
+      emojiNoise({ startAt: t, durMs: 34, peak: 0.22, hpHz: 900, lpHz: 4200 });
+      emojiNoise({ startAt: t + 0.09, durMs: 42, peak: 0.2, hpHz: 800, lpHz: 3800 });
+      break;
+    case '🤝':
+      blip({ startAt: t, freq: 330, freqEnd: 250, durMs: 80, type: 'triangle', peak: 0.2, attackMs: 1, lpHz: 1300 });
+      blip({ startAt: t + 0.08, freq: 390, freqEnd: 290, durMs: 80, type: 'triangle', peak: 0.18, attackMs: 1, lpHz: 1300 });
+      blip({ startAt: t + 0.16, freq: 660, durMs: 120, type: 'sine', peak: 0.08, attackMs: 4 });
+      break;
+    case '😮':
+      blip({ startAt: t, freq: 360, freqEnd: 930, durMs: 170, type: 'sine', peak: 0.2, attackMs: 16 });
+      emojiNoise({ startAt: t + 0.03, durMs: 120, peak: 0.05, bpHz: 1400, q: 2.8 });
+      break;
+    case '🤔':
+      blip({ startAt: t, freq: 300, durMs: 120, type: 'triangle', peak: 0.16, attackMs: 5, lpHz: 1100 });
+      blip({ startAt: t + 0.14, freq: 360, durMs: 160, type: 'triangle', peak: 0.12, attackMs: 5, lpHz: 1000 });
+      break;
+    case '😎':
+      blip({ startAt: t, freq: 180, freqEnd: 150, durMs: 180, type: 'sawtooth', peak: 0.16, attackMs: 8, lpHz: 900 });
+      blip({ startAt: t + 0.07, freq: 540, freqEnd: 720, durMs: 110, type: 'sine', peak: 0.08, attackMs: 2 });
+      break;
+    case '💀':
+      emojiNoise({ startAt: t, durMs: 22, peak: 0.14, hpHz: 1800, lpHz: 6000 });
+      blip({ startAt: t + 0.02, freq: 980, freqEnd: 730, durMs: 45, type: 'square', peak: 0.1, attackMs: 0.5, lpHz: 2500 });
+      blip({ startAt: t + 0.09, freq: 820, freqEnd: 580, durMs: 55, type: 'square', peak: 0.08, attackMs: 0.5, lpHz: 2200 });
+      break;
+    case '💩':
+      blip({ startAt: t, freq: 150, freqEnd: 72, durMs: 170, type: 'triangle', peak: 0.22, attackMs: 4, lpHz: 700 });
+      emojiNoise({ startAt: t + 0.06, durMs: 80, peak: 0.07, bpHz: 420, q: 1.2 });
+      break;
+    case '❤️':
+      blip({ startAt: t, freq: 392, durMs: 90, type: 'sine', peak: 0.16, attackMs: 5 });
+      blip({ startAt: t + 0.11, freq: 523, durMs: 140, type: 'sine', peak: 0.14, attackMs: 5 });
+      blip({ startAt: t + 0.11, freq: 659, durMs: 140, type: 'sine', peak: 0.08, attackMs: 5 });
+      break;
+    case '♟️':
+      blip({ startAt: t, freq: 260, freqEnd: 180, durMs: 90, type: 'triangle', peak: 0.22, attackMs: 1, lpHz: 1600 });
+      blip({ startAt: t + 0.08, freq: 410, freqEnd: 300, durMs: 70, type: 'triangle', peak: 0.1, attackMs: 1, lpHz: 1800 });
+      break;
+    default:
+      break;
+  }
+}
+

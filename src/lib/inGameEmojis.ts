@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Square } from './mergeChess';
 
-export const QUICK_EMOJIS = ['👍', '😂', '😅', '🔥', '👏', '😮', '🤔', '😎', '❤️', '♟️'];
+export const QUICK_EMOJIS = ['😂', '😅', '😭', '😢', '😴', '🔥', '👏', '🤝', '😮', '🤔', '😎', '💀', '💩', '❤️', '♟️'];
 
 type EmojiSide = 'me' | 'opp';
 
@@ -37,9 +37,10 @@ export function useEmojiBubble(enabled: boolean) {
   }, [event]);
 
   const showEmojiBubble = useCallback((side: EmojiSide, emoji: string) => {
-    if (!enabledRef.current || !isQuickEmoji(emoji)) return;
+    if (!enabledRef.current || !isQuickEmoji(emoji)) return false;
     keyRef.current += 1;
     setEvent({ side, emoji, key: keyRef.current });
+    return true;
   }, []);
 
   return {

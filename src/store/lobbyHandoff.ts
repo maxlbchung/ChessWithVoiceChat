@@ -15,15 +15,25 @@ export type LobbyHandoff = {
 };
 
 let pending: LobbyHandoff | null = null;
+let consumeTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function setLobbyHandoff(h: LobbyHandoff) {
+  if (consumeTimer != null) {
+    clearTimeout(consumeTimer);
+    consumeTimer = null;
+  }
   pending = h;
 }
 
 export function takeLobbyHandoff(gameId: string): LobbyHandoff | null {
   if (pending && pending.gameId === gameId) {
     const h = pending;
-    pending = null;
+    if (consumeTimer == null) {
+      consumeTimer = setTimeout(() => {
+        consumeTimer = null;
+        if (pending === h) pending = null;
+      }, 0);
+    }
     return h;
   }
   return null;

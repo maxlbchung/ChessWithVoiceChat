@@ -30,7 +30,7 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
-import { kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
+import { isQuickEmoji, kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   abilityTargets,
@@ -246,13 +246,15 @@ export function HeroGame() {
   const sendChatMessage = (text: string, options: { clearInput?: boolean; emoji?: boolean } = {}) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    let playedEmojiSfx = false;
     sessionRef.current.send({ type: 'chat', text: trimmed });
     if (options.emoji && inGameEmojisEnabled) {
       sessionRef.current.send({ type: 'emoji', emoji: trimmed });
-      showEmojiBubble('me', trimmed);
+      playedEmojiSfx = showEmojiBubble('me', trimmed);
+      if (playedEmojiSfx) sfx.playEmojiReaction(trimmed);
     }
     setChatLog((l) => [...l, { from: 'me', text: trimmed }]);
-    sfx.playChat();
+    if (!playedEmojiSfx) sfx.playChat();
     if (options.clearInput ?? true) setChatInput('');
   };
 
@@ -335,11 +337,11 @@ export function HeroGame() {
       }
       if (msg.type === 'chat') {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
-        sfx.playChat();
+        if (!isQuickEmoji(msg.text)) sfx.playChat();
         return;
       }
       if (msg.type === 'emoji') {
-        showEmojiBubble('opp', msg.emoji);
+        if (showEmojiBubble('opp', msg.emoji)) sfx.playEmojiReaction(msg.emoji);
         return;
       }
       if (msg.type === 'avatar') { setOppAvatar(msg.dataUrl); return; }

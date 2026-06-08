@@ -13,12 +13,12 @@ export function Join() {
   const [statusMsg, setStatusMsg] = useState('Connecting…');
   const [errored, setErrored] = useState(false);
   const navigate = useNavigate();
-  const ranRef = useRef(false);
+  const ranForHostRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!loaded || !identity || !hostPeerId) return;
-    if (ranRef.current) return;
-    ranRef.current = true;
+    if (ranForHostRef.current === hostPeerId) return;
+    ranForHostRef.current = hostPeerId;
 
     let cancelled = false;
     let handedOff = false;
