@@ -1438,16 +1438,26 @@ a { color: inherit; text-decoration: none; }
   box-shadow:
     0 0.35rem 0.9rem rgba(10, 22, 35, 0.28),
     inset 0 0 0.55rem rgba(255, 255, 255, 0.68);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(var(--bubble-size) * 0.4);
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  font-size: 0;
+  line-height: 0;
   pointer-events: none;
   filter: saturate(1.08);
 }
 .king-emoji-glyph {
-  transform: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: calc(var(--bubble-size) * 0.43);
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+  text-align: center;
+  transform: translateY(-0.035em);
 }
 .king-emoji-bubble.above {
   transform-origin: center bottom;

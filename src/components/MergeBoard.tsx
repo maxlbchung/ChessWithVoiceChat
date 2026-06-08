@@ -1782,7 +1782,7 @@ export function MergeBoard({
               }}
               aria-hidden
             >
-              <span className="emoji-glyph king-emoji-glyph" aria-hidden>{emojiBubble.emoji}</span>
+              <span className="king-emoji-glyph" aria-hidden>{emojiBubble.emoji}</span>
             </div>
           </Fragment>
         );
