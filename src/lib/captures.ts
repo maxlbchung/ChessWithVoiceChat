@@ -38,8 +38,8 @@ export type CaptureSummary = {
   // Pieces captured BY black.
   byBlack: Record<CaptureAtom, number>;
   // Material advantage in favour of white (positive = white ahead).
-  // Computed against the starting army so wild variants like Farmer's lone
-  // queen don't pretend the queen side is "down material" at move 1.
+  // Computed against the starting army so unusual setups don't pretend one
+  // side is "down material" at move 1.
   advantage: number;
 };
 

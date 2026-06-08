@@ -37,14 +37,6 @@ import {
   type ShopLetter,
 } from '../lib/cashChess';
 import {
-  initialState as farmerInitial,
-  applyMove as farmerApply,
-  legalMovesFrom as farmerLegal,
-  sqToIdx as farmerSqToIdx,
-  type GameState as FarmerState,
-  type MoveResult as FarmerResult,
-} from '../lib/farmerChess';
-import {
   initialState as heroInitial,
   backRanksForGame as heroBackRanksForGame,
   applyMove as heroApply,
@@ -86,7 +78,7 @@ import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
-type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'farmer';
+type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
 
 type Mode = 'idle' | 'searching' | 'hosting';
 
@@ -128,8 +120,6 @@ export function Home() {
   const [twoResults, setTwoResults] = useState<TwoResult[]>([]);
   const [cashStates, setCashStates] = useState<CashState[]>(() => [cashInitial()]);
   const [cashResults, setCashResults] = useState<CashResult[]>([]);
-  const [farmerStates, setFarmerStates] = useState<FarmerState[]>(() => [farmerInitial()]);
-  const [farmerResults, setFarmerResults] = useState<FarmerResult[]>([]);
   // Shop selection (Cash only). When set, board clicks attempt to place the
   // bought piece on a legal target square.
   const [cashShopLetter, setCashShopLetter] = useState<ShopLetter | null>(null);
@@ -200,8 +190,6 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
-    setFarmerStates([farmerInitial()]);
-    setFarmerResults([]);
     setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
@@ -269,21 +257,18 @@ export function Home() {
   const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
   const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
   const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
-  const farmerViewState: FarmerState = farmerStates[freeViewPly] ?? farmerStates[0];
   const heroViewState: HeroState = heroStates[freeViewPly] ?? heroStates[0];
   const totalFreePly =
     freeVariant === 'normal' ? freeChess.history().length :
     freeVariant === 'merge' ? mergeResults.length :
     freeVariant === 'two' ? twoResults.length :
     freeVariant === 'cash' ? cashResults.length :
-    freeVariant === 'farmer' ? farmerResults.length :
     heroResults.length;
   const freeTurn: 'w' | 'b' =
     freeVariant === 'normal' ? previewChess.turn() :
     freeVariant === 'merge' ? mergeViewState.turn :
     freeVariant === 'two' ? twoViewState.turn :
     freeVariant === 'cash' ? cashViewState.turn :
-    freeVariant === 'farmer' ? farmerViewState.turn :
     heroViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
@@ -306,11 +291,6 @@ export function Home() {
       if (!r?.checkmate) return null;
       return { winner: twoViewState.turn === 'w' ? 'b' : 'w' };
     }
-    if (freeVariant === 'farmer') {
-      const r = farmerResults[freeViewPly - 1];
-      if (!r?.winner) return null;
-      return { winner: r.winner };
-    }
     if (freeVariant === 'cash') {
       const r = cashResults[freeViewPly - 1];
       if (!r?.checkmate) return null;
@@ -319,7 +299,7 @@ export function Home() {
     const r = heroResults[freeViewPly - 1];
     if (!r?.checkmate) return null;
     return { winner: heroViewState.turn === 'w' ? 'b' : 'w' };
-  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, farmerResults, cashResults, cashViewState.turn, heroResults, heroViewState.turn]);
+  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn, heroResults, heroViewState.turn]);
 
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
@@ -378,13 +358,6 @@ export function Home() {
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
   }, [freeVariant, freeSelected, cashViewState, cashShopLetter, cashBuyTargets]);
-
-  const farmerLegalTargets = useMemo(() => {
-    if (freeVariant !== 'farmer' || !freeSelected) return [];
-    return farmerLegal(farmerViewState, freeSelected).map((m) => ({
-      to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
-    }));
-  }, [freeVariant, freeSelected, farmerViewState]);
 
   // Affordable + has-legal-target shop letters for the side currently to move.
   const cashAffordableSet = useMemo<Set<ShopLetter>>(() => {
@@ -467,7 +440,6 @@ export function Home() {
     } else if (freeVariant === 'merge') uci = mergeResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'two') uci = twoResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'cash') uci = cashResults[freeViewPly - 1]?.uci;
-    else if (freeVariant === 'farmer') uci = farmerResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'hero') uci = heroResults[freeViewPly - 1]?.uci;
     if (!uci) return null;
     if (freeVariant === 'cash') {
@@ -504,7 +476,7 @@ export function Home() {
     if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
     return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, farmerResults, heroResults, heroStates]);
+  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates]);
 
   const applyFreeMove = (from: string, to: string, promotion?: string, viaClick = false): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
@@ -678,25 +650,6 @@ export function Home() {
     return commitCashMove(cashBuyUci(letter, to), undefined, [to]);
   };
 
-  const applyFarmerMove = (from: string, to: string, viaClick = false): boolean => {
-    const truncStates = farmerStates.slice(0, freeViewPly + 1);
-    const truncResults = farmerResults.slice(0, freeViewPly);
-    const base = truncStates[truncStates.length - 1];
-    const res = farmerApply(base, from + to);
-    if (!res) return false;
-    if (res.result.captured) sfx.playCapture();
-    else sfx.playMove();
-    if (res.result.winner) sfx.playWin();
-    setFarmerStates([...truncStates, res.state]);
-    setFarmerResults([...truncResults, res.result]);
-    setFreeViewPly(truncStates.length);
-    setFreeSelected(null);
-    if (viaClick && animationsEnabled) {
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
-    }
-    return true;
-  };
-
   const commitHeroMove = (uci: string, slides?: { from: string; to: string }[], pops?: string[]): boolean => {
     const truncStates = heroStates.slice(0, freeViewPly + 1);
     const truncResults = heroResults.slice(0, freeViewPly);
@@ -755,10 +708,12 @@ export function Home() {
           if (ab === 'warlord') {
             fromSq = heroKingSquareOf(res.state.board, moverColor) ?? undefined;
           }
-          // Juggernaut no longer leaps — tier 2's edge-charge slide uses the
-          // regular slide track (handled below by the standard ability anim).
+          // Juggernaut tier-2 edge-charge slide rides the regular slide track
+          // (handled below). Tier-3 slam swaps to the 'jug-slam' overlay so
+          // the king physically leaps in place + amplified ground impact.
+          const isJugSlam = ab === 'juggernaut' && heroJugTierOf(base, moverColor) === 3;
           setHeroAbilityAnim({
-            kind: ab,
+            kind: isJugSlam ? 'jug-slam' : ab,
             fromSq,
             toSq: targetSq,
             color: moverColor,
@@ -910,14 +865,15 @@ export function Home() {
       const to = uci.slice(4, 6);
       setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
-      // Diagonal charge (tier 2) slides the Juggernaut to a corner — animate
-      // it sliding from its pre-move square. Earthquake (tier 1) and Slam
-      // (tier 3) keep it in place, so just pop the target square.
+      // Edge Charge (tier 2) slides the Juggernaut to a corner. Earthquake
+      // (tier 1) keeps it in place and just pops the spawn square. Slam
+      // (tier 3) drives its own in-place leap via the jug-slam overlay,
+      // so we skip the pop there to avoid a conflicting scale animation.
       const from = heroKingSquareOf(base.board, base.turn);
       const to = uci.slice(2, 4);
       const tier = heroJugTierOf(base, base.turn);
       if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
-      else setPopAnim({ squares: [to], key: Date.now() });
+      else if (tier !== 3) setPopAnim({ squares: [to], key: Date.now() });
     }
     // Pop the destination on promotions and necromancer spawns.
     if (animationsEnabled) {
@@ -1038,9 +994,6 @@ export function Home() {
   const handleCashDrop = (from: string, to: string): boolean => {
     return applyCashMove(from, to);
   };
-  const handleFarmerDrop = (from: string, to: string): boolean => {
-    return applyFarmerMove(from, to);
-  };
   const handleHeroDrop = (from: string, to: string): boolean => {
     // Dragging an enemy piece while Goofball is armed fires the ability:
     // the drag's from/to encodes the forced opponent move directly.
@@ -1158,20 +1111,6 @@ export function Home() {
       }
       const cashPiece = cashViewState.board[cashSqToIdx(square)];
       if (cashPiece && cashPiece.color === cashViewState.turn) {
-        setFreeSelected(square);
-        return;
-      }
-      setFreeSelected(null);
-      return;
-    }
-    if (freeVariant === 'farmer') {
-      const targets = farmerLegalTargets;
-      if (freeSelected && targets.some((t) => t.to === square)) {
-        applyFarmerMove(freeSelected, square, true);
-        return;
-      }
-      const farmerPiece = farmerViewState.board[farmerSqToIdx(square)];
-      if (farmerPiece && farmerPiece.color === farmerViewState.turn) {
         setFreeSelected(square);
         return;
       }
@@ -1318,12 +1257,6 @@ export function Home() {
       if (freeSelected !== from) setFreeSelected(from);
       return;
     }
-    if (freeVariant === 'farmer') {
-      const piece = farmerViewState.board[farmerSqToIdx(from)];
-      if (!piece || piece.color !== farmerViewState.turn) return;
-      if (freeSelected !== from) setFreeSelected(from);
-      return;
-    }
     if (freeVariant === 'hero') {
       // Goofball: dragging an enemy piece while armed is part of the
       // ability (drop fires it). Don't disarm and don't select our own
@@ -1359,8 +1292,6 @@ export function Home() {
     setCashStates([cashInitial()]);
     setCashResults([]);
     setCashShopLetter(null);
-    setFarmerStates([farmerInitial()]);
-    setFarmerResults([]);
     setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
@@ -1439,16 +1370,6 @@ export function Home() {
             } else {
               if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
               if (r.check) sfx.playCheckReversed();
-            }
-          }
-        } else if (freeVariant === 'farmer') {
-          const r = farmerResults[forward ? p : next];
-          if (r) {
-            if (forward) {
-              if (r.captured) sfx.playCapture(); else sfx.playMove();
-              if (r.winner) sfx.playWin();
-            } else {
-              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
             }
           }
         } else {
@@ -1990,7 +1911,6 @@ export function Home() {
                   { value: 'two',    label: 'Guerrilla' },
                   { value: 'cash',   label: 'Cash Money' },
                   { value: 'hero',   label: 'Hero' },
-                  { value: 'farmer', label: 'Farmer' },
                 ]}
                 onChange={(next) => {
                   if (next !== freeVariant) {
@@ -1998,7 +1918,6 @@ export function Home() {
                     else if (next === 'two') sfx.playPush();
                     else if (next === 'cash') sfx.playPlace();
                     else if (next === 'hero') sfx.playSlice();
-                    else if (next === 'farmer') sfx.playPlace();
                     else sfx.playMove();
                   }
                   setFreeVariant(next);
@@ -2096,23 +2015,6 @@ export function Home() {
                         }
                       : null
                   }
-                  lastMove={freeLastMove}
-                  slideMoves={slideAnim?.moves}
-                  slideKey={slideAnim?.key}
-                  popSquares={popAnim?.squares}
-                  popKey={popAnim?.key}
-                  mergeAnim={mergeAnim}
-                  clearAnnotationsKey={freeAnnotationsClearKey}
-                />
-              ) : freeVariant === 'farmer' ? (
-                <MergeBoard
-                  board={farmerViewState.board as unknown as (MergePiece | null)[]}
-                  orientation={freeOrientation}
-                  selectedSquare={freeSelected}
-                  legalTargets={farmerLegalTargets}
-                  onSquareClick={onFreeSquareClick}
-                  onPieceDrop={handleFarmerDrop}
-                  onDragStartSquare={onFreeDragStart}
                   lastMove={freeLastMove}
                   slideMoves={slideAnim?.moves}
                   slideKey={slideAnim?.key}

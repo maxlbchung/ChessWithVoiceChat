@@ -13,10 +13,7 @@ export type GameEndReason =
   | 'resignation'
   | 'timeout'
   | 'draw-agreed'
-  | 'disconnect'
-  | 'promotion'
-  | 'pawns-cleared'
-  | 'queen-captured';
+  | 'disconnect';
 
 export type PlayerInfo = {
   handle: string;
@@ -87,6 +84,7 @@ export type WireMessage =
   | { type: 'draw-decline' }
   | { type: 'timeout-claim'; loserColor: Color }
   | { type: 'chat'; text: string }
+  | { type: 'emoji'; emoji: string }
   | { type: 'avatar'; dataUrl: string }
   | { type: 'voice-state'; voiceActive: boolean; micOn: boolean }
   // Rematch handshake: offerer proposes a fresh gameId for the next game,

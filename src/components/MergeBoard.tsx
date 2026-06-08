@@ -122,6 +122,8 @@ type Props = {
   // Live earthquakes (Juggernaut tier-1). Each renders a shaking ground
   // crack on its current square plus a small arrow indicating direction.
   earthquakes?: { sq: Square; df: number; dr: number; color: 'w' | 'b' }[] | null;
+  // Transient emoji reactions shown beside the emitting side's king(s).
+  emojiBubble?: { emoji: string; squares: Square[]; key: string | number } | null;
 };
 
 export type MergeAnim = {
@@ -144,7 +146,7 @@ export type MergeAnim = {
 };
 
 export type AbilityAnim = {
-  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm' | 'slime-expand' | 'slime-split' | 'juggernaut' | 'juggernaut-leap' | 'jug-absorb';
+  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm' | 'slime-expand' | 'slime-split' | 'juggernaut' | 'juggernaut-leap' | 'jug-absorb' | 'jug-slam';
   // Flight: flyer's old square. Warlord: king's square (pivot for swing).
   // Slime-expand: the mini king's square (the corner the blob grows out of).
   // Juggernaut-leap: the tier-2 king's takeoff square.
@@ -210,6 +212,7 @@ export function MergeBoard({
   juggernauts,
   stunnedSquares,
   earthquakes,
+  emojiBubble,
 }: Props) {
   // Indexed map for O(1) per-square missile lookup during render.
   const missilesBySq = useMemo(() => {
@@ -787,7 +790,11 @@ export function MergeBoard({
                 }
                 const isFlightDest = abilityAnim?.kind === 'flight' && abilityAnim.toSq === sq;
                 const isNecroSpawn = abilityAnim?.kind === 'necromancer' && abilityAnim.toSq === sq;
-                const isJugLeapDest = abilityAnim?.kind === 'juggernaut-leap' && abilityAnim.toSq === sq;
+                // Both the (legacy) tier-2 leap and the tier-3 in-place slam
+                // ride the same body-jump animation on the Jug sprite.
+                const isJugLeapDest =
+                  (abilityAnim?.kind === 'juggernaut-leap' || abilityAnim?.kind === 'jug-slam')
+                  && abilityAnim.toSq === sq;
                 const isMergeDest = !!(mergeAnim && mergeAnim.to === sq);
                 const fadeInSlots = isMergeDest
                   ? computeMergeFadeInSlots(mergeAnim!.toLetter, mergeAnim!.mergedLetter)
@@ -848,7 +855,7 @@ export function MergeBoard({
                 // commits. Hold the stun overlay until the landing impact so
                 // the pieces look stunned by the quake, not by takeoff.
                 const delayForLeap =
-                  abilityAnim?.kind === 'juggernaut-leap' &&
+                  (abilityAnim?.kind === 'juggernaut-leap' || abilityAnim?.kind === 'jug-slam') &&
                   Math.max(
                     Math.abs(sq.charCodeAt(0) - abilityAnim.toSq.charCodeAt(0)),
                     Math.abs(parseInt(sq[1], 10) - parseInt(abilityAnim.toSq[1], 10)),
@@ -1737,6 +1744,26 @@ export function MergeBoard({
           centerOf={center}
         />
       )}
+      {emojiBubble && emojiBubble.squares.map((sq, i) => {
+        const c = center(sq);
+        const side = c.x <= effectiveSize / 2 ? 'right' : 'left';
+        const x = side === 'right' ? c.x + squarePx * 0.42 : c.x - squarePx * 0.42;
+        const y = Math.max(squarePx * 0.32, Math.min(effectiveSize - squarePx * 0.32, c.y - squarePx * 0.45));
+        return (
+          <div
+            key={`${emojiBubble.key}-${sq}-${i}`}
+            className={`king-emoji-bubble ${side}`}
+            style={{
+              ['--bubble-x' as any]: `${x}px`,
+              ['--bubble-y' as any]: `${y}px`,
+              ['--bubble-size' as any]: `${squarePx}px`,
+            }}
+            aria-hidden
+          >
+            {emojiBubble.emoji}
+          </div>
+        );
+      })}
       {drag && typeof document !== 'undefined' && createPortal(
         <DragFloater
           piece={drag.piece}
@@ -2254,20 +2281,29 @@ function AbilityOverlay({
       </div>
     );
   }
-  if (anim.kind === 'juggernaut' || anim.kind === 'juggernaut-leap' || anim.kind === 'jug-absorb') {
+  if (
+    anim.kind === 'juggernaut' || anim.kind === 'juggernaut-leap' ||
+    anim.kind === 'jug-absorb' || anim.kind === 'jug-slam'
+  ) {
     // Earthquake at the Juggernaut's square — expanding ground-shock rings
     // with a scatter of rubble chips flung outward. Pairs with the deep
     // quake SFX. The 'jug-absorb' variant additionally slides the doomed
     // attacker's sprite onto the (unmoving) Juggernaut and explodes it at
     // impact, with the quake parts delayed to fire at the moment it lands.
+    // The 'jug-slam' (tier-3) variant amplifies everything: timing matches
+    // the leap-body's landing frame, more chips fly farther, and a third
+    // shock ring radiates wider for the heavy stomp.
     const isAbsorb = anim.kind === 'jug-absorb' && !!anim.fromSq;
     const isLeap = anim.kind === 'juggernaut-leap';
-    const impactDelay = isAbsorb ? 320 : isLeap ? 520 : 0;
-    const chips = Array.from({ length: 6 }, (_, i) => {
-      const angle = (i / 6) * Math.PI * 2 + Math.PI / 7;
-      const dist = squarePx * (0.75 + (i % 3) * 0.2);
+    const isSlam = anim.kind === 'jug-slam';
+    const impactDelay = isSlam ? 520 : isAbsorb ? 320 : isLeap ? 520 : 0;
+    const chipCount = isSlam ? 12 : 6;
+    const chips = Array.from({ length: chipCount }, (_, i) => {
+      const angle = (i / chipCount) * Math.PI * 2 + Math.PI / 7;
+      const distMult = isSlam ? 1.1 + (i % 3) * 0.28 : 0.75 + (i % 3) * 0.2;
+      const dist = squarePx * distMult;
       const dx = Math.cos(angle) * dist;
-      const dy = Math.sin(angle) * dist - squarePx * 0.25; // bias upward, gravity pulls back
+      const dy = Math.sin(angle) * dist - squarePx * (isSlam ? 0.35 : 0.25);
       return (
         <span
           key={i}
@@ -2276,7 +2312,7 @@ function AbilityOverlay({
           style={{
             ['--rubble-dx' as any]: `${dx}px`,
             ['--rubble-dy' as any]: `${dy}px`,
-            animationDelay: `${impactDelay + i * 16}ms`,
+            animationDelay: `${impactDelay + i * (isSlam ? 8 : 16)}ms`,
           }}
         />
       );
@@ -2285,9 +2321,16 @@ function AbilityOverlay({
       ? lettersToPieceKeys(anim.flyerLetter as PieceLetter)
       : [];
     const from = isAbsorb ? centerOf(anim.fromSq!) : to;
+    const className = isAbsorb
+      ? 'ability-jug-absorb'
+      : isSlam
+      ? 'ability-juggernaut ability-jug-slam'
+      : isLeap
+      ? 'ability-juggernaut ability-juggernaut-leap'
+      : 'ability-juggernaut';
     return (
       <div
-        className={isAbsorb ? 'ability-jug-absorb' : isLeap ? 'ability-juggernaut ability-juggernaut-leap' : 'ability-juggernaut'}
+        className={className}
         style={{
           ['--cx' as any]: `${to.x}px`,
           ['--cy' as any]: `${to.y}px`,
@@ -2310,7 +2353,13 @@ function AbilityOverlay({
         )}
         <span className="jug-shock r1" aria-hidden style={{ animationDelay: `${impactDelay}ms` }} />
         <span className="jug-shock r2" aria-hidden style={{ animationDelay: `${impactDelay + 140}ms` }} />
+        {isSlam && (
+          <span className="jug-shock r3" aria-hidden style={{ animationDelay: `${impactDelay + 280}ms` }} />
+        )}
         <span className="jug-dust" aria-hidden style={{ animationDelay: `${impactDelay}ms` }} />
+        {isSlam && (
+          <span className="jug-slam-flash" aria-hidden style={{ animationDelay: `${impactDelay}ms` }} />
+        )}
         {chips}
       </div>
     );

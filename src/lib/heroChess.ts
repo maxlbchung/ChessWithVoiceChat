@@ -233,7 +233,7 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
 export const JUG_TIER_INFO: Record<number, { name: string; move: string; blurb: string }> = {
   1: { name: 'Earthquake',      move: 'moves like a king', blurb: 'Spawn a quake on an adjacent square — it creeps one tile every time you walk the Juggernaut, all the way to the edge, killing every enemy in its path. Quake tiles are impassable terrain: sliders, pawns and kings can\'t cross them and nothing lands on them. Only knights can jump over.' },
   2: { name: 'Edge Charge',     move: 'moves like a king', blurb: 'Charge in any queen direction to the board edge, destroying everything in the path.' },
-  3: { name: 'Slam',            move: 'moves like a king', blurb: 'Jump in place — destroy every piece within one tile and stun every piece at exactly two tiles.' },
+  3: { name: 'Slam',            move: 'moves like a king', blurb: 'Jump in place — destroy every piece within one tile and stun every non-king piece at exactly two tiles.' },
 };
 
 export type AbilitySide = {
@@ -1581,35 +1581,48 @@ function applyAbility(
         // Earthquake: spawn a creeping wave on the adjacent square in the
         // chosen direction. If an enemy is already there it dies on the
         // spot; the wave still spawns and starts rolling on the next
-        // Jug move. (A sub-tier-3 enemy Juggernaut would have been
-        // filtered out by abilityTargets, so we don't handle absorb here.)
+        // Jug move. Spawning ON a sub-tier-3 enemy Juggernaut consumes
+        // the wave as its first hit — same as a wave absorbed mid-
+        // travel: the Jug tiers up by one and no wave persists.
         const [kf, kr] = frOfIdx(k);
         const [tf, tr] = frOfIdx(targetIdx);
         const df = Math.sign(tf - kf);
         const dr = Math.sign(tr - kr);
         const victim = next.board[targetIdx];
-        if (victim && victim.color !== color) {
-          const up = victim.letter.toUpperCase();
-          if (up === 'S') splitSlimeGroupAt(next, targetIdx);
-          next.board[targetIdx] = null;
-          next.frozen = next.frozen.filter((fz) => fz.idx !== targetIdx);
-          next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
-          if (targetIdx === 56) next.castling.wQ = false;
-          if (targetIdx === 63) next.castling.wK = false;
-          if (targetIdx === 0)  next.castling.bQ = false;
-          if (targetIdx === 7)  next.castling.bK = false;
-          next.masked[targetIdx] = false;
+        const victimJugTier = victim && victim.color !== color ? jugTierAt(next, targetIdx) : 0;
+        if (victimJugTier >= 1 && victimJugTier < 3) {
+          next.jugTier[victim!.color] = victimJugTier + 1;
           next.halfmove = 0;
+          // Wave fizzles on contact with a sub-3 Jug — same as absorbed
+          // mid-travel. Cooldown still spent; that was the player's call.
+        } else {
+          if (victim && victim.color !== color) {
+            const up = victim.letter.toUpperCase();
+            if (up === 'S') splitSlimeGroupAt(next, targetIdx);
+            next.board[targetIdx] = null;
+            next.frozen = next.frozen.filter((fz) => fz.idx !== targetIdx);
+            next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
+            if (targetIdx === 56) next.castling.wQ = false;
+            if (targetIdx === 63) next.castling.wK = false;
+            if (targetIdx === 0)  next.castling.bQ = false;
+            if (targetIdx === 7)  next.castling.bK = false;
+            next.masked[targetIdx] = false;
+            next.halfmove = 0;
+          }
+          next.earthquakes = [
+            ...next.earthquakes,
+            { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
+          ];
         }
-        next.earthquakes = [
-          ...next.earthquakes,
-          { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
-        ];
       } else if (tier === 2) {
-        // Diagonal charge: slide to the chosen edge corner, destroying
-        // everything in the path (both sides' — and, like ICBM, the
-        // charge ignores Frost). A destroyed king ends the game via the
-        // king-destroyed pathway.
+        // Edge charge: slide to the chosen edge corner, destroying
+        // everything in the path (and, like ICBM, the charge ignores
+        // Frost). A sub-tier-3 enemy Juggernaut tiers up by one but
+        // isn't killed and doesn't block the slide — the charger
+        // passes through it and parks at the edge as normal. The only
+        // exception is when the edge corner IS the surviving Jug: the
+        // charger parks one square short instead of sharing a tile.
+        // A destroyed king ends the game via the king-destroyed pathway.
         const [kf, kr] = frOfIdx(k);
         const [tf, tr] = frOfIdx(targetIdx);
         // Math.sign yields -1/0/+1 so the charge works for both cardinal
@@ -1619,32 +1632,53 @@ function applyAbility(
         const jug = next.board[k]!;
         next.board[k] = null;
         next.masked[k] = false;
+        let survivorIdx = -1;
+        let lastClearIdx = k;
         let f = kf + df, r = kr + dr;
         while (onBoard(f, r)) {
           const idx = idxFR(f, r);
           const victim = next.board[idx];
-          if (victim) {
-            if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
-            next.board[idx] = null;
-            next.halfmove = 0;
-            next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
-            next.stunned = next.stunned.filter((s) => s.idx !== idx);
-            if (idx === 56) next.castling.wQ = false;
-            if (idx === 63) next.castling.wK = false;
-            if (idx === 0)  next.castling.bQ = false;
-            if (idx === 7)  next.castling.bK = false;
+          let surviving = false;
+          if (victim && victim.color !== color) {
+            const jt = jugTierAt(next, idx);
+            if (jt >= 1 && jt < 3) {
+              next.jugTier[victim.color] = jt + 1;
+              next.halfmove = 0;
+              survivorIdx = idx;
+              surviving = true;
+            }
           }
-          next.masked[idx] = false;
+          if (!surviving) {
+            if (victim) {
+              if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
+              next.board[idx] = null;
+              next.halfmove = 0;
+              next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
+              next.stunned = next.stunned.filter((s) => s.idx !== idx);
+              if (idx === 56) next.castling.wQ = false;
+              if (idx === 63) next.castling.wK = false;
+              if (idx === 0)  next.castling.bQ = false;
+              if (idx === 7)  next.castling.bK = false;
+            }
+            next.masked[idx] = false;
+            lastClearIdx = idx;
+          }
           if (idx === targetIdx) break;
           f += df; r += dr;
         }
-        next.board[targetIdx] = jug;
+        // Charger lands at targetIdx if it's clear, otherwise the last
+        // cleared square (one before the surviving Jug that occupied
+        // the edge corner).
+        const landingIdx = survivorIdx === targetIdx ? lastClearIdx : targetIdx;
+        next.board[landingIdx] = jug;
       } else {
         // Slam: jump in place. Pieces at chebyshev distance 1 are
-        // destroyed (both sides — even the jug's own); pieces at distance
-        // 2 are stunned for the next opponent + own move.
+        // destroyed (both sides — even the jug's own), except a sub-
+        // tier-3 enemy Juggernaut, which absorbs the slam by tiering up
+        // by one. Pieces at distance 2 are stunned for the next
+        // opponent + own move.
         const [kf, kr] = frOfIdx(k);
-        let destroyed = false;
+        let hit = false;
         for (let df = -2; df <= 2; df++) {
           for (let dr = -2; dr <= 2; dr++) {
             if (df === 0 && dr === 0) continue;
@@ -1655,26 +1689,38 @@ function applyAbility(
             if (dist === 1) {
               const victim = next.board[idx];
               if (victim) {
-                const up = victim.letter.toUpperCase();
-                if (up === 'S') splitSlimeGroupAt(next, idx);
-                next.board[idx] = null;
-                next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
-                next.stunned = next.stunned.filter((s) => s.idx !== idx);
-                if (idx === 56) next.castling.wQ = false;
-                if (idx === 63) next.castling.wK = false;
-                if (idx === 0)  next.castling.bQ = false;
-                if (idx === 7)  next.castling.bK = false;
-                destroyed = true;
+                const enemyJt = victim.color !== color ? jugTierAt(next, idx) : 0;
+                if (enemyJt >= 1 && enemyJt < 3) {
+                  next.jugTier[victim.color] = enemyJt + 1;
+                  hit = true;
+                } else {
+                  const up = victim.letter.toUpperCase();
+                  if (up === 'S') splitSlimeGroupAt(next, idx);
+                  next.board[idx] = null;
+                  next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
+                  next.stunned = next.stunned.filter((s) => s.idx !== idx);
+                  if (idx === 56) next.castling.wQ = false;
+                  if (idx === 63) next.castling.wK = false;
+                  if (idx === 0)  next.castling.bQ = false;
+                  if (idx === 7)  next.castling.bK = false;
+                  hit = true;
+                }
               }
               next.masked[idx] = false;
             } else if (dist === 2) {
-              if (next.board[idx] && !isStunned(next, idx)) {
-                next.stunned.push({ idx, expiresAtPly: next.ply + 2 });
+              const v = next.board[idx];
+              // Kings (regular 'K' and Slime big-king tiles 'S') shrug
+              // off the shockwave — only the lesser pieces get dizzy.
+              if (v && !isStunned(next, idx)) {
+                const up = v.letter.toUpperCase();
+                if (up !== 'K' && up !== 'S') {
+                  next.stunned.push({ idx, expiresAtPly: next.ply + 2 });
+                }
               }
             }
           }
         }
-        if (destroyed) next.halfmove = 0;
+        if (hit) next.halfmove = 0;
       }
     }
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
@@ -2110,31 +2156,55 @@ export function pieceAtImpactBeforeBlast(
         return state.board[impactIdx] ?? null;
       }
       if (tier === 1 && jugIdx !== -1) {
-        // Earthquake spawn: only the spawn square changes, and only if it
-        // held an enemy (the wave kills on contact, then dies).
+        // Earthquake spawn: the spawn square changes only if it held an
+        // enemy (the wave kills on contact, then dies). A sub-tier-3
+        // enemy Juggernaut on the spawn square is unkilled — it just
+        // tiers up — so it stays visible.
         if (impactIdx === targetIdx2) {
           const p = state.board[impactIdx];
-          if (p && p.color !== color) return null;
+          if (p && p.color !== color) {
+            const jt = jugTierAt(state, impactIdx);
+            if (jt >= 1 && jt < 3) return p;
+            return null;
+          }
         }
         return state.board[impactIdx] ?? null;
       }
       if (tier === 2 && jugIdx !== -1) {
-        if (impactIdx === jugIdx) return null;
-        if (impactIdx === targetIdx2) return state.board[jugIdx];
-        // Squares strictly between the Juggernaut and the edge tile it
-        // charged to were flattened by the slide. Walk the ray (cardinal
-        // or diagonal, picked via Math.sign) and see if impactIdx sits
-        // on it before the endpoint.
         const [kf, kr] = frOfIdx(jugIdx);
         const [tf, tr] = frOfIdx(targetIdx2);
-        const [pf, pr] = frOfIdx(impactIdx);
         const df = Math.sign(tf - kf);
         const dr = Math.sign(tr - kr);
+        // Mirror the engine: walk to targetIdx2, clearing each square
+        // except a sub-tier-3 enemy Jug (it survives in place). Charger
+        // lands at targetIdx2 unless that square IS the surviving Jug —
+        // then on the last cleared square before it.
         let f = kf + df, r = kr + dr;
-        while (f !== tf || r !== tr) {
-          if (f === pf && r === pr) return null;
+        let survivorIdx = -1;
+        let lastClearIdx = jugIdx;
+        const cleared: number[] = [];
+        while (true) {
+          const idx = idxFR(f, r);
+          const v = state.board[idx];
+          let surviving = false;
+          if (v && v.color !== state.turn) {
+            const jt = jugTierAt(state, idx);
+            if (jt >= 1 && jt < 3) { survivorIdx = idx; surviving = true; }
+          }
+          if (!surviving) {
+            cleared.push(idx);
+            lastClearIdx = idx;
+          }
+          if (idx === targetIdx2) break;
           f += df; r += dr;
         }
+        const landIdx = survivorIdx === targetIdx2 ? lastClearIdx : targetIdx2;
+        if (impactIdx === jugIdx) {
+          return landIdx === jugIdx ? state.board[jugIdx] : null;
+        }
+        if (impactIdx === landIdx) return state.board[jugIdx];
+        if (impactIdx === survivorIdx) return state.board[impactIdx] ?? null;
+        if (cleared.includes(impactIdx)) return null;
       }
       return state.board[impactIdx] ?? null;
     }

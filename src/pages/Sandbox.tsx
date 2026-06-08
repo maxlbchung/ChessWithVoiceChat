@@ -29,11 +29,6 @@ import {
   isCheckmate as cashIsCheckmate,
 } from '../lib/cashChess';
 import {
-  initialState as farmerInitial,
-  legalMovesFrom as farmerLegalFrom,
-  winnerOf as farmerWinnerOf,
-} from '../lib/farmerChess';
-import {
   initialState as heroInitial,
   backRanksForGame,
   legalMovesFrom as heroLegalFrom,
@@ -57,7 +52,7 @@ import { renderPiece, renderNeutralKing, lettersToPieceKeys } from '../lib/piece
 import * as sfx from '../lib/sfx';
 import { useSettingsStore } from '../store/settingsStore';
 
-type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'farmer';
+type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
 
 type SandboxState = {
   board: (MergePiece | null)[];
@@ -95,7 +90,6 @@ const PALETTE_LETTERS: Record<SandboxVariant, PaletteSpec> = {
   two: standardPalette,
   cash: standardPalette,
   hero: standardPalette,
-  farmer: { w: ['P'], b: ['Q'] },
   // Merge exposes the three combo pieces too — chancellor (R+N),
   // archbishop (B+N), amazon (Q+N).
   merge: {
@@ -124,7 +118,6 @@ function initialBoard(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind)
   if (variant === 'merge') return mergeInitial().board.slice() as (MergePiece | null)[];
   if (variant === 'two') return twoInitial().board.slice() as unknown as (MergePiece | null)[];
   if (variant === 'cash') return cashInitial().board.slice() as unknown as (MergePiece | null)[];
-  if (variant === 'farmer') return farmerInitial().board.slice() as unknown as (MergePiece | null)[];
   // Twin-Jutsu sides start on a randomly shuffled back rank, mirroring real
   // games. Sandbox is freeform, so an ephemeral random seed is fine.
   return heroInitial(
@@ -191,15 +184,6 @@ function hasKing(board: (MergePiece | null)[], color: 'w' | 'b'): boolean {
   return false;
 }
 
-function farmerWinner(board: (MergePiece | null)[]): 'w' | 'b' | null {
-  try {
-    const state = { ...farmerInitial(), board: board as any };
-    return farmerWinnerOf(state as any)?.winner ?? null;
-  } catch {
-    return null;
-  }
-}
-
 // Reconstruct Slime blob groups from raw board contents: any 2×2 block of
 // same-color 'S' tiles forms a blob (scanned top-left first, each tile used
 // once). Sandbox is freeform, so the engine's group bookkeeping isn't
@@ -239,7 +223,6 @@ function inCheck(
   heroB: HeroKind,
   jugTier?: { w: number; b: number },
 ): boolean {
-  if (variant === 'farmer') return false;
   if (!hasKing(board, color)) return false;
   try {
     if (variant === 'two') {
@@ -277,7 +260,6 @@ function inMate(
   heroB: HeroKind,
   jugTier?: { w: number; b: number },
 ): boolean {
-  if (variant === 'farmer') return false;
   if (!hasKing(board, color)) return false;
   try {
     if (variant === 'two') {
@@ -332,10 +314,6 @@ function engineLegalTargets(
     if (variant === 'cash') {
       const state = { ...cashInitial(), board: board as any, turn: color, enPassant };
       return cashLegalFrom(state as any, sq).map((m) => ({ to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial }));
-    }
-    if (variant === 'farmer') {
-      const state = { ...farmerInitial(), board: board as any, turn: color };
-      return farmerLegalFrom(state as any, sq).map((m) => ({ to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial }));
     }
     if (variant === 'hero') {
       const state = {
@@ -699,8 +677,6 @@ export function Sandbox() {
     // movePiece / spawnPiece / etc. — same as free play. Compute it from the
     // before→after transition so a check that was already present before the
     // change doesn't re-fire the SFX on every action.
-    const farmerWasWon = variant === 'farmer' ? farmerWinner(current.board) : null;
-    const farmerNowWon = variant === 'farmer' ? farmerWinner(next.board) : null;
     const wWasMate = inMate(variant, current.board, 'w', current.heroW, current.heroB, jugTiers);
     const bWasMate = inMate(variant, current.board, 'b', current.heroW, current.heroB, jugTiers);
     const wWasCheck = inCheck(variant, current.board, 'w', current.heroW, current.heroB, jugTiers);
@@ -709,9 +685,7 @@ export function Sandbox() {
     const bNowMate = inMate(variant, next.board, 'b', next.heroW, next.heroB, jugTiers);
     const wNowCheck = inCheck(variant, next.board, 'w', next.heroW, next.heroB, jugTiers);
     const bNowCheck = inCheck(variant, next.board, 'b', next.heroW, next.heroB, jugTiers);
-    if (farmerNowWon && !farmerWasWon) {
-      sfx.playWin();
-    } else if ((wNowMate && !wWasMate) || (bNowMate && !bWasMate)) {
+    if ((wNowMate && !wWasMate) || (bNowMate && !bWasMate)) {
       sfx.playWin();
     } else if ((wNowCheck && !wWasCheck) || (bNowCheck && !bWasCheck)) {
       sfx.playCheck();
@@ -1470,19 +1444,25 @@ export function Sandbox() {
               }
               nextMasked[aIdx] = false;
             } else if (dist === 2) {
-              if (nextBoard[aIdx] && !nextStunned.includes(aIdx)) {
-                nextStunned = [...nextStunned, aIdx];
+              const v = nextBoard[aIdx];
+              if (v && !nextStunned.includes(aIdx)) {
+                const up = v.letter.toUpperCase();
+                if (up !== 'K' && up !== 'S') {
+                  nextStunned = [...nextStunned, aIdx];
+                }
               }
             }
           }
         }
-        if (animationsEnabled) setPopAnim({ squares: [targetSq], key: Date.now() });
+        // Slam routes the overlay through 'jug-slam' (in-place leap +
+        // amplified ground impact); skip the standard pop on this tier
+        // so it doesn't clash with the leap-body scale animation.
       }
       pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked, stunnedIdxs: nextStunned });
       sfx.playJugQuake();
       if (animationsEnabled) {
         setAbilityAnim({
-          kind: 'juggernaut',
+          kind: tier === 3 ? 'jug-slam' : 'juggernaut',
           toSq: targetSq,
           color,
           key: `jug-${Date.now()}`,
@@ -1679,10 +1659,6 @@ export function Sandbox() {
   // End-of-game overlay (checkmate). Mirrors free play: shows on top of the
   // board with the winning side. Free placement still works underneath.
   const sandboxEnd = useMemo<{ winner: 'w' | 'b' } | null>(() => {
-    if (variant === 'farmer') {
-      const winner = farmerWinner(current.board);
-      return winner ? { winner } : null;
-    }
     if (inMate(variant, current.board, 'w', current.heroW, current.heroB, jugTiers)) return { winner: 'b' };
     if (inMate(variant, current.board, 'b', current.heroW, current.heroB, jugTiers)) return { winner: 'w' };
     return null;
@@ -1819,9 +1795,6 @@ export function Sandbox() {
       return sandboxSlimeShiftOpts.flatMap((o) => o.entered.map((i) => ({
         to: heroIdxToSq(i), isCapture: o.isCapture, isMerge: false,
       })));
-    }
-    if (variant === 'farmer') {
-      return engineLegalTargets(variant, current.board, selectedSq, current.heroW, current.heroB, current.enPassant, jugTiers);
     }
     // No king of the mover's color → check filtering is meaningless, so fall
     // back to raw patterns. Otherwise the variant's engine generates the
@@ -2035,7 +2008,6 @@ export function Sandbox() {
                 { value: 'two',    label: 'Guerrilla' },
                 { value: 'cash',   label: 'Cash Money' },
                 { value: 'hero',   label: 'Hero' },
-                { value: 'farmer', label: 'Farmer' },
               ]}
               onChange={(next) => {
                 if (next !== variant) {
@@ -2043,7 +2015,6 @@ export function Sandbox() {
                   else if (next === 'two') sfx.playPush();
                   else if (next === 'cash') sfx.playPlace();
                   else if (next === 'hero') sfx.playSlice();
-                  else if (next === 'farmer') sfx.playPlace();
                   else sfx.playMove();
                 }
                 setVariant(next);

@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'farmer' | 'chaos';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -19,8 +19,6 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     two: false,
     cash: false,
     hero: false,
-    farmer: false,
-    chaos: false,
   });
   const toggle = (k: SectionKey) => {
     if (open[k]) sfx.playClose(); else sfx.playOpen();
@@ -92,18 +90,6 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           Using an ability takes your turn.
         </div>
         {renderGrid(timeControlsForVariant('hero'))}
-      </Section>
-
-      <Section title="Farmer" open={open.farmer} onToggle={() => toggle('farmer')}>
-        <div className="muted small time-mode-blurb">
-          White starts with eight pawns. Black starts with one queen.
-          A pawn promotion wins instantly; clearing all pawns wins for the queen.
-        </div>
-        {renderGrid(timeControlsForVariant('farmer'))}
-      </Section>
-
-      <Section title="Chaos" open={open.chaos} onToggle={() => toggle('chaos')}>
-        <div className="muted small">Nothing here yet.</div>
       </Section>
     </div>
   );

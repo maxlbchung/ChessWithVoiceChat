@@ -342,7 +342,6 @@ const VARIANT_LABEL: Record<GameVariant, string> = {
   two: 'Guerrilla',
   cash: 'Cash Money',
   hero: 'Hero',
-  farmer: 'Farmer',
 };
 
 function DaySummaryTable({
@@ -356,7 +355,11 @@ function DaySummaryTable({
   onExport: (gameId: string) => void;
   onTogglePin: (summary: LocalGameSummary) => void;
 }) {
-  if (summaries.length === 0) {
+  const supported = summaries
+    .map((summary) => ({ summary, timeControl: getTimeControl(summary.timeControlId) }))
+    .filter((row): row is { summary: LocalGameSummary; timeControl: NonNullable<ReturnType<typeof getTimeControl>> } => !!row.timeControl);
+
+  if (supported.length === 0) {
     return <div className="muted">No games on this day.</div>;
   }
   return (
@@ -377,9 +380,8 @@ function DaySummaryTable({
         </tr>
       </thead>
       <tbody>
-        {summaries.map((s) => {
-          const tc = getTimeControl(s.timeControlId);
-          const variant = tc?.variant ?? 'normal';
+        {supported.map(({ summary: s, timeControl: tc }) => {
+          const variant = tc.variant;
           const delta = s.ratingAfter - s.ratingBefore;
           const myResult =
             s.outcome === 'draw' ? '½' : s.outcome === s.myColor ? '1' : '0';
@@ -387,7 +389,7 @@ function DaySummaryTable({
           return (
             <tr key={s.gameId}>
               <td>{VARIANT_LABEL[variant]}</td>
-              <td>{tc?.label ?? s.timeControlId}</td>
+              <td>{tc.label}</td>
               <td>
                 <span className="mono small">{s.opponentHandle}</span>
               </td>

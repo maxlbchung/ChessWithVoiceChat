@@ -6,11 +6,13 @@ export function Settings() {
     showOpponentNames,
     showOpponentAvatars,
     chatEnabled,
+    inGameEmojisEnabled,
     animationsEnabled,
     setVolume,
     setShowOpponentNames,
     setShowOpponentAvatars,
     setChatEnabled,
+    setInGameEmojisEnabled,
     setAnimationsEnabled,
   } = useSettingsStore();
 
@@ -71,6 +73,18 @@ export function Settings() {
             checked={chatEnabled}
             onChange={setChatEnabled}
             label="Chat enabled"
+          />
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <div className="settings-title">In-game emojis</div>
+            <div className="muted small">Show the emoji picker and king-side emoji bubbles.</div>
+          </div>
+          <Toggle
+            checked={inGameEmojisEnabled}
+            onChange={setInGameEmojisEnabled}
+            label="In-game emojis"
           />
         </div>
 

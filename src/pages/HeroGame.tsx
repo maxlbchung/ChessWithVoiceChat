@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
+import { ChatComposer } from '../components/ChatComposer';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { useSettingsStore } from '../store/settingsStore';
 import { MergeBoard } from '../components/MergeBoard';
@@ -29,6 +30,7 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   abilityTargets,
@@ -227,7 +229,8 @@ export function HeroGame() {
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, inGameEmojisEnabled, animationsEnabled } = useSettingsStore();
+  const { emojiBubbleEvent, showEmojiBubble } = useEmojiBubble(inGameEmojisEnabled);
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -239,6 +242,19 @@ export function HeroGame() {
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
   useEffect(() => { movesCountRef.current = moves.length; }, [moves.length]);
+
+  const sendChatMessage = (text: string, options: { clearInput?: boolean; emoji?: boolean } = {}) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    sessionRef.current.send({ type: 'chat', text: trimmed });
+    if (options.emoji && inGameEmojisEnabled) {
+      sessionRef.current.send({ type: 'emoji', emoji: trimmed });
+      showEmojiBubble('me', trimmed);
+    }
+    setChatLog((l) => [...l, { from: 'me', text: trimmed }]);
+    sfx.playChat();
+    if (options.clearInput ?? true) setChatInput('');
+  };
 
   // Initialise the engine once both heroes are known.
   useEffect(() => {
@@ -320,6 +336,10 @@ export function HeroGame() {
       if (msg.type === 'chat') {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
         sfx.playChat();
+        return;
+      }
+      if (msg.type === 'emoji') {
+        showEmojiBubble('opp', msg.emoji);
         return;
       }
       if (msg.type === 'avatar') { setOppAvatar(msg.dataUrl); return; }
@@ -667,10 +687,12 @@ export function HeroGame() {
     if (ab === 'warlord') {
       fromSq = kingSquareOf(next.board, moverColor) ?? undefined;
     }
-    // No tier of the Juggernaut leaps anymore — tier 2's edge charge
-    // uses the regular slide animation, tier 1/3 keep the jug in place.
+    // Tier-2 edge charge uses the regular slide animation. Tier-3 slam
+    // routes through 'jug-slam' so the jug leaps in place + amplified
+    // ground impact. Tier-1 earthquake stays on the standard quake.
+    const isJugSlam = ab === 'juggernaut' && jugTierOf(prev, moverColor) === 3;
     return {
-      kind: ab,
+      kind: isJugSlam ? 'jug-slam' : ab,
       fromSq,
       toSq: targetSq,
       color: moverColor,
@@ -771,7 +793,7 @@ export function HeroGame() {
       const to = uci.slice(2, 4) as Square;
       const tier = jugTierOf(game, beforeTurn);
       if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
-      else setPopAnim({ squares: [to], key: Date.now() });
+      else if (tier !== 3) setPopAnim({ squares: [to], key: Date.now() });
     }
     // Pop the destination on promotions and on Necromancer spawns (a new
     // piece materialises). The uci's 5th char marks a promotion.
@@ -872,7 +894,7 @@ export function HeroGame() {
       const to = move.uci.slice(2, 4) as Square;
       const tier = jugTierOf(prev, prev.turn);
       if (tier === 2 && from && from !== to) setSlideAnim({ moves: [{ from, to }], key: Date.now() });
-      else setPopAnim({ squares: [to], key: Date.now() });
+      else if (tier !== 3) setPopAnim({ squares: [to], key: Date.now() });
     }
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
@@ -1475,6 +1497,16 @@ export function HeroGame() {
     return computeCaptures(boardForRender, initBoard);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardForRender, myHero, oppHero, handoff.iAmWhite, gameId]);
+  const emojiBubble = emojiBubbleEvent
+    ? {
+        emoji: emojiBubbleEvent.emoji,
+        key: emojiBubbleEvent.key,
+        squares: kingSquaresForBoard(
+          boardForRender,
+          emojiBubbleEvent.side === 'me' ? myEngineColor : myEngineColor === 'w' ? 'b' : 'w',
+        ),
+      }
+    : null;
 
   // Cooldown turn counts (for the abilities panel).
   const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
@@ -1650,6 +1682,7 @@ export function HeroGame() {
             juggernauts={juggernauts}
             stunnedSquares={stunnedSqs}
             earthquakes={earthquakeOverlays}
+            emojiBubble={emojiBubble}
           />
           {pendingPromo && game && (
             <PromotionPicker
@@ -1921,26 +1954,12 @@ export function HeroGame() {
                 </div>
               ))}
             </div>
-            <form
-              className="chat-input-row"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!chatInput.trim()) return;
-                sessionRef.current.send({ type: 'chat', text: chatInput });
-                setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
-                sfx.playChat();
-                setChatInput('');
-              }}
-            >
-              <input
-                className="text-input"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="say something…"
-                maxLength={200}
-              />
-              <button className="secondary-btn" data-no-sfx type="submit">Send</button>
-            </form>
+            <ChatComposer
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={sendChatMessage}
+              emojiEnabled={inGameEmojisEnabled}
+            />
           </div>
         )}
       </aside>
@@ -1967,8 +1986,5 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
-    case 'promotion': return 'by pawn promotion';
-    case 'pawns-cleared': return 'all pawns captured';
-    case 'queen-captured': return 'queen captured';
   }
 }

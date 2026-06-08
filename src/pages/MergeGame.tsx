@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
+import { ChatComposer } from '../components/ChatComposer';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
@@ -28,6 +29,7 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import {
   applyMove,
@@ -166,7 +168,8 @@ export function MergeGame() {
     rating: handoff.partnerRating,
   };
 
-  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, inGameEmojisEnabled, animationsEnabled } = useSettingsStore();
+  const { emojiBubbleEvent, showEmojiBubble } = useEmojiBubble(inGameEmojisEnabled);
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -178,6 +181,19 @@ export function MergeGame() {
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
   useEffect(() => { movesCountRef.current = moves.length; }, [moves.length]);
+
+  const sendChatMessage = (text: string, options: { clearInput?: boolean; emoji?: boolean } = {}) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    sessionRef.current.send({ type: 'chat', text: trimmed });
+    if (options.emoji && inGameEmojisEnabled) {
+      sessionRef.current.send({ type: 'emoji', emoji: trimmed });
+      showEmojiBubble('me', trimmed);
+    }
+    setChatLog((l) => [...l, { from: 'me', text: trimmed }]);
+    sfx.playChat();
+    if (options.clearInput ?? true) setChatInput('');
+  };
 
   const cancelDisconnectCountdown = () => {
     if (disconnectTimerRef.current != null) {
@@ -240,6 +256,10 @@ export function MergeGame() {
       if (msg.type === 'chat') {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
         sfx.playChat();
+        return;
+      }
+      if (msg.type === 'emoji') {
+        showEmojiBubble('opp', msg.emoji);
         return;
       }
       if (msg.type === 'avatar') { setOppAvatar(msg.dataUrl); return; }
@@ -636,6 +656,16 @@ export function MergeGame() {
     () => computeCaptures(viewedState.board, initialState().board),
     [viewedState.board],
   );
+  const emojiBubble = emojiBubbleEvent
+    ? {
+        emoji: emojiBubbleEvent.emoji,
+        key: emojiBubbleEvent.key,
+        squares: kingSquaresForBoard(
+          viewedState.board,
+          emojiBubbleEvent.side === 'me' ? myEngineColor : myEngineColor === 'w' ? 'b' : 'w',
+        ),
+      }
+    : null;
 
   const legalTargets = useMemo(() => {
     if (!atPresent) return [];
@@ -833,6 +863,7 @@ export function MergeGame() {
             popSquares={popAnim?.squares}
             popKey={popAnim?.key}
             mergeAnim={mergeAnim}
+            emojiBubble={emojiBubble}
           />
           {pendingPromo && (
             <PromotionPicker
@@ -1096,26 +1127,12 @@ export function MergeGame() {
                 </div>
               ))}
             </div>
-            <form
-              className="chat-input-row"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!chatInput.trim()) return;
-                sessionRef.current.send({ type: 'chat', text: chatInput });
-                setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
-                sfx.playChat();
-                setChatInput('');
-              }}
-            >
-              <input
-                className="text-input"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="say something…"
-                maxLength={200}
-              />
-              <button className="secondary-btn" data-no-sfx type="submit">Send</button>
-            </form>
+            <ChatComposer
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={sendChatMessage}
+              emojiEnabled={inGameEmojisEnabled}
+            />
           </div>
         )}
       </aside>
@@ -1143,8 +1160,5 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
-    case 'promotion': return 'by pawn promotion';
-    case 'pawns-cleared': return 'all pawns captured';
-    case 'queen-captured': return 'queen captured';
   }
 }

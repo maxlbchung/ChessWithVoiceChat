@@ -7,6 +7,7 @@ import { PromotionPicker, type PromotionLetter } from '../components/PromotionPi
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
+import { ChatComposer } from '../components/ChatComposer';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
@@ -30,6 +31,7 @@ import { getMicStream, setStreamMuted, stopStream } from '../lib/voice';
 import { useVolume } from '../lib/voiceMeter';
 import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
+import { kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 
 type EndState = {
@@ -142,6 +144,7 @@ export function Game() {
 
   const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
   const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
+  const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
 
   const me: PlayerInfo = {
     handle: identity.handle,
@@ -155,7 +158,8 @@ export function Game() {
   // Privacy toggles — hide the real opponent handle/avatar when the user has
   // turned them off in settings. The real values still travel over the wire
   // and are persisted in the game record; this only affects display.
-  const { showOpponentNames, showOpponentAvatars, chatEnabled, animationsEnabled } = useSettingsStore();
+  const { showOpponentNames, showOpponentAvatars, chatEnabled, inGameEmojisEnabled, animationsEnabled } = useSettingsStore();
+  const { emojiBubbleEvent, showEmojiBubble } = useEmojiBubble(inGameEmojisEnabled);
   const oppDisplayHandle = showOpponentNames ? opp.handle : 'Opponent';
   const oppDisplayAvatar = showOpponentAvatars ? oppAvatar : null;
 
@@ -168,6 +172,19 @@ export function Game() {
 
   // Rematch handshake — also clears the cross-route "keep session" flag.
   const rematch = useRematch(handoff, sessionRef.current);
+
+  const sendChatMessage = (text: string, options: { clearInput?: boolean; emoji?: boolean } = {}) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    sessionRef.current.send({ type: 'chat', text: trimmed });
+    if (options.emoji && inGameEmojisEnabled) {
+      sessionRef.current.send({ type: 'emoji', emoji: trimmed });
+      showEmojiBubble('me', trimmed);
+    }
+    setChatLog((l) => [...l, { from: 'me', text: trimmed }]);
+    sfx.playChat();
+    if (options.clearInput ?? true) setChatInput('');
+  };
 
   const cancelDisconnectCountdown = () => {
     if (disconnectTimerRef.current != null) {
@@ -255,6 +272,10 @@ export function Game() {
       if (msg.type === 'chat') {
         setChatLog((l) => [...l, { from: 'opp', text: msg.text }]);
         sfx.playChat();
+        return;
+      }
+      if (msg.type === 'emoji') {
+        showEmojiBubble('opp', msg.emoji);
         return;
       }
       if (msg.type === 'avatar') {
@@ -841,6 +862,16 @@ export function Game() {
     }
     return computeCaptures(displayBoard, board);
   }, [displayBoard]);
+  const emojiBubble = emojiBubbleEvent
+    ? {
+        emoji: emojiBubbleEvent.emoji,
+        key: emojiBubbleEvent.key,
+        squares: kingSquaresForBoard(
+          displayBoard,
+          emojiBubbleEvent.side === 'me' ? myEngineColor : myEngineColor === 'w' ? 'b' : 'w',
+        ),
+      }
+    : null;
 
   // Legal targets in MergeBoard's shape — `isMerge` is unused for Normal play
   // (no merge / push interactions), so it's always false.
@@ -956,6 +987,7 @@ export function Game() {
             slideKey={slideAnim?.key}
             popSquares={popAnim?.squares}
             popKey={popAnim?.key}
+            emojiBubble={emojiBubble}
           />
           {pendingPromo && (
             <PromotionPicker
@@ -1218,26 +1250,12 @@ export function Game() {
                 </div>
               ))}
             </div>
-            <form
-              className="chat-input-row"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!chatInput.trim()) return;
-                sessionRef.current.send({ type: 'chat', text: chatInput });
-                setChatLog((l) => [...l, { from: 'me', text: chatInput }]);
-                sfx.playChat();
-                setChatInput('');
-              }}
-            >
-              <input
-                className="text-input"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="say something…"
-                maxLength={200}
-              />
-              <button className="secondary-btn" data-no-sfx type="submit">Send</button>
-            </form>
+            <ChatComposer
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={sendChatMessage}
+              emojiEnabled={inGameEmojisEnabled}
+            />
           </div>
         )}
       </aside>
@@ -1257,8 +1275,5 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
-    case 'promotion': return 'by pawn promotion';
-    case 'pawns-cleared': return 'all pawns captured';
-    case 'queen-captured': return 'queen captured';
   }
 }

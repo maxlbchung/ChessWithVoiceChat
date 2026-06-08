@@ -6,6 +6,7 @@ type Settings = {
   showOpponentNames: boolean;
   showOpponentAvatars: boolean;
   chatEnabled: boolean;
+  inGameEmojisEnabled: boolean;
   animationsEnabled: boolean;
 };
 
@@ -16,6 +17,7 @@ const DEFAULTS: Settings = {
   showOpponentNames: true,
   showOpponentAvatars: true,
   chatEnabled: true,
+  inGameEmojisEnabled: true,
   animationsEnabled: true,
 };
 
@@ -39,6 +41,7 @@ type SettingsStore = Settings & {
   setShowOpponentNames: (v: boolean) => void;
   setShowOpponentAvatars: (v: boolean) => void;
   setChatEnabled: (v: boolean) => void;
+  setInGameEmojisEnabled: (v: boolean) => void;
   setAnimationsEnabled: (v: boolean) => void;
 };
 
@@ -66,6 +69,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     setChatEnabled(v) {
       save({ ...get(), chatEnabled: v });
       set({ chatEnabled: v });
+    },
+    setInGameEmojisEnabled(v) {
+      save({ ...get(), inGameEmojisEnabled: v });
+      set({ inGameEmojisEnabled: v });
     },
     setAnimationsEnabled(v) {
       save({ ...get(), animationsEnabled: v });
