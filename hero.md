@@ -14,7 +14,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 | **Flight**      | 5 turns         | Fly any of your pieces to any empty square                |
 | **Harem**       | *passive*       | Your bishops + rooks start as queens                      |
 | **Mutation**    | 5 turns         | Starts with bishops instead of knights; mutate B/R/Q to also move like a knight |
-| **ICBM**        | 10-turn warmup, then none | Drop a bomb that lands in 5 plies and demolishes a square |
+| **ICBM**        | 5-turn warmup, then 1-turn cooldown | Drop a bomb that lands in 5 plies and demolishes a square |
 | **Goofball**    | *none*          | Force the opponent to make a legal move on their next ply |
 | **Twin-Jutsu**  | 3 turns         | All your pieces look like kings to the opponent until they move. Back rank starts shuffled (opposite-color bishops; no castling). Active swaps two of your pieces and re-masks both. |
 | **Slime**       | 10 turns        | Only pawns (3rd rank) + a 2×2 big king that slides one square and crushes what it lands on. Capturing a tile splits it into 3 mini kings; uncheckable until a single king remains. Active regrows a mini into a big king. |
@@ -68,7 +68,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - While Mutation is active, your pawn promotions can also fuse with a knight: pawn promotion options expand to `Q / R / B / N / Z / C / A`.
 
 ### ICBM — `#ff6a00`
-- **Active**. **10-turn warmup** to arm the weapons before the first launch, then no cooldown between launches — fire on every turn after that.
+- **Active**. **5-turn warmup** to arm the weapons before the first launch, then a **1-turn cooldown** between launches — can't fire again on your immediate next turn.
 - Targets any square (yours, theirs, or empty). On fire, a missile is queued with `landsAtPly = state.ply + 5`.
 - Lands exactly 5 plies later — demolishes whatever piece is on the target square at that moment (including kings; a destroyed king ends the game as a checkmate-style loss for the king's owner).
 - **Bypasses Frost** — frozen pieces explode like any other.

@@ -193,9 +193,10 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     name: 'ICBM',
     blurb: 'Launch a missile at any square. Lands 5 plies later — demolishes whatever is there. Frost can’t stop it.',
     glowColor: '#ff6a00',
-    // After the initial arming period, ICBM has no cooldown — fire freely.
-    cooldownTurns: 0,
-    initialCooldownTurns: 10,
+    // 5-turn arming (warming) period before the first launch, then a short
+    // 1-turn cooldown between launches.
+    cooldownTurns: 1,
+    initialCooldownTurns: 5,
   },
   goofball: {
     kind: 'goofball',
