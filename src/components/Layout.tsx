@@ -53,6 +53,14 @@ export function Layout() {
           >
             Review
           </Link>
+          {import.meta.env.DEV && (
+            <Link
+              to="/video"
+              className={location.pathname.startsWith('/video') ? 'active' : ''}
+            >
+              Video
+            </Link>
+          )}
           <Link
             to="/profile"
             className={location.pathname.startsWith('/profile') ? 'active' : ''}

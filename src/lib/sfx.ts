@@ -15,6 +15,26 @@ function getCtx(): AudioContext {
   return ctx;
 }
 
+// The shared synthesis context. Exposed so the video editor can decode its
+// music into the SAME context and tap the master bus — letting it mux SFX +
+// music into a single captured stream during export.
+export function audioContext(): AudioContext {
+  return getCtx();
+}
+
+// Tap the master bus into an extra destination (e.g. a MediaStreamDestination
+// for video export). Additive — the normal speaker output stays connected.
+export function connectCapture(node: AudioNode): void {
+  getMaster().connect(node);
+}
+export function disconnectCapture(node: AudioNode): void {
+  try {
+    getMaster().disconnect(node);
+  } catch {
+    /* wasn't connected */
+  }
+}
+
 // Master gain — every SFX (UI + chess) eventually routes through this so the
 // settings volume slider can attenuate the whole bus at once.
 let master: GainNode | null = null;
@@ -1744,6 +1764,56 @@ export function playEmojiReaction(emoji: string) {
       blip({ startAt: t + 0.08, freq: 410, freqEnd: 300, durMs: 70, type: 'triangle', peak: 0.1, attackMs: 1, lpHz: 1800 });
       break;
     default:
+      break;
+  }
+}
+
+// Move-quality token cues for the video editor. Good moves rise to a bright
+// chime; mistakes/blunders sag into a low buzz — echoing the visual badges.
+export function playMoveQuality(kind: string) {
+  const ac = getCtx();
+  const t = ac.currentTime;
+  switch (kind) {
+    case 'brilliant':
+      blip({ startAt: t, freq: 660, durMs: 90, type: 'sine', peak: 0.18, attackMs: 2 });
+      blip({ startAt: t + 0.08, freq: 990, durMs: 90, type: 'sine', peak: 0.16, attackMs: 2 });
+      blip({ startAt: t + 0.16, freq: 1320, durMs: 180, type: 'sine', peak: 0.14, attackMs: 2 });
+      break;
+    case 'great':
+      blip({ startAt: t, freq: 620, durMs: 90, type: 'triangle', peak: 0.18, attackMs: 2 });
+      blip({ startAt: t + 0.09, freq: 940, durMs: 160, type: 'triangle', peak: 0.14, attackMs: 2 });
+      break;
+    case 'best':
+    case 'excellent':
+      blip({ startAt: t, freq: 720, durMs: 110, type: 'sine', peak: 0.16, attackMs: 3 });
+      blip({ startAt: t + 0.1, freq: 1080, durMs: 150, type: 'sine', peak: 0.12, attackMs: 3 });
+      break;
+    case 'good':
+      blip({ startAt: t, freq: 680, durMs: 120, type: 'sine', peak: 0.15, attackMs: 3 });
+      break;
+    case 'book':
+      blip({ startAt: t, freq: 440, durMs: 130, type: 'triangle', peak: 0.12, attackMs: 6, lpHz: 1400 });
+      break;
+    case 'inaccuracy':
+      blip({ startAt: t, freq: 500, freqEnd: 420, durMs: 150, type: 'triangle', peak: 0.14, attackMs: 4, lpHz: 1700 });
+      break;
+    case 'mistake':
+      blip({ startAt: t, freq: 380, freqEnd: 300, durMs: 170, type: 'triangle', peak: 0.16, attackMs: 4, lpHz: 1500 });
+      break;
+    case 'miss':
+      blip({ startAt: t, freq: 300, freqEnd: 200, durMs: 200, type: 'sawtooth', peak: 0.16, attackMs: 4, lpHz: 1100 });
+      break;
+    case 'blunder':
+      blip({ startAt: t, freq: 200, freqEnd: 120, durMs: 260, type: 'sawtooth', peak: 0.18, attackMs: 6, lpHz: 800 });
+      blip({ startAt: t + 0.05, freq: 150, freqEnd: 90, durMs: 260, type: 'sawtooth', peak: 0.12, attackMs: 6, lpHz: 700 });
+      break;
+    case 'checkmate':
+      playWin();
+      break;
+    case 'draw':
+      // Two equal tones — a "tie".
+      blip({ startAt: t, freq: 392, durMs: 220, type: 'sine', peak: 0.16, attackMs: 6 });
+      blip({ startAt: t + 0.16, freq: 392, durMs: 260, type: 'sine', peak: 0.13, attackMs: 6 });
       break;
   }
 }

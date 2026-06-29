@@ -51,6 +51,8 @@ import type { AbilityAnim } from '../components/MergeBoard';
 import { renderPiece, renderNeutralKing, lettersToPieceKeys } from '../lib/pieceSvgs';
 import * as sfx from '../lib/sfx';
 import { useSettingsStore } from '../store/settingsStore';
+import { buildSandboxExport, downloadSandboxJson, downloadSandboxPng } from '../lib/sandboxExport';
+import type { DisplaySnapshot } from '../lib/replayView';
 
 type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
 
@@ -1812,6 +1814,69 @@ export function Sandbox() {
       }
     : undefined;
 
+  // Projection of the live board into the shared snapshot the canvas renderer
+  // consumes (same shape Review/video use), so the PNG export reproduces the
+  // squares, pieces, and every Hero overlay. Built lazily but memoized so the
+  // export handler reads it straight off.
+  const displaySnapshot = useMemo<DisplaySnapshot>(() => {
+    const board = current.board;
+    const slimeBigKings = deriveSlimeGroups(board)
+      .map((g) => {
+        const ref = board[g.tiles[0]];
+        return ref ? { tiles: g.tiles.map(heroIdxToSq), color: ref.color } : null;
+      })
+      .filter((g): g is { tiles: string[]; color: 'w' | 'b' } => g !== null);
+    const maskedAsKingSquares: string[] = [];
+    for (let i = 0; i < 64; i++) if (current.masked[i]) maskedAsKingSquares.push(heroIdxToSq(i));
+    const slimeKingSquares: string[] = [];
+    const juggernauts: { sq: string; tier: number }[] = [];
+    if (variant === 'hero') {
+      for (let i = 0; i < 64; i++) {
+        const p = board[i];
+        if (!p || p.letter.toUpperCase() !== 'K') continue;
+        const side = p.color === 'w' ? current.heroW : current.heroB;
+        if (side === 'slime') slimeKingSquares.push(heroIdxToSq(i));
+        else if (side === 'juggernaut') juggernauts.push({ sq: heroIdxToSq(i), tier: p.color === 'w' ? jugTierW : jugTierB });
+      }
+    }
+    return {
+      board,
+      lastMove,
+      kingGlows,
+      frozenSquares,
+      maskedAsKingSquares,
+      slimeBigKings,
+      slimeKingSquares,
+      juggernauts,
+      stunnedSquares: variant === 'hero' ? current.stunnedIdxs.map((i) => heroIdxToSq(i)) : [],
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, variant, lastMove, kingGlows, frozenSquares, jugTierW, jugTierB]);
+
+  const handleExportGame = () => {
+    const exp = buildSandboxExport({
+      variant,
+      orientation,
+      board: current.board,
+      heroW: current.heroW,
+      heroB: current.heroB,
+      jugTierW,
+      jugTierB,
+      frozenIdxs: current.frozenIdxs,
+      stunnedIdxs: current.stunnedIdxs,
+      masked: current.masked,
+      enPassant: current.enPassant,
+    });
+    downloadSandboxJson(exp);
+    sfx.playSelect();
+  };
+
+  const handleExportPng = () => {
+    sfx.playSelect();
+    void downloadSandboxPng({ snapshot: displaySnapshot, orientation, variant })
+      .catch((err) => console.error('Sandbox PNG export failed', err));
+  };
+
   // For each side, can their hero ability fire? Defers to the engine's
   // `abilityTargets`, which encodes the full legality (own king present,
   // adjacency, a flyable piece for Flight, etc.).
@@ -2028,6 +2093,8 @@ export function Sandbox() {
             <button className="free-play-btn" type="button" onClick={toggleFullscreen}>
               {isFullscreen ? 'Exit FS' : 'Fullscreen'}
             </button>
+            <button className="free-play-btn" type="button" onClick={handleExportGame} title="Download this position as JSON">Export Game</button>
+            <button className="free-play-btn" type="button" onClick={handleExportPng} title="Download a PNG of the current board">Export PNG</button>
           </div>
 
           <PiecePalette

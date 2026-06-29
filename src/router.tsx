@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { createHashRouter } from 'react-router-dom';
 import { Home } from './pages/Home';
 import { GameRoute } from './pages/GameRoute';
@@ -7,6 +8,27 @@ import { Settings } from './pages/Settings';
 import { Sandbox } from './pages/Sandbox';
 import { Review } from './pages/Review';
 import { Layout } from './components/Layout';
+
+// DEV-only video editor. Gating the lazy() behind the statically-false
+// `import.meta.env.DEV` lets Rollup constant-fold it to null in production and
+// drop the dynamic import entirely — so neither the page nor its heavy
+// react-dom/server dependency ship in the prod build.
+const VideoEditor = import.meta.env.DEV
+  ? lazy(() => import('./pages/VideoEditor').then((m) => ({ default: m.VideoEditor })))
+  : null;
+
+const devRoutes = VideoEditor
+  ? [
+      {
+        path: 'video',
+        element: (
+          <Suspense fallback={<div className="page muted">Loading editor…</div>}>
+            <VideoEditor />
+          </Suspense>
+        ),
+      },
+    ]
+  : [];
 
 export const router = createHashRouter([
   {
@@ -20,6 +42,7 @@ export const router = createHashRouter([
       { path: 'review', element: <Review /> },
       { path: 'profile', element: <Profile /> },
       { path: 'settings', element: <Settings /> },
+      ...devRoutes,
     ],
   },
 ]);

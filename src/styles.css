@@ -3716,3 +3716,356 @@ a { color: inherit; text-decoration: none; }
   60%      { transform: translate(-1px, -1px); }
   80%      { transform: translate(1px, 1px); }
 }
+
+/* ===== Video editor (DEV-only tool) ===================================== */
+.video-editor {
+  display: grid;
+  grid-template-columns: auto minmax(360px, 1fr);
+  grid-template-areas:
+    'stage tabs'
+    'timeline timeline';
+  column-gap: 1.2rem;
+  row-gap: 1rem;
+  align-items: start;
+  position: relative;
+}
+@media (max-width: 980px) {
+  .video-editor {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'stage' 'tabs' 'timeline';
+  }
+  .vid-stage { width: 100%; }
+}
+/* Left stage: chessboard + transport footer, sized to the board so the footer
+   matches its width and there's no dead space around it. The timeline lives in
+   its own full-width row below. */
+.vid-stage {
+  grid-area: stage;
+  width: min(56vh, 46vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.vid-stage > * {
+  width: 100%;
+}
+.vid-stage .board-wrap {
+  align-self: stretch;
+  max-width: none;
+}
+.vid-tabs { grid-area: tabs; }
+.video-editor > .vid-timeline { grid-area: timeline; }
+.vid-floating-error { grid-column: 1 / -1; }
+.vid-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* Right column: Project / Edit tabs. */
+.vid-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.vid-tab-bar {
+  display: flex;
+  gap: 0.3rem;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.25rem;
+}
+.vid-tab {
+  flex: 1;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.vid-tab:hover { color: var(--text); }
+.vid-tab.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.vid-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.vid-panel {
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  box-shadow: var(--shadow-soft);
+}
+.vid-panel h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+/* Transport */
+.vid-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.vid-scrub { flex: 1 1 140px; }
+.vid-time { font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
+
+/* Fields */
+.vid-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.vid-field input,
+.vid-field select {
+  font: inherit;
+  background: var(--glass-strong);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.35rem 0.5rem;
+  outline: none;
+}
+.vid-field input.invalid { border-color: #d9534f; }
+/* Fields flow into as many columns as the (now wider) card allows. */
+.vid-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+  align-items: end;
+}
+/* The native option popup ignores the translucent select background, so give it
+   a solid dark fill (matching .free-play-select) instead of rendering white. */
+.video-editor select option {
+  background-color: #10283a;
+  color: var(--text);
+}
+.vid-range { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; }
+
+/* Music */
+.vid-track-list { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.vid-radio { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.vid-upload-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.vid-offset { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.6rem; }
+.vid-offset input[type="range"] { width: 100%; }
+
+/* Effects */
+.vid-effect-add { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.6rem 0; }
+.vid-add-row { display: flex; gap: 0.5rem; align-items: center; }
+.vid-add-row select { flex: 0 0 auto; }
+.vid-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+.vid-tool-grid .secondary-btn {
+  padding: 0.4rem 0.3rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vid-tool-grid .secondary-btn.active,
+.secondary-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.vid-tool-hint {
+  font-size: 0.82rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+}
+.vid-shortcuts { line-height: 1.6; }
+.vid-shortcuts b { color: var(--text); font-weight: 600; }
+.vid-effect-edit {
+  border-top: 1px solid var(--border);
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.vid-effect-edit-head { display: flex; justify-content: space-between; align-items: center; }
+.vid-effect-kind { margin: 0; text-transform: capitalize; font-weight: 600; color: var(--accent); }
+
+.vid-project-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* Timeline */
+.vid-timeline {
+  display: flex;
+  gap: 0.6rem;
+  align-items: stretch;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem;
+  box-shadow: var(--shadow-soft);
+}
+/* Left control column: transport + zoom, all equal-size buttons. */
+.vid-tl-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+.vid-tl-btn {
+  width: 38px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--glass-strong);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+.vid-tl-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.vid-tl-btn:disabled { opacity: 0.4; cursor: default; }
+.vid-timeline-scroll { overflow-x: auto; overflow-y: hidden; flex: 1; min-width: 0; }
+.vid-timeline-content { position: relative; min-height: 60px; }
+
+.vid-ruler {
+  position: relative;
+  height: 20px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.vid-tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--border); }
+.vid-tick-label { font-size: 0.65rem; color: var(--muted); padding-left: 3px; user-select: none; }
+
+.vid-lane {
+  position: relative;
+  height: 30px;
+  border-bottom: 1px dashed rgba(168, 216, 185, 0.12);
+}
+.vid-lane-label {
+  position: absolute;
+  left: 4px;
+  top: 7px;
+  font-size: 0.68rem;
+  color: var(--muted);
+  pointer-events: none;
+  z-index: 1;
+}
+.vid-lane-effect.selected { background: var(--accent-soft); }
+
+/* Tracks: moves lane + effect lanes in one positioned area (marquee spans it). */
+.vid-tracks { position: relative; }
+.vid-effects { position: relative; }
+.vid-elane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-bottom: 1px dashed rgba(168, 216, 185, 0.12);
+}
+.vid-elane.empty { background: rgba(168, 216, 185, 0.05); }
+.vid-marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.vid-move-handle {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: ew-resize;
+  user-select: none;
+}
+.vid-move-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+.vid-move-num { font-size: 0.6rem; color: var(--muted); margin-top: 1px; white-space: nowrap; }
+.vid-move-handle.selected .vid-move-dot {
+  background: #ffd34d;
+  box-shadow: 0 0 0 2px rgba(255, 211, 77, 0.5);
+}
+.vid-move-type {
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #0c1e2c;
+  background: var(--accent-strong);
+  border-radius: 4px;
+  padding: 0 3px;
+  margin-top: 1px;
+}
+
+.vid-effect-bar {
+  position: absolute;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  padding: 0 0.4rem;
+  cursor: grab;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+}
+.vid-effect-bar.selected { outline: 2px solid #ffd34d; outline-offset: -1px; z-index: 3; }
+.vid-effect-bar-label { font-size: 0.65rem; color: #0c1e2c; white-space: nowrap; pointer-events: none; }
+.vid-effect-resize {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  background: rgba(0, 0, 0, 0.28);
+  z-index: 1;
+}
+.vid-effect-resize.left { left: 0; border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+.vid-effect-resize.right { right: 0; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+.vid-effect-bar.kind-highlight { background: #ffd34d; }
+.vid-effect-bar.kind-token { background: #1baca6; }
+.vid-effect-bar.kind-arrow { background: #ffaa00; }
+.vid-effect-bar.kind-emoji { background: #c9a6ff; }
+
+.vid-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ff5d5d;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.vid-floating-error {
+  position: sticky;
+  bottom: 0.5rem;
+}
