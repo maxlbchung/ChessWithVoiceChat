@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc*)",
+      "Bash(node scripts/*)",
+      "Bash(npm run dev*)",
+      "Bash(npm run build*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/session-start.mjs",
+            "timeout": 15,
+            "statusMessage": "Checking repo state (parallel sessions, dev ports)..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/stop-typecheck.mjs",
+            "timeout": 120,
+            "statusMessage": "Typechecking changed TypeScript..."
+          }
+        ]
+      }
+    ]
+  }
+}

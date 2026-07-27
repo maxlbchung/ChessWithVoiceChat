@@ -6,7 +6,10 @@ dist
 .env.*.local
 .DS_Store
 *.log
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/skills/
 *.tsbuildinfo
 .playwright-screens/
 scripts/
