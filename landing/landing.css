@@ -1,0 +1,459 @@
+/* =========================================================================
+   Voice Chat Chess — landing page styles.
+
+   Self-contained: this file is only used by the static info page at the site
+   root (index.html). The app has its own stylesheet (src/styles.css) and
+   shares nothing with this one except the colour palette, which is copied
+   below so the two feel like the same product.
+   ====================================================================== */
+
+:root {
+  /* Deep ocean — mirrored from the app's palette. */
+  --bg: #0c1e2c;
+  --bg-grad-1: #10283a;
+  --bg-grad-2: #0a1f30;
+  --bg-grad-3: #163245;
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-strong: rgba(255, 255, 255, 0.1);
+  --glass-soft: rgba(255, 255, 255, 0.03);
+  --border: rgba(168, 216, 185, 0.2);
+  --border-strong: rgba(168, 216, 185, 0.38);
+  --text: #e6f0ea;
+  --muted: #88a8b3;
+  --accent: #a8d8b9;
+  --accent-strong: #7ec39a;
+  --accent-soft: rgba(168, 216, 185, 0.15);
+  --warn: #e0c08a;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  /* Board squares for the hero motif. */
+  --sq-light: rgba(230, 240, 234, 0.09);
+  --sq-dark: rgba(230, 240, 234, 0.02);
+
+  /* A classical serif for display type — the page is about a 1500-year-old
+     game, and the app's UI sans stays for body copy so the two read as one
+     family of things. */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
+    "Times New Roman", serif;
+  --font-body: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --edge: clamp(1.25rem, 5vw, 5.5rem);
+  --measure: 78rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  /* Same viewport-linked scaling idea as the app, so the landing and the app
+     don't jump in text size when you cross between them. */
+  font-size: clamp(15px, calc(11px + 0.35vw), 19px);
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.65;
+  background:
+    radial-gradient(circle at 15% 8%, var(--bg-grad-1) 0%, transparent 45%),
+    radial-gradient(circle at 88% 78%, var(--bg-grad-3) 0%, transparent 52%),
+    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* Fine noise over the whole page so the large flat gradients don't band. */
+.grain {
+  position: fixed;
+  inset: -50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+main,
+.masthead,
+.footer {
+  position: relative;
+  z-index: 1;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── Masthead ──────────────────────────────────────────────────────────
+   Not a nav — there is nowhere else on this page to go. Just a wordmark and
+   the way in. */
+.masthead {
+  display: flex;
+  align-items: center;
+  padding: 1.5rem var(--edge) 0;
+  max-width: var(--measure);
+  margin: 0 auto;
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.wordmark-mark {
+  color: var(--accent);
+  font-size: 1.3em;
+  vertical-align: -0.08em;
+  margin-right: 0.15em;
+}
+/* ── Hero ─────────────────────────────────────────────────────────────── */
+.hero {
+  max-width: var(--measure);
+  margin: 0 auto;
+  /* Little bottom padding — the announcements section brings its own generous
+     top padding, and there's no longer a strip between the two to separate. */
+  padding: clamp(3rem, 9vh, 6.5rem) var(--edge) clamp(0.5rem, 2vh, 1.5rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4.5rem);
+}
+
+.eyebrow {
+  margin: 0 0 1.1rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(3rem, 8.5vw, 6.2rem);
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+}
+.hero-title em {
+  display: block;
+  font-style: italic;
+  /* The italic ascends into the line above; pull it back and nudge it right
+     so the two words read as one hand-set block. */
+  margin-top: 0.04em;
+  margin-left: 0.08em;
+  background: linear-gradient(112deg, var(--accent) 8%, #5fa8c4 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-tagline {
+  margin: 1.4rem 0 0;
+  font-size: 1.16rem;
+  color: var(--text);
+}
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 2.1rem;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.85rem 1.6rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: transform 140ms ease, filter 140ms ease, background 160ms ease,
+    border-color 160ms ease, box-shadow 160ms ease;
+  position: relative;
+  overflow: hidden;
+  color: #0c1e2c;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 6px 20px rgba(168, 216, 185, 0.22);
+}
+.btn-primary svg {
+  width: 1.05em;
+  height: 1.05em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.btn-primary:hover {
+  filter: brightness(1.07);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(168, 216, 185, 0.3);
+}
+.btn-primary:hover svg {
+  transform: translateX(4px);
+}
+/* Sheen sweep on hover. */
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 255, 255, 0.55), transparent 65%);
+}
+.btn-primary:hover::after {
+  transform: translateX(120%);
+  transition: transform 720ms ease;
+}
+/* ── Hero board motif ─────────────────────────────────────────────────── */
+.hero-board {
+  position: relative;
+  justify-self: end;
+  width: min(30rem, 100%);
+  aspect-ratio: 1;
+}
+.board {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  /* 8×8 checker: one conic tile covers a 2×2 block of squares. */
+  background-image: conic-gradient(
+    from 90deg at 50% 50%,
+    var(--sq-light) 0 25%,
+    var(--sq-dark) 0 50%,
+    var(--sq-light) 0 75%,
+    var(--sq-dark) 0
+  );
+  background-size: 25% 25%;
+  box-shadow: var(--shadow), inset 0 0 60px rgba(12, 30, 44, 0.6);
+  transform: perspective(1200px) rotateX(6deg) rotateY(-11deg) rotateZ(1.5deg);
+  transform-style: preserve-3d;
+}
+.board-glow {
+  position: absolute;
+  inset: -18%;
+  z-index: -1;
+  background: radial-gradient(circle at 55% 45%, var(--accent-soft) 0%, transparent 62%);
+  filter: blur(6px);
+}
+.glyph {
+  position: absolute;
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: 0 0 26px rgba(168, 216, 185, 0.45);
+  user-select: none;
+}
+/* Squares are 12.5% each — these sit on d5, g7 and c3-ish. */
+.glyph.knight {
+  left: 30%;
+  top: 22%;
+  font-size: clamp(4rem, 11vw, 8.5rem);
+}
+.glyph.queen {
+  right: 12%;
+  top: 46%;
+  font-size: clamp(2.2rem, 6vw, 4.4rem);
+  color: #5fa8c4;
+  text-shadow: 0 0 22px rgba(95, 168, 196, 0.4);
+  opacity: 0.9;
+}
+.glyph.pawn {
+  left: 16%;
+  bottom: 12%;
+  font-size: clamp(1.5rem, 4vw, 2.8rem);
+  opacity: 0.7;
+}
+
+/* ── Generic section scaffolding ──────────────────────────────────────── */
+.section {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: clamp(3.5rem, 9vh, 6rem) var(--edge) 0;
+}
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1.2rem;
+  margin-bottom: 2rem;
+}
+.section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: -0.015em;
+}
+.section-sub {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* ── Announcements ────────────────────────────────────────────────────── */
+.news {
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--glass-soft);
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+.news:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-strong);
+  background: var(--glass);
+}
+.news-latest {
+  padding: 1.9rem 2rem;
+  background: linear-gradient(135deg, var(--glass), var(--glass-soft));
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+.news-latest h3 {
+  font-size: 1.7rem;
+}
+.news-latest p {
+  max-width: 46rem;
+  font-size: 1rem;
+}
+/* One per row at every width — announcements read as a chronological column,
+   newest first, rather than a grid you have to scan in two directions. */
+.news-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+.news-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.news h3 {
+  margin: 0.65rem 0 0.4rem;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+}
+.news p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  /* Full-width cards would otherwise run the body copy to ~120 characters. */
+  max-width: 46rem;
+}
+.news time {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.tag-new {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: rgba(126, 195, 154, 0.45);
+}
+.tag-update {
+  color: var(--warn);
+  background: rgba(224, 192, 138, 0.12);
+  border-color: rgba(224, 192, 138, 0.4);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  /* The last section already ends on generous padding, so the rule sits far
+     enough off the announcements without extra top margin. */
+  margin-top: clamp(3rem, 8vh, 5rem);
+  padding: 1.4rem var(--edge) 2rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    animation: rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--d, 0ms);
+  }
+  .glyph.knight {
+    animation: drift 7s ease-in-out infinite;
+  }
+  .glyph.queen {
+    animation: drift 9s ease-in-out infinite reverse;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* ── Narrow ───────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+    padding-top: clamp(2rem, 6vh, 4rem);
+  }
+  .hero-board {
+    order: -1;
+    justify-self: center;
+    width: min(20rem, 72vw);
+  }
+}
+@media (max-width: 560px) {
+  .cta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .btn-primary {
+    justify-content: center;
+  }
+  .news-latest {
+    padding: 1.4rem 1.3rem;
+  }
+}

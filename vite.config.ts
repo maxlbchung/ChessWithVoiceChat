@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 // In-memory matchmaker for `npm run dev`. In production, the Cloudflare Pages
 // Function in functions/api/matchmake.ts handles this with a Durable Object.
@@ -194,8 +195,25 @@ function devMatchmakerPlugin(): Plugin {
   };
 }
 
+const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+
 export default defineConfig({
   plugins: [react(), devMatchmakerPlugin()],
   server: { port: 5173 },
+  optimizeDeps: {
+    include: ['react-dom/server'],
+  },
   base: process.env.GITHUB_PAGES === 'true' ? '/ChessWithVoiceChat/' : '/',
+  build: {
+    // Two HTML entries. Rollup keeps each one's path relative to the project
+    // root, so this builds to dist/index.html (the static landing page — no
+    // React, no router) and dist/app/index.html (the game itself, hash-routed
+    // under /app/). Both are served by the same Pages deploy.
+    rollupOptions: {
+      input: {
+        landing: here('index.html'),
+        app: here('app/index.html'),
+      },
+    },
+  },
 });

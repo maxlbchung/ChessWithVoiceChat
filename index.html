@@ -3,11 +3,138 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#fff5f5" />
-    <title>VCC</title>
+    <meta name="theme-color" content="#0c1e2c" />
+    <title>Voice Chat Chess — peer-to-peer chess with voice chat</title>
+    <meta
+      name="description"
+      content="Five flavors of chess played browser-to-browser over WebRTC, with voice chat. No accounts, no server in the middle of your game."
+    />
+    <meta property="og:title" content="Voice Chat Chess" />
+    <meta
+      property="og:description"
+      content="Five flavors of chess played browser-to-browser over WebRTC, with voice chat. No accounts, no server in the middle of your game."
+    />
+    <meta property="og:type" content="website" />
+    <!-- Standalone info page. No app bundle, no router, no shared chrome —
+         the game itself lives at /app/ (see app/index.html). -->
+    <script>
+      // The app used to be served from the site root, so hash-routed links to
+      // it (shared join links, bookmarks, /#/sandbox) are still out in the
+      // wild. Forward those to /app/ instead of showing them this page.
+      if (location.hash.startsWith('#/')) location.replace('app/' + location.hash);
+    </script>
+    <link rel="stylesheet" href="./landing/landing.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="masthead">
+      <span class="wordmark"><span class="wordmark-mark">&#9822;</span> VCC</span>
+    </header>
+
+    <main>
+      <!-- ── Hero ─────────────────────────────────────────────────────── -->
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow reveal" style="--d: 0ms">
+            Peer&#8209;to&#8209;peer &nbsp;·&nbsp; voice chat &nbsp;·&nbsp; no accounts
+          </p>
+          <h1 class="hero-title reveal" style="--d: 70ms">
+            Voice&nbsp;Chat
+            <em>Chess</em>
+          </h1>
+          <p class="hero-tagline reveal" style="--d: 140ms">
+            Chess with voice chat, new variants, and more.
+          </p>
+          <div class="cta-row reveal" style="--d: 210ms">
+            <a class="btn-primary" href="app/">
+              <span>Start playing</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14m0 0-5.5-5.5M18 12l-5.5 5.5"/></svg>
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-board reveal" style="--d: 200ms" aria-hidden="true">
+          <div class="board">
+            <span class="glyph knight">&#9822;</span>
+            <span class="glyph queen">&#9819;</span>
+            <span class="glyph pawn">&#9823;</span>
+          </div>
+          <div class="board-glow"></div>
+        </div>
+      </section>
+
+      <!-- ── Announcements ────────────────────────────────────────────── -->
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Announcements</h2>
+          <p class="section-sub">What landed recently.</p>
+        </div>
+
+        <article class="news news-latest">
+          <div class="news-meta">
+            <span class="tag tag-new">New</span>
+            <time datetime="2026-06-07">Jun 7, 2026</time>
+          </div>
+          <h3>Emoji reactions in online games</h3>
+          <p>
+            Fire off a reaction mid-game and it pops up as a speech bubble on your opponent's
+            board — the fastest way to say "really?" without unmuting.
+          </p>
+        </article>
+
+        <div class="news-grid">
+          <article class="news">
+            <div class="news-meta">
+              <span class="tag tag-new">New</span>
+              <time datetime="2026-06-06">Jun 6, 2026</time>
+            </div>
+            <h3>Juggernaut joins the Hero roster</h3>
+            <p>
+              A king that eats the pieces sent to kill it. Every absorbed attacker tiers it up —
+              earthquake, then edge charge, then the slam. Twelve heroes now in rotation.
+            </p>
+          </article>
+          <article class="news">
+            <div class="news-meta">
+              <span class="tag tag-update">Update</span>
+              <time datetime="2026-06-06">Jun 6, 2026</time>
+            </div>
+            <h3>Captured-piece counters</h3>
+            <p>
+              Both sides' captures are tracked next to the board, so material is readable at a
+              glance instead of counted from memory.
+            </p>
+          </article>
+          <article class="news">
+            <div class="news-meta">
+              <span class="tag tag-update">Update</span>
+              <time datetime="2026-06-03">Jun 3, 2026</time>
+            </div>
+            <h3>Flight rework</h3>
+            <p>
+              Flight now teleports any one of your pieces to any empty square, instead of only
+              the squares next to your king.
+            </p>
+          </article>
+          <article class="news">
+            <div class="news-meta">
+              <span class="tag tag-new">New</span>
+              <time datetime="2026-05-28">May 28, 2026</time>
+            </div>
+            <h3>Pinned games on your profile</h3>
+            <p>
+              Pin the games worth keeping. They stay at the top of your history and open straight
+              into the review board.
+            </p>
+          </article>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <span>LiboDev</span>
+    </footer>
   </body>
 </html>

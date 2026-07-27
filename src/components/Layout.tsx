@@ -33,10 +33,14 @@ export function Layout() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <Link to="/" className="brand">
+        {/* The brand leaves the app entirely for the static landing page.
+            It's a plain <a>, not a router <Link>: the landing is its own
+            document one level up from /app/ (relative so it still resolves
+            under a non-root base). */}
+        <a href="../" className="brand">
           <span className="brand-mark">♞</span>
           <span className="brand-text">VCC</span>
-        </Link>
+        </a>
         <nav className="topnav">
           <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
             Play
