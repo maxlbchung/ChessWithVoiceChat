@@ -471,6 +471,24 @@ function drawKingGlow(ctx: CanvasRenderingContext2D, sq: string, color: string, 
   ctx.restore();
 }
 
+function drawExplosiveAura(ctx: CanvasRenderingContext2D, sq: string, squarePx: number, orientation: Orientation, tMs: number): void {
+  const c = center(sq, squarePx, orientation);
+  const pulse = 0.92 + 0.08 * Math.sin(tMs / 110);
+  const r = squarePx * 0.54 * pulse;
+  const g = ctx.createRadialGradient(c.x, c.y, squarePx * 0.08, c.x, c.y, r);
+  g.addColorStop(0, 'rgba(255, 70, 70, 0.62)');
+  g.addColorStop(0.42, 'rgba(255, 25, 25, 0.34)');
+  g.addColorStop(1, 'rgba(255, 0, 0, 0)');
+  ctx.save();
+  ctx.fillStyle = g;
+  ctx.shadowColor = 'rgba(255, 20, 20, 0.85)';
+  ctx.shadowBlur = squarePx * 0.16;
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawGoo(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, tMs: number): void {
   const wob = Math.sin(tMs / 600);
   const cx = x + w / 2;
@@ -587,6 +605,91 @@ function drawEarthquake(ctx: CanvasRenderingContext2D, sq: string, df: number, d
     ctx.lineTo(ux * squarePx * 0.32, uy * squarePx * 0.32);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+// Gojo's Hollow Purple — a violet sphere with a tail streaming behind it.
+// df/dr are board deltas (+file = right, +rank = up the board); the board
+// flip on a black-perspective view mirrors both, and screen y grows downward.
+function drawHollowPurple(
+  ctx: CanvasRenderingContext2D, sq: string, df: number, dr: number,
+  squarePx: number, orientation: Orientation, tMs: number,
+  from?: string, progress = 1,
+): void {
+  const dest = center(sq, squarePx, orientation);
+  // Mid-drift the orb is drawn between its previous square and this one, so
+  // exported video matches the live board's glide instead of teleporting.
+  const c = from && progress < 1
+    ? (() => {
+      const a = center(from, squarePx, orientation);
+      return { x: a.x + (dest.x - a.x) * progress, y: a.y + (dest.y - a.y) * progress };
+    })()
+    : dest;
+  const flip = orientation === 'white' ? 1 : -1;
+  const ux = df * flip;
+  const uy = -dr * flip;
+  const len = Math.hypot(ux, uy) || 1;
+  const nx = ux / len, ny = uy / len;
+  const pulse = 1 + Math.sin(tMs / 190) * 0.07;
+  ctx.save();
+  ctx.translate(c.x, c.y);
+
+  // Halo bleeding onto the neighbouring tiles.
+  const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, squarePx * 0.75 * pulse);
+  halo.addColorStop(0, 'rgba(176,38,255,0.42)');
+  halo.addColorStop(0.45, 'rgba(120,30,220,0.2)');
+  halo.addColorStop(1, 'rgba(120,30,220,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(0, 0, squarePx * 0.75 * pulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tail streaming out behind the orb.
+  const tailLen = squarePx * 0.62;
+  const tail = ctx.createLinearGradient(0, 0, -nx * tailLen, -ny * tailLen);
+  tail.addColorStop(0, 'rgba(198,96,255,0.7)');
+  tail.addColorStop(1, 'rgba(140,40,220,0)');
+  ctx.save();
+  ctx.rotate(Math.atan2(ny, nx));
+  ctx.fillStyle = tail;
+  ctx.beginPath();
+  ctx.moveTo(0, -squarePx * 0.17);
+  ctx.lineTo(-tailLen, 0);
+  ctx.lineTo(0, squarePx * 0.17);
+  ctx.closePath();
+  ctx.fill();
+  // Chevron ahead of the orb, pointing where it's headed.
+  ctx.strokeStyle = 'rgba(233,190,255,0.95)';
+  ctx.lineWidth = Math.max(2, squarePx * 0.035);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(squarePx * 0.26, -squarePx * 0.1);
+  ctx.lineTo(squarePx * 0.38, 0);
+  ctx.lineTo(squarePx * 0.26, squarePx * 0.1);
+  ctx.stroke();
+  ctx.restore();
+
+  // The sphere: dark violet body with an off-centre highlight and a hot core.
+  const r = squarePx * 0.29 * pulse;
+  const body = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.1, 0, 0, r);
+  body.addColorStop(0, 'rgba(240,205,255,0.95)');
+  body.addColorStop(0.35, 'rgba(186,60,255,0.98)');
+  body.addColorStop(0.75, 'rgba(96,20,180,0.95)');
+  body.addColorStop(1, 'rgba(40,6,80,0.92)');
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  const coreR = r * (0.3 + Math.sin(tMs / 130) * 0.06);
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
+  core.addColorStop(0, 'rgba(255,255,255,1)');
+  core.addColorStop(0.5, 'rgba(238,200,255,0.9)');
+  core.addColorStop(1, 'rgba(238,200,255,0)');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, coreR, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -722,6 +825,9 @@ export function renderScene(
   for (const eq of baseFrame?.earthquakes ?? []) {
     drawEarthquake(ctx, eq.sq, eq.df, eq.dr, squarePx, orientation, tMs);
   }
+  for (const sq of baseFrame?.explosiveSquares ?? []) {
+    drawExplosiveAura(ctx, sq, squarePx, orientation, tMs);
+  }
 
   // 4) Static pieces (skip the mover's source square while it's in transit).
   // Variant overrides: masked pieces render as a king of their color; the
@@ -813,6 +919,19 @@ export function renderScene(
     }
     for (const [sq, tier] of jugMap) {
       drawJugPips(ctx, sq, tier, squarePx, orientation);
+    }
+    // Hollow Purple sits ON TOP of pieces — anything sharing its tile is
+    // about to be erased by it, so the orb should read as the foreground.
+    // Orbs drift a square per ply, so while a move is sliding we take them
+    // from the POST-move frame and interpolate each one back along its own
+    // `from` square. (An orb that dissipates on this ply is simply absent
+    // from that frame, so it winks out at the start of the slide.)
+    const orbFrame = sliding ? (frames[activeMove] ?? baseFrame) : baseFrame;
+    for (const hp of orbFrame?.hollowPurples ?? []) {
+      drawHollowPurple(
+        ctx, hp.sq, hp.df, hp.dr, squarePx, orientation, tMs,
+        hp.from, sliding ? phase : 1,
+      );
     }
   }
 

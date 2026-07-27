@@ -1162,5 +1162,6 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'mine': return 'the king stepped on a mine';
   }
 }

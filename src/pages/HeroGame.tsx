@@ -5,7 +5,7 @@ import { VoiceControls } from '../components/VoiceControls';
 import { ChatComposer } from '../components/ChatComposer';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { useSettingsStore } from '../store/settingsStore';
-import { MergeBoard } from '../components/MergeBoard';
+import { HOLLOW_PURPLE_DRIFT_MS, MergeBoard } from '../components/MergeBoard';
 import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { HeroPicker } from '../components/HeroPicker';
@@ -38,6 +38,13 @@ import {
   applyMove,
   backRanksForGame,
   goofballLegalDestinations,
+  goofballPreview,
+  goofballHasFollowUp,
+  goofballSlides,
+  isWithinBlast,
+  kamakazeDoomedSprites,
+  killedSpriteAt,
+  type GoofballLeg,
   twinJutsuLegalDestinations,
   flightLegalDestinations,
   slimeLegalDestinations,
@@ -58,6 +65,7 @@ import {
   isStalemate,
   isThreefoldRepetition,
   kingSquareOf,
+  hollowPurpleOrigin,
   legalMovesFrom,
   pieceAtImpactBeforeBlast,
   toFen,
@@ -164,6 +172,10 @@ export function HeroGame() {
   // being puppeted, second click picks where it goes. Cleared whenever
   // armed flips off or after firing.
   const [goofballFrom, setGoofballFrom] = useState<Square | null>(null);
+  // One Goofball activation forces up to TWO opponent moves. The first one
+  // is staged here (nothing is committed to the engine yet) while the user
+  // picks a second forced move — or ends the turn on just this one.
+  const [goofballLeg1, setGoofballLeg1] = useState<GoofballLeg | null>(null);
   // Twin-Jutsu is the other two-click ability: first click picks one of your
   // own pieces, second click picks a swap partner.
   const [twinJutsuFrom, setTwinJutsuFrom] = useState<Square | null>(null);
@@ -174,7 +186,10 @@ export function HeroGame() {
   // corner of the 2×2 quadrant it expands into.
   const [slimeFrom, setSlimeFrom] = useState<Square | null>(null);
   useEffect(() => {
-    if (!abilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null); }
+    if (!abilityArmed) {
+      setGoofballFrom(null); setGoofballLeg1(null);
+      setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null);
+    }
   }, [abilityArmed]);
   // Transient ability animation overlay state. Bumped to a fresh key every
   // time we want the animation to re-fire (CSS keyframes restart on remount).
@@ -598,6 +613,13 @@ export function HeroGame() {
   // we keep it visible as a doomed-piece overlay through the wind-up of the
   // sword swing and only let it disappear at the swing midpoint (when the
   // blade collides). Same overlay channel as ICBM doomedPieces.
+  // Kill-effect lead-in. A click-move slides the piece across the board
+  // (piece-slide is 260ms), so the kill lands just as it arrives; a dragged or
+  // remote piece is already on its square and only needs a beat to register
+  // before it's destroyed. Same split Chesssweeper uses for mines.
+  const KILL_ON_LANDING_MS = 275;
+  const KILL_BEAT_MS = 150;
+
   const WARLORD_SWING_IMPACT_MS = 450;
   const triggerWarlordDoom = (prev: GameState, result: MoveResult) => {
     if (result.abilityUsed !== 'warlord') return;
@@ -648,6 +670,85 @@ export function HeroGame() {
     });
   };
 
+  // A drifting Hollow Purple ran a piece down. The engine already cleared the
+  // square, so hold the victim's sprite (same doomed-piece channel as ICBM)
+  // for exactly as long as the orb takes to glide onto it, then detonate.
+  const triggerHollowPurpleBlasts = (prev: GameState, result: MoveResult) => {
+    const squares = result.hollowPurpleBlasts;
+    if (!squares || squares.length === 0) return;
+    // A piece caught by the orb on the very ply it moved died at its
+    // DESTINATION, so its sprite comes from the mover — not from whatever the
+    // pre-move board had on that square.
+    const move = /^[a-h][1-8][a-h][1-8]/.test(result.uci)
+      ? { from: result.uci.slice(0, 2) as Square, to: result.uci.slice(2, 4) as Square }
+      : null;
+    const doomed = squares
+      .map((sq) => {
+        const letter = killedSpriteAt(prev, sq as Square, move);
+        return letter ? { sq: sq as Square, letter: letter as string } : null;
+      })
+      .filter((d): d is { sq: Square; letter: string } => d !== null);
+    if (doomed.length > 0) setDoomedPieces((prevD) => [...prevD, ...doomed]);
+    squares.forEach((sq, i) => {
+      window.setTimeout(() => {
+        if (animationsEnabled) {
+          setAbilityAnim({
+            kind: 'gojo-blast',
+            toSq: sq as Square,
+            color: prev.turn,
+            key: `gojo-blast-${result.uci}-${sq}-${i}-${Date.now()}`,
+          });
+        }
+        sfx.playHollowPurpleHit();
+        setDoomedPieces((prevD) => prevD.filter((d) => d.sq !== sq));
+      }, HOLLOW_PURPLE_DRIFT_MS + i * 130);
+    });
+  };
+
+  // A Kamakaze chain went off. The engine cleared every victim the instant the
+  // move committed, so hold their sprites (same doomed channel as ICBM) while
+  // the capture itself plays out, then detonate. The attacker's sprite sits on
+  // its destination and rides the move slide, so a capture reads as "piece
+  // moves across → explosion" instead of the board silently emptying.
+  const triggerKamakazeExplosions = (
+    prev: GameState,
+    next: GameState,
+    result: MoveResult,
+    sliding: boolean,
+  ) => {
+    const centers = result.kamakazeExplosions;
+    if (!centers || centers.length === 0) return;
+    const move = /^[a-h][1-8][a-h][1-8]/.test(result.uci)
+      ? { from: result.uci.slice(0, 2) as Square, to: result.uci.slice(2, 4) as Square }
+      : null;
+    const doomed = animationsEnabled
+      ? kamakazeDoomedSprites(prev, next, centers, move)
+      : [];
+    if (doomed.length > 0) setDoomedPieces((prevD) => [...prevD, ...doomed]);
+    // Let the mover land before it blows up: a click-move is mid-slide, and a
+    // dragged / remote piece is already on the square but still needs a beat
+    // to register. Chained detonations keep their stagger after that.
+    const lead = doomed.length === 0
+      ? 0
+      : sliding ? KILL_ON_LANDING_MS : KILL_BEAT_MS;
+    centers.forEach((sq, i) => {
+      window.setTimeout(() => {
+        if (animationsEnabled) {
+          setAbilityAnim({
+            kind: 'kamakaze',
+            toSq: sq,
+            color: 'w',
+            key: `kamakaze-${result.uci}-${sq}-${i}-${Date.now()}`,
+          });
+        }
+        sfx.playExplosion();
+        // Drop the sprites this blast consumed; later blasts in the chain keep
+        // theirs until their own turn comes round.
+        setDoomedPieces((prevD) => prevD.filter((d) => !isWithinBlast(sq, d.sq)));
+      }, lead + i * 120);
+    });
+  };
+
   const triggerAbilityAnim = (
     prev: GameState,
     next: GameState,
@@ -656,7 +757,7 @@ export function HeroGame() {
     const ab = result.abilityUsed;
     // Only kinds with a rendered overlay; harem is passive and icbm has its
     // own missile-marker UI, so they don't drive abilityAnim.
-    if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation' && ab !== 'slime' && ab !== 'juggernaut') {
+    if (ab !== 'frost' && ab !== 'warlord' && ab !== 'necromancer' && ab !== 'flight' && ab !== 'mutation' && ab !== 'slime' && ab !== 'juggernaut' && ab !== 'gojo') {
       return null;
     }
     const moverColor = prev.turn;
@@ -719,6 +820,8 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
     else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
+    else if (res.result.abilityUsed === 'kamakaze') sfx.playKamakazeArm();
+    else if (res.result.abilityUsed === 'gojo') sfx.playHollowPurple();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -734,6 +837,12 @@ export function HeroGame() {
     }
     if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(game, res.state, res.result));
     triggerMissileDetonations(game, res.state, uci);
+    // Whether this move will visibly slide a piece across the board — the same
+    // condition the slide branch below uses. Kill effects wait for it.
+    const slidingIn = !!slides && slides.length > 0 && !res.result.abilityUsed
+      && !wasJugAbsorb(game, res.state, uci);
+    triggerKamakazeExplosions(game, res.state, res.result, slidingIn);
+    triggerHollowPurpleBlasts(game, res.result);
     triggerWarlordDoom(game, res.result);
     triggerFrostShatter(game, res.state);
     triggerSlimeSplit(game, res.result);
@@ -781,11 +890,10 @@ export function HeroGame() {
       const b = uci.slice(4, 6) as Square;
       setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
     } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
-      // !G<from><to>[<promo>] — the puppeted piece moves from→to. Slide it
-      // like a normal board move so the forced motion is readable.
-      const from = uci.slice(2, 4) as Square;
-      const to = uci.slice(4, 6) as Square;
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      // The puppeted piece(s) move from→to. Slide them like normal board
+      // moves so the forced motion is readable — an activation carries one
+      // or two forced moves.
+      setSlideAnim({ moves: goofballSlides(uci) as { from: Square; to: Square }[], key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
       // Diagonal charge (tier 2) moves the Juggernaut itself — slide it from
       // its pre-move square. Earthquake (tier 1) and Slam (tier 3) keep the
@@ -836,13 +944,13 @@ export function HeroGame() {
   };
 
   const applyLocalAbility = async (
-    hero: HeroKind, to: Square, from?: Square, promo?: string,
+    hero: HeroKind, to: Square, from?: Square, promo?: string, second?: GoofballLeg,
   ): Promise<boolean> => {
     if (!game || end) return false;
     if (!isMyTurn()) return false;
     if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
-    return commitMove(abilityUci(hero, to, from, promo), beforeTurn);
+    return commitMove(abilityUci(hero, to, from, promo, second), beforeTurn);
   };
 
   const applyRemoteMove = async (move: Move) => {
@@ -870,12 +978,18 @@ export function HeroGame() {
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
     else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
+    else if (res.result.abilityUsed === 'kamakaze') sfx.playKamakazeArm();
+    else if (res.result.abilityUsed === 'gojo') sfx.playHollowPurple();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
     if ((res.result.check || res.result.jugPhantomCheck) && !res.result.checkmate) sfx.playCheck();
     if (animationsEnabled) setAbilityAnim(triggerAbilityAnim(prev, res.state, res.result));
     triggerMissileDetonations(prev, res.state, move.uci);
+    // A remote piece is already sitting on its square (no slide on this
+    // screen), so the blast just gets the shorter beat.
+    triggerKamakazeExplosions(prev, res.state, res.result, false);
+    triggerHollowPurpleBlasts(prev, res.result);
     triggerWarlordDoom(prev, res.result);
     triggerFrostShatter(prev, res.state);
     triggerSlimeSplit(prev, res.result);
@@ -886,9 +1000,10 @@ export function HeroGame() {
     // changed (and reveal at least one endpoint mid-slide). The mover
     // still sees their own slide in commitMove.
     if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
-      const from = move.uci.slice(2, 4) as Square;
-      const to = move.uci.slice(4, 6) as Square;
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      setSlideAnim({
+        moves: goofballSlides(move.uci) as { from: Square; to: Square }[],
+        key: Date.now(),
+      });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
       // Mirror the mover's edge charge slide on this screen too. The
       // Earthquake (tier 1) and Slam (tier 3) abilities keep the jug put.
@@ -1033,30 +1148,44 @@ export function HeroGame() {
   // ----------------------------------------------------------------
   // Rendering
   // ----------------------------------------------------------------
-  const viewedState: GameState | null = game ? (states[viewPly] ?? states[0]) : null;
+  // Position after the staged first Goofball leg. It's still my turn there
+  // with the ability still ready, so the second leg reuses every normal
+  // ability code path — and the board renders the forced move so the player
+  // picks the follow-up on the position it actually creates.
+  const goofballStaged = useMemo<GameState | null>(() => {
+    if (!game || !goofballLeg1 || viewPly !== moves.length) return null;
+    return goofballPreview(
+      game, sqToIdx(goofballLeg1.from), sqToIdx(goofballLeg1.to), goofballLeg1.promo,
+    );
+  }, [game, goofballLeg1, viewPly, moves.length]);
+  // The position the board + ability targets read from. Identical to `game`
+  // except while a Goofball first leg is staged.
+  const liveState: GameState | null = goofballStaged ?? game;
+
+  const viewedState: GameState | null = game ? (goofballStaged ?? states[viewPly] ?? states[0]) : null;
   const atPresent = !!game && viewPly === moves.length;
 
   const abilityTargetSet = useMemo<Set<Square>>(() => {
-    if (!game || !atPresent || !abilityArmed) return new Set();
+    if (!liveState || !atPresent || !abilityArmed) return new Set();
     // Goofball is two-click: while a from-square is pending, surface the
     // destination squares for that picked piece instead of the from-squares.
-    if (game.heroes[myEngineColor].hero === 'goofball' && goofballFrom) {
-      return new Set(goofballLegalDestinations(game, sqToIdx(goofballFrom)).map(idxToSq));
+    if (liveState.heroes[myEngineColor].hero === 'goofball' && goofballFrom) {
+      return new Set(goofballLegalDestinations(liveState, sqToIdx(goofballFrom)).map(idxToSq));
     }
     // Twin-Jutsu is also two-click — same pattern.
-    if (game.heroes[myEngineColor].hero === 'twin-jutsu' && twinJutsuFrom) {
-      return new Set(twinJutsuLegalDestinations(game, sqToIdx(twinJutsuFrom)).map(idxToSq));
+    if (liveState.heroes[myEngineColor].hero === 'twin-jutsu' && twinJutsuFrom) {
+      return new Set(twinJutsuLegalDestinations(liveState, sqToIdx(twinJutsuFrom)).map(idxToSq));
     }
     // Flight too: once a piece is picked, surface its destination squares.
-    if (game.heroes[myEngineColor].hero === 'flight' && flightFrom) {
-      return new Set(flightLegalDestinations(game, sqToIdx(flightFrom)).map(idxToSq));
+    if (liveState.heroes[myEngineColor].hero === 'flight' && flightFrom) {
+      return new Set(flightLegalDestinations(liveState, sqToIdx(flightFrom)).map(idxToSq));
     }
     // Slime: once a mini king is picked, surface the expansion corners.
-    if (game.heroes[myEngineColor].hero === 'slime' && slimeFrom) {
-      return new Set(slimeLegalDestinations(game, sqToIdx(slimeFrom)).map(idxToSq));
+    if (liveState.heroes[myEngineColor].hero === 'slime' && slimeFrom) {
+      return new Set(slimeLegalDestinations(liveState, sqToIdx(slimeFrom)).map(idxToSq));
     }
-    return new Set(abilityTargets(game).map(idxToSq));
-  }, [game, atPresent, abilityArmed, goofballFrom, twinJutsuFrom, flightFrom, slimeFrom, myEngineColor]);
+    return new Set(abilityTargets(liveState).map(idxToSq));
+  }, [liveState, atPresent, abilityArmed, goofballFrom, twinJutsuFrom, flightFrom, slimeFrom, myEngineColor]);
 
   // Whole-blob shift options when a Slime big-king tile is selected. Drives
   // the direction-arrow UI on the board and click/drop resolution below.
@@ -1116,6 +1245,12 @@ export function HeroGame() {
       if (hero === 'G' || hero === 'L' || hero === 'S') {
         // Goofball / Flight move a visible piece from → to; Slime grows a
         // mini king (from) toward an empty corner (to) — tint both ends.
+        // A two-move Goofball tints where the puppeting started and where it
+        // ended up.
+        const legs = hero === 'G' ? goofballSlides(uci) : [];
+        if (legs.length > 0) {
+          return { from: legs[0].from as Square, to: legs[legs.length - 1].to as Square };
+        }
         const from = uci.slice(2, 4) as Square;
         const to = uci.slice(4, 6) as Square;
         return { from, to };
@@ -1147,6 +1282,8 @@ export function HeroGame() {
             else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
             else if (r.abilityUsed === 'slime') sfx.playSlimeExpand();
             else if (r.abilityUsed === 'juggernaut') sfx.playJugQuake();
+            else if (r.abilityUsed === 'kamakaze') sfx.playKamakazeArm();
+            else if (r.abilityUsed === 'gojo') sfx.playHollowPurple();
             else if (r.castled) sfx.playCastle();
             else if (r.captured) sfx.playCapture();
             else sfx.playMove();
@@ -1172,6 +1309,10 @@ export function HeroGame() {
             }
           }
           triggerMissileDetonations(prevState, nextState, r.uci);
+          // Scrubbing doesn't slide pieces — the beat is enough for the
+          // victims to register before they go up.
+          triggerKamakazeExplosions(prevState, nextState, r, false);
+          triggerHollowPurpleBlasts(prevState, r);
           triggerWarlordDoom(prevState, r);
           triggerFrostShatter(prevState, nextState);
           triggerSlimeSplit(prevState, r);
@@ -1244,7 +1385,36 @@ export function HeroGame() {
       ? letter
       : 'Q';
     setPendingAbilityPromo(null);
+    if (hero === 'goofball') { pickGoofballLeg(from, to, valid); return; }
     void applyLocalAbility(hero, to, from, valid);
+  };
+
+  // A Goofball activation forces up to two opponent moves. The first pick is
+  // staged (nothing hits the engine yet) so the second can be chosen on the
+  // resulting position; the second pick commits both at once. When the first
+  // leg leaves no legal follow-up there's nothing to stage — fire straight away.
+  const pickGoofballLeg = (from: Square, to: Square, promo?: string) => {
+    if (goofballLeg1) {
+      const first = goofballLeg1;
+      setGoofballLeg1(null);
+      void applyLocalAbility('goofball', first.to, first.from, first.promo, { from, to, promo });
+      return;
+    }
+    const preview = game ? goofballPreview(game, sqIdx(from), sqIdx(to), promo) : null;
+    if (!preview || !goofballHasFollowUp(preview)) {
+      void applyLocalAbility('goofball', to, from, promo);
+      return;
+    }
+    setGoofballLeg1({ from, to, promo });
+    sfx.playSelect();
+  };
+
+  // End the activation on the single staged forced move.
+  const finishGoofball = () => {
+    if (!goofballLeg1) return;
+    const first = goofballLeg1;
+    setGoofballLeg1(null);
+    void applyLocalAbility('goofball', first.to, first.from, first.promo);
   };
 
   const onSquareClick = (square: Square) => {
@@ -1254,13 +1424,15 @@ export function HeroGame() {
     if (abilityArmed) {
       const armedHero = game.heroes[myEngineColor].hero;
       if (armedHero === 'goofball') {
-        // Goofball is two-click: first click picks an opponent piece,
-        // second click picks where to send it.
+        // Goofball is two-click per forced move: first click picks an
+        // opponent piece, second click picks where to send it. The whole
+        // pair runs twice per activation (see pickGoofballLeg).
         if (!goofballFrom) {
           if (abilityTargetSet.has(square)) {
             setGoofballFrom(square);
-          } else {
-            // Click on a non-target cancels the arming.
+          } else if (!goofballLeg1) {
+            // Click on a non-target cancels the arming — but not while a
+            // first leg is staged, or the staged move would vanish.
             setAbilityArmed(false);
           }
           return;
@@ -1268,7 +1440,7 @@ export function HeroGame() {
         if (abilityTargetSet.has(square)) {
           // If the forced move would promote a pawn, ask the Goofball user
           // which piece to promote into; otherwise fire immediately.
-          const piece = game.board[sqIdx(goofballFrom)];
+          const piece = (liveState ?? game).board[sqIdx(goofballFrom)];
           const isPawn = piece && piece.letter.toUpperCase() === 'P';
           const rank = parseInt(square[1], 10);
           const promoting = !!isPawn && (rank === 8 || rank === 1);
@@ -1281,7 +1453,7 @@ export function HeroGame() {
               color: piece!.color,
             });
           } else {
-            void applyLocalAbility('goofball', square, goofballFrom);
+            pickGoofballLeg(goofballFrom, square);
           }
           setGoofballFrom(null);
           return;
@@ -1433,6 +1605,9 @@ export function HeroGame() {
 
   const onPieceDrop = (from: Square, to: Square): boolean => {
     if (end || !game || !atPresent || !isMyTurn()) return false;
+    // A staged Goofball leg owns the board until it's committed or cancelled —
+    // dragging one of my own pieces here would silently drop it.
+    if (goofballLeg1) return false;
     const piece = game.board[sqIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
     // Dragging the big king: the grabbed tile's travel gives the slide
@@ -1499,16 +1674,24 @@ export function HeroGame() {
     return computeCaptures(boardForRender, initBoard);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardForRender, myHero, oppHero, handoff.iAmWhite, gameId]);
-  const emojiBubble = emojiBubbleEvent
-    ? {
-        emoji: emojiBubbleEvent.emoji,
-        key: emojiBubbleEvent.key,
-        squares: kingSquaresForBoard(
-          boardForRender,
-          emojiBubbleEvent.side === 'me' ? myEngineColor : myEngineColor === 'w' ? 'b' : 'w',
-        ),
+  const emojiBubble = useMemo(() => {
+    if (!emojiBubbleEvent) return null;
+    const color = emojiBubbleEvent.side === 'me'
+      ? myEngineColor
+      : myEngineColor === 'w' ? 'b' : 'w';
+    const squares = new Set<Square>(kingSquaresForBoard(boardForRender, color));
+    if (viewedState?.heroes[color].hero === 'twin-jutsu') {
+      for (let i = 0; i < 64; i++) {
+        const piece = viewedState.board[i];
+        if (viewedState.masked[i] && piece?.color === color) squares.add(idxToSq(i));
       }
-    : null;
+    }
+    return {
+      emoji: emojiBubbleEvent.emoji,
+      key: emojiBubbleEvent.key,
+      squares: Array.from(squares),
+    };
+  }, [boardForRender, emojiBubbleEvent, myEngineColor, viewedState]);
 
   // Cooldown turn counts (for the abilities panel).
   const myCooldownTurns = game ? turnsUntilReady(game, myEngineColor) : 0;
@@ -1555,10 +1738,11 @@ export function HeroGame() {
 
   // Juggernaut rendering: the colorless king + tier pips, plus stun overlays
   // on slammed squares and the live earthquake waves.
-  const { juggernauts, stunnedSqs, earthquakeOverlays } = useMemo(() => {
+  const { juggernauts, stunnedSqs, earthquakeOverlays, hollowPurpleOverlays } = useMemo(() => {
     const jugs: { sq: Square; tier: number }[] = [];
     const stuns: Square[] = [];
     const eqs: { sq: Square; df: number; dr: number; color: 'w' | 'b' }[] = [];
+    const orbs: { sq: Square; df: number; dr: number; color: 'w' | 'b'; from?: Square }[] = [];
     if (viewedState) {
       for (const c of ['w', 'b'] as const) {
         if (viewedState.heroes[c].hero !== 'juggernaut') continue;
@@ -1571,8 +1755,20 @@ export function HeroGame() {
       for (const eq of viewedState.earthquakes ?? []) {
         eqs.push({ sq: idxToSq(eq.idx), df: eq.df, dr: eq.dr, color: eq.color });
       }
+      for (const hp of viewedState.hollowPurples ?? []) {
+        orbs.push({
+          sq: idxToSq(hp.idx),
+          df: hp.df,
+          dr: hp.dr,
+          color: hp.color,
+          from: hollowPurpleOrigin(viewedState, hp) ?? undefined,
+        });
+      }
     }
-    return { juggernauts: jugs, stunnedSqs: stuns, earthquakeOverlays: eqs };
+    return {
+      juggernauts: jugs, stunnedSqs: stuns,
+      earthquakeOverlays: eqs, hollowPurpleOverlays: orbs,
+    };
   }, [viewedState]);
 
   const bothPicked = myHero != null && oppHero != null;
@@ -1603,6 +1799,11 @@ export function HeroGame() {
             armed={abilityArmed}
             onArm={() => { setSelectedSquare(null); setAbilityArmed(true); }}
             onCancel={() => setAbilityArmed(false)}
+            onFinish={goofballLeg1 ? finishGoofball : undefined}
+            finishLabel="End turn"
+            hintOverride={goofballLeg1
+              ? 'Force a second opponent move — any piece, the same one included — or end your turn.'
+              : undefined}
             myJugTier={game ? jugTierOf(game, myEngineColor) : 0}
             oppJugTier={game ? jugTierOf(game, myEngineColor === 'w' ? 'b' : 'w') : 0}
           />
@@ -1683,7 +1884,16 @@ export function HeroGame() {
             slimeKingSquares={slimeKingSqs}
             juggernauts={juggernauts}
             stunnedSquares={stunnedSqs}
+            explosiveSquares={
+              viewedState
+                ? viewedState.explosives
+                    .filter((idx) => viewedState.board[idx] != null)
+                    .map(idxToSq)
+                : null
+            }
             earthquakes={earthquakeOverlays}
+            hollowPurples={hollowPurpleOverlays}
+            hollowPurpleSlideKey={viewedState?.ply}
             emojiBubble={emojiBubble}
           />
           {pendingPromo && game && (
@@ -1988,5 +2198,6 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'mine': return 'the king stepped on a mine';
   }
 }

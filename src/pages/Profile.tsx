@@ -342,6 +342,7 @@ const VARIANT_LABEL: Record<GameVariant, string> = {
   two: 'Guerrilla',
   cash: 'Cash Money',
   hero: 'Hero',
+  sweeper: 'Chesssweeper',
 };
 
 function DaySummaryTable({

@@ -1496,6 +1496,224 @@ export function playTwinJutsu() {
   buildTwinJutsuPoof(ensureChessBus(), getCtx().currentTime);
 }
 
+// Kamakaze arming (hero: kamakaze) — strapping a charge to one of your own
+// pieces and lighting it. Four layers: a match-strike scratch that lights
+// it, a crackling fuse underneath, an electrical charge whine winding up,
+// and a two-note "armed" confirm at the top of the wind-up. Deliberately
+// ends resolved rather than trailing off — the piece is now live, and the
+// payoff sound (playExplosion) comes later.
+function buildKamakazeCharge(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // === STRIKE: match scratch across the striker ===
+  const strikeDur = 0.07;
+  const sLen = Math.max(1, Math.floor(strikeDur * ac.sampleRate));
+  const sBuf = ac.createBuffer(1, sLen, ac.sampleRate);
+  const sData = sBuf.getChannelData(0);
+  // Noise thinned by a fast linear decay so it reads as a scrape, not a hiss.
+  for (let i = 0; i < sLen; i++) sData[i] = (Math.random() * 2 - 1) * (1 - i / sLen);
+  const sSrc = ac.createBufferSource();
+  sSrc.buffer = sBuf;
+  const sBp = ac.createBiquadFilter();
+  sBp.type = 'bandpass';
+  sBp.Q.value = 0.9;
+  sBp.frequency.setValueAtTime(3200, t);
+  sBp.frequency.exponentialRampToValueAtTime(1300, t + strikeDur);
+  const sG = ac.createGain();
+  sG.gain.setValueAtTime(0, t);
+  sG.gain.linearRampToValueAtTime(0.34, t + 0.004);
+  sG.gain.exponentialRampToValueAtTime(0.0001, t + strikeDur);
+  sSrc.connect(sBp).connect(sG).connect(dest);
+  sSrc.start(t);
+  sSrc.stop(t + strikeDur + 0.02);
+
+  // === FUSE: crackling sizzle running under the whole wind-up ===
+  const fuseStart = t + 0.02;
+  const fuseDur = 0.6;
+  const fLen = Math.max(1, Math.floor(fuseDur * ac.sampleRate));
+  const fBuf = ac.createBuffer(1, fLen, ac.sampleRate);
+  const fData = fBuf.getChannelData(0);
+  // Sparse random spikes over a quiet noise floor — powder popping rather
+  // than a flat hiss. The spikes decay over a few ms each.
+  let spark = 0;
+  for (let i = 0; i < fLen; i++) {
+    if (Math.random() < 0.006) spark = 1;
+    spark *= 0.9992;
+    fData[i] = (Math.random() * 2 - 1) * (0.25 + 0.75 * spark);
+  }
+  const fSrc = ac.createBufferSource();
+  fSrc.buffer = fBuf;
+  const fHp = ac.createBiquadFilter();
+  fHp.type = 'highpass';
+  fHp.Q.value = 0.7;
+  fHp.frequency.value = 1500;
+  const fG = ac.createGain();
+  // Already audible under the strike (an exponential ramp up from silence
+  // leaves a hole while the match tails off), then holds — the sizzle is what
+  // bridges the strike to the wind-up.
+  fG.gain.setValueAtTime(0.05, fuseStart);
+  fG.gain.exponentialRampToValueAtTime(0.22, fuseStart + 0.05);
+  fG.gain.linearRampToValueAtTime(0.17, fuseStart + fuseDur * 0.8);
+  fG.gain.exponentialRampToValueAtTime(0.0001, fuseStart + fuseDur);
+  fSrc.connect(fHp).connect(fG).connect(dest);
+  fSrc.start(fuseStart);
+  fSrc.stop(fuseStart + fuseDur + 0.02);
+
+  // === CHARGE: the wind-up whine, rising and opening up ===
+  const chargeStart = t + 0.03;
+  const chargeDur = 0.46;
+  const chargeLp = ac.createBiquadFilter();
+  chargeLp.type = 'lowpass';
+  chargeLp.Q.value = 3.5;
+  chargeLp.frequency.setValueAtTime(500, chargeStart);
+  chargeLp.frequency.exponentialRampToValueAtTime(3000, chargeStart + chargeDur);
+  chargeLp.connect(dest);
+  const wind = (freqStart: number, freqEnd: number, peak: number, type: OscillatorType) => {
+    const osc = ac.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freqStart, chargeStart);
+    osc.frequency.exponentialRampToValueAtTime(freqEnd, chargeStart + chargeDur);
+    const g = ac.createGain();
+    // Audible early (an exponential ramp alone would leave the middle hollow),
+    // then swelling — the energy is still building when the confirm hits, and
+    // it ducks under the beeps rather than cutting out before them.
+    g.gain.setValueAtTime(0.0001, chargeStart);
+    g.gain.exponentialRampToValueAtTime(peak * 0.45, chargeStart + chargeDur * 0.3);
+    g.gain.linearRampToValueAtTime(peak, chargeStart + chargeDur * 0.9);
+    g.gain.linearRampToValueAtTime(peak * 0.3, chargeStart + chargeDur + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, chargeStart + chargeDur + 0.14);
+    osc.connect(g).connect(chargeLp);
+    osc.start(chargeStart);
+    osc.stop(chargeStart + chargeDur + 0.1);
+  };
+  wind(140, 660, 0.2,  'sawtooth');   // body — the buzzy capacitor whine
+  wind(280, 1320, 0.07, 'triangle');  // octave shimmer on top
+
+  // === ARMED: two-note confirm once the charge tops out ===
+  const armAt = chargeStart + chargeDur;
+  const beep = (start: number, freq: number, durMs: number, peak: number) => {
+    const dur = durMs / 1000;
+    const osc = ac.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = freq * 4;
+    lp.Q.value = 1.2;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(peak, start + 0.002);
+    g.gain.setValueAtTime(peak, start + dur - 0.004);
+    g.gain.linearRampToValueAtTime(0, start + dur);
+    osc.connect(lp).connect(g).connect(dest);
+    osc.start(start);
+    osc.stop(start + dur + 0.02);
+  };
+  beep(armAt, 740, 55, 0.05);
+  beep(armAt + 0.075, 1110, 80, 0.055);
+  // Low thunk under the confirm so the arm lands with some weight.
+  blip({ dest, startAt: armAt, freq: 110, freqEnd: 70, durMs: 150, type: 'sine', peak: 0.24, attackMs: 3 });
+}
+export function playKamakazeArm() {
+  buildKamakazeCharge(ensureChessBus(), getCtx().currentTime);
+}
+
+// Hollow Purple (hero: gojo) — two opposed cursed-energy tones (a bright
+// "blue" sine sweeping up, a gritty "red" saw sweeping down) converge, get
+// swallowed by a half-second suction whoosh, and annihilate into a deep
+// detonation with a shimmering violet ring ringing out over the tail.
+function buildHollowPurple(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+  const CONVERGE = 0.62;
+
+  // The two halves rushing at each other. They meet in pitch at the impact.
+  blip({ dest, startAt: t, freq: 240, freqEnd: 620, durMs: CONVERGE * 1000, type: 'sine', peak: 0.14, attackMs: 60 });
+  blip({ dest, startAt: t, freq: 1180, freqEnd: 620, durMs: CONVERGE * 1000, type: 'sawtooth', peak: 0.09, attackMs: 70, lpHz: 2200 });
+  // Beating partial a few cents off so the convergence shimmers instead of
+  // reading as one clean tone.
+  blip({ dest, startAt: t + 0.05, freq: 246, freqEnd: 632, durMs: (CONVERGE - 0.05) * 1000, type: 'triangle', peak: 0.07, attackMs: 60 });
+
+  // Suction whoosh — noise pulled through a bandpass that sweeps upward and
+  // narrows, so the energy sounds like it's collapsing into a point.
+  const whooshDur = CONVERGE + 0.06;
+  const length = Math.max(1, Math.floor(whooshDur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(300, t);
+  bp.frequency.exponentialRampToValueAtTime(2600, t + whooshDur);
+  bp.Q.setValueAtTime(1.2, t);
+  bp.Q.linearRampToValueAtTime(7, t + whooshDur);
+  const wg = ac.createGain();
+  wg.gain.setValueAtTime(0, t);
+  wg.gain.linearRampToValueAtTime(0.22, t + whooshDur * 0.75);
+  wg.gain.exponentialRampToValueAtTime(0.0001, t + whooshDur);
+  src.connect(bp).connect(wg).connect(dest);
+  src.start(t);
+  src.stop(t + whooshDur + 0.04);
+
+  // Annihilation — a deep sub drop with a bright transient on top.
+  const hit = t + CONVERGE;
+  blip({ dest, startAt: hit, freq: 150, freqEnd: 32, durMs: 900, type: 'sine', peak: 0.42, attackMs: 4 });
+  blip({ dest, startAt: hit, freq: 90, freqEnd: 24, durMs: 1100, type: 'triangle', peak: 0.3, attackMs: 8 });
+  blip({ dest, startAt: hit, freq: 1500, freqEnd: 300, durMs: 220, type: 'sawtooth', peak: 0.16, attackMs: 1, lpHz: 3200 });
+
+  // Violet ring-out — a stack of detuned partials humming over the decay so
+  // the orb feels like it's still sitting there, live.
+  for (const [f, p, d] of [[392, 0.075, 1500], [588, 0.055, 1300], [784, 0.04, 1100]] as const) {
+    blip({ dest, startAt: hit + 0.03, freq: f, freqEnd: f * 0.97, durMs: d, type: 'sine', peak: p, attackMs: 40 });
+  }
+}
+export function playHollowPurple() {
+  buildHollowPurple(ensureChessBus(), getCtx().currentTime);
+}
+
+// Hollow Purple impact — the orb ran a piece down mid-drift. Shorter and
+// nastier than the cast: an inrushing suck, a crunching sub thud, and a
+// detuned violet shimmer that decays fast (no lingering hum — the orb is
+// still travelling).
+function buildHollowPurpleHit(dest: AudioNode, t: number) {
+  const ac: BaseAudioContext = dest.context;
+
+  // Brief inrush right before the crunch — noise through a bandpass that
+  // snaps upward, so the hit feels like the piece is pulled in first.
+  const suckDur = 0.1;
+  const length = Math.max(1, Math.floor(suckDur * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(600, t);
+  bp.frequency.exponentialRampToValueAtTime(3200, t + suckDur);
+  bp.Q.value = 4;
+  const sg = ac.createGain();
+  sg.gain.setValueAtTime(0, t);
+  sg.gain.linearRampToValueAtTime(0.2, t + suckDur * 0.8);
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + suckDur);
+  src.connect(bp).connect(sg).connect(dest);
+  src.start(t);
+  src.stop(t + suckDur + 0.03);
+
+  // The crunch.
+  const hit = t + suckDur;
+  blip({ dest, startAt: hit, freq: 180, freqEnd: 38, durMs: 420, type: 'sine', peak: 0.36, attackMs: 3 });
+  blip({ dest, startAt: hit, freq: 1300, freqEnd: 260, durMs: 150, type: 'sawtooth', peak: 0.14, attackMs: 1, lpHz: 3000 });
+  // Detuned pair for the violet shimmer — a tight tritone so it reads as
+  // "wrong" rather than musical.
+  blip({ dest, startAt: hit + 0.02, freq: 520, freqEnd: 500, durMs: 420, type: 'sine', peak: 0.06, attackMs: 18 });
+  blip({ dest, startAt: hit + 0.02, freq: 736, freqEnd: 706, durMs: 380, type: 'sine', peak: 0.05, attackMs: 18 });
+}
+export function playHollowPurpleHit() {
+  buildHollowPurpleHit(ensureChessBus(), getCtx().currentTime);
+}
+
 // Generic UI click — subtle, neutral tap played on every button by default
 // (see the document-level click handler in Layout). Quiet enough to layer
 // under other SFX without doubling up annoyingly.

@@ -22,6 +22,13 @@ type Props = {
   armed: boolean;
   onArm: () => void;
   onCancel: () => void;
+  // Mid-activation confirm, currently Goofball only: its first forced move is
+  // staged locally while the player decides on a second one, so they need a
+  // way to stop at one. Absent for every other hero.
+  onFinish?: () => void;
+  finishLabel?: string;
+  // Replaces the bottom hint line while a multi-step activation is in flight.
+  hintOverride?: string;
   // Compact mode for free-play (tighter layout).
   compact?: boolean;
   // Juggernaut tier per side (1-3); 0 / undefined when that side isn't
@@ -41,6 +48,9 @@ export function HeroAbilities({
   armed,
   onArm,
   onCancel,
+  onFinish,
+  finishLabel,
+  hintOverride,
   compact,
   myJugTier,
   oppJugTier,
@@ -65,14 +75,26 @@ export function HeroAbilities({
 
       <div className="hero-action-row">
         {armed ? (
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={onCancel}
-            data-no-sfx
-          >
-            Cancel
-          </button>
+          <>
+            {onFinish && (
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={onFinish}
+                data-no-sfx
+              >
+                {finishLabel ?? 'Done'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={onCancel}
+              data-no-sfx
+            >
+              Cancel
+            </button>
+          </>
         ) : (
           <button
             type="button"
@@ -94,7 +116,9 @@ export function HeroAbilities({
       />
 
       <div className="hero-panel-hint muted small">
-        {armed
+        {hintOverride
+          ? hintOverride
+          : armed
           ? 'Click a highlighted square to confirm.'
           : myTurn
             ? myReady
@@ -116,8 +140,10 @@ function noTargetHint(hero: HeroKind, jugTier?: number): string {
     case 'warlord':     return 'No enemy piece adjacent to your king.';
     case 'frost':       return 'No piece available to freeze.';
     case 'flight':      return 'No piece can fly anywhere safely.';
+    case 'kamakaze':    return 'No piece available to arm.';
     case 'twin-jutsu':  return 'No legal swap pair right now.';
     case 'slime':       return 'No mini king with room to expand.';
+    case 'gojo':        return 'No room beside your king for Hollow Purple.';
     case 'juggernaut':
       return jugTier === 1
         ? 'No safe direction to spawn an earthquake.'

@@ -13,7 +13,10 @@ export type GameEndReason =
   | 'resignation'
   | 'timeout'
   | 'draw-agreed'
-  | 'disconnect';
+  | 'disconnect'
+  // Chesssweeper: a king was destroyed by a landmine (or left hanging by the
+  // blast). Never produced by the other variants.
+  | 'mine';
 
 export type PlayerInfo = {
   handle: string;

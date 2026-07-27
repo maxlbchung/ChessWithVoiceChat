@@ -47,9 +47,11 @@ const SOUND_FNS: Record<string, () => void> = {
   mutate: sfx.playMutate,
   missile: sfx.playMissileLaunch,
   goofball: sfx.playGoofball,
+  kamakaze: sfx.playKamakazeArm,
   twin: sfx.playTwinJutsu,
   slime: sfx.playSlimeExpand,
   jug: sfx.playJugQuake,
+  gojo: sfx.playHollowPurple,
   harem: sfx.playHarem,
 };
 

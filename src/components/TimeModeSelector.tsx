@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -19,6 +19,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     two: false,
     cash: false,
     hero: false,
+    sweeper: false,
   });
   const toggle = (k: SectionKey) => {
     if (open[k]) sfx.playClose(); else sfx.playOpen();
@@ -90,6 +91,15 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           Using an ability takes your turn.
         </div>
         {renderGrid(timeControlsForVariant('hero'))}
+      </Section>
+
+      <Section title="Chesssweeper" open={open.sweeper} onToggle={() => toggle('sweeper')}>
+        <div className="muted small time-mode-blurb">
+          Normal chess, but 4 hidden landmines are buried in the middle two
+          ranks. Landing on a square reveals how many mines touch it — land on
+          a mine and the piece is destroyed. Blow up your king and you lose.
+        </div>
+        {renderGrid(timeControlsForVariant('sweeper'))}
       </Section>
     </div>
   );

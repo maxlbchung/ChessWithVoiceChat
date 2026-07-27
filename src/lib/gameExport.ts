@@ -33,6 +33,13 @@ import {
   type MoveResult as HeroResult,
   type HeroKind,
 } from './heroChess';
+import {
+  applyMove as sweeperApply,
+  initialState as sweeperInitial,
+  minesForGame,
+  type GameState as SweeperState,
+  type MoveResult as SweeperResult,
+} from './sweeperChess';
 import type {
   GameEndReason,
   GameOutcome,
@@ -175,7 +182,10 @@ export function parseGameImport(text: string): ExportedGame {
   const o = raw as Record<string, unknown>;
 
   const variant = o.variant;
-  if (variant !== 'normal' && variant !== 'merge' && variant !== 'two' && variant !== 'cash' && variant !== 'hero') {
+  if (
+    variant !== 'normal' && variant !== 'merge' && variant !== 'two' &&
+    variant !== 'cash' && variant !== 'hero' && variant !== 'sweeper'
+  ) {
     throw new GameImportError('Missing or unknown variant.');
   }
 
@@ -273,7 +283,7 @@ function isReason(v: unknown): v is GameEndReason {
   return (
     v === 'checkmate' || v === 'stalemate' || v === 'threefold' ||
     v === 'insufficient' || v === 'fifty-move' || v === 'resignation' ||
-    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect'
+    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' || v === 'mine'
   );
 }
 
@@ -318,7 +328,13 @@ export type ReplayHero = {
   heroes: { w: HeroKind; b: HeroKind };
 };
 
-export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero;
+export type ReplaySweeper = {
+  variant: 'sweeper';
+  states: SweeperState[];
+  results: SweeperResult[];
+};
+
+export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplaySweeper;
 
 export function buildReplay(exp: ExportedGame): Replay {
   if (exp.variant === 'normal') {
@@ -374,6 +390,19 @@ export function buildReplay(exp: ExportedGame): Replay {
       results.push(res.result);
     }
     return { variant: 'cash', states, results };
+  }
+  if (exp.variant === 'sweeper') {
+    // The minefield is a pure function of the gameId, so nothing about it
+    // needs storing — an exported game rebuilds the same board it was played on.
+    const states: SweeperState[] = [sweeperInitial(minesForGame(exp.gameId))];
+    const results: SweeperResult[] = [];
+    for (let i = 0; i < exp.moves.length; i++) {
+      const res = sweeperApply(states[states.length - 1], exp.moves[i].uci);
+      if (!res) throw new GameImportError(`Illegal chesssweeper move at ply ${i + 1} (${exp.moves[i].uci}).`);
+      states.push(res.state);
+      results.push(res.result);
+    }
+    return { variant: 'sweeper', states, results };
   }
   if (!exp.heroes) throw new GameImportError('Hero match is missing heroes.');
   // heroBackRanks rebuilds a shuffled Twin-Jutsu start; absent → standard.

@@ -15,10 +15,12 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 | **Harem**       | *passive*       | Your bishops + rooks start as queens                      |
 | **Mutation**    | 5 turns         | Starts with bishops instead of knights; mutate B/R/Q to also move like a knight |
 | **ICBM**        | 10-turn warmup, then none | Drop a bomb that lands in 5 plies and demolishes a square |
-| **Goofball**    | *none*          | Force the opponent to make a legal move on their next ply |
+| **Goofball**    | 2 turns         | Force up to two opponent moves — any pieces, same piece twice allowed |
 | **Twin-Jutsu**  | 3 turns         | All your pieces look like kings to the opponent until they move. Back rank starts shuffled (opposite-color bishops; no castling). Active swaps two of your pieces and re-masks both. |
 | **Slime**       | 10 turns        | Only pawns (3rd rank) + a 2×2 big king that slides one square and crushes what it lands on. Capturing a tile splits it into 3 mini kings; uncheckable until a single king remains. Active regrows a mini into a big king. |
 | **Juggernaut**  | 3 turns         | A lone colorless king with three lives. Capturing it kills the attacker and tiers it up (king → knight → queen movement, new ability per tier); uncheckable until tier 3, where the next hit fells it. |
+| **Kamakaze**    | 5 turns         | Mark one of your own pieces explosive. It detonates in a 1-tile radius when it captures or is captured, chaining through nearby explosive pieces. |
+| **Gojo**        | 10 turns        | Spawn Hollow Purple next to your king. It drifts one square every ply in a straight line to the board edge, annihilating every piece it touches — yours included. |
 
 > A "turn" means one of *your own* moves. Under the hood the engine stores cooldowns in plies (`turns × 2`).
 
@@ -79,11 +81,14 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
   - Firing plays the launch SFX (two electronic beeps + ascending whistle). Landing plays the descending whistle + earthquake explosion, with the doomed piece visible through the half-second whistle window before it vanishes.
 
 ### Goofball — `#f7d000`
-- **Active**, no cooldown.
+- **Active**, 2-turn cooldown.
+- One activation forces **up to two** opponent moves — any pieces, the same piece twice included.
 - Two-click ability: first click picks an **enemy** piece, second click picks a legal destination *from that enemy's perspective*. The forced move is then applied as the opponent's move.
+- After the first forced move the board shows it immediately (staged locally — nothing is sent yet) and you pick the second one on that position. **End turn** in the abilities panel stops at one; **Cancel** throws the whole activation away. If the first move leaves no legal follow-up, the activation commits straight away.
+- Both forced moves ride in a single ply / a single ability UCI: `!G<from><to>[<promo>],<from2><to2>[<promo2>]`. The opponent still plays their own normal move afterwards.
 - Cannot pick an enemy piece with no legal moves.
-- Cannot pick a destination that would leave you (the Goofball user) in check after the forced opponent move — the engine filters those out.
-- Promotion: if the forced move is a pawn promotion, the engine accepts a promotion letter in the ability UCI; the UI prompts for it.
+- Cannot pick a destination that would leave you (the Goofball user) in check after that forced opponent move — the engine filters those out, per leg.
+- Promotion: if a forced move is a pawn promotion, the engine accepts a promotion letter in the ability UCI; the UI prompts for it (free play auto-queens).
 
 ### Slime — `#7ed957`
 - **Active**, 10-turn cooldown, plus heavy passives.
@@ -116,3 +121,28 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - After the swap **both** endpoints are re-masked — even a previously-revealed piece becomes hidden again. Doesn't reveal identity.
 - Cannot leave you in check after the swap (engine filters illegal pairs).
 - The swap forfeits castling rights as if the involved pieces had moved (kings → both sides; rook on its home corner → that wing).
+
+### Kamakaze — `#e02b2b`
+- **Active**, 5-turn cooldown.
+- Click any of your own unarmed pieces to mark it explosive.
+- An explosive piece detonates when it captures or when another piece captures it. The explosion clears every piece in a 1-tile radius around the detonation square.
+- If the blast catches another explosive piece, that piece detonates too, so adjacent explosives can chain down a line.
+- Armed pieces shake in place and glow red. Detonations play the explosion SFX and a red blast animation.
+- **The capture is always shown first.** The engine clears every blast victim the instant the move commits, so the UI holds their sprites (the doomed-sprite channel ICBM and Chesssweeper use) and delays the blast: the attacker is drawn on the square it dies on and rides the move slide in, so a capture reads as "piece moves across → explosion" instead of the board silently emptying. Chained detonations keep their 120ms stagger after that lead-in. A clicked move waits out the 260ms slide; a dragged, remote or scrubbed-into move only needs a short beat, since the piece is already on its square.
+- Arming plays its own charge-up SFX: a match strike, a crackling fuse, a rising charge whine and a two-note "armed" confirm.
+
+### Gojo — `#b026ff`
+- **Active**, 10-turn cooldown. Fires a **Hollow Purple** orb (`!P<sq>`).
+- **Spawn**: click any on-board square **adjacent to your king** (all 8 directions). The king→square offset becomes the orb's permanent heading — it never turns. Whatever is standing on the spawn square is annihilated on the spot, your own piece included.
+- **Travel**: the orb drifts **one square every ply** — on your moves *and* your opponent's, and regardless of what either of you does. It holds still only on the ply it was cast.
+- **Annihilation**: every piece the orb touches is destroyed, **both sides' — including the caster's own**. It clears the tile it leaves (so a piece that steps into the orb dies too) and the tile it arrives on. Frost is no protection; it erases frozen pieces like anything else.
+- **A destroyed king ends the game** on the spot, the same checkmate-style loss an ICBM strike causes. That cuts both ways: an orb aimed badly can erase its own side's king. The engine never points one at its caster (it always heads away from the king), and the "you can't spend your last king" rule is waived for an orb kill so the doomed side isn't frozen out of moving.
+- **Dissipation**: the orb winks out the moment it drifts off the board edge. It doesn't block movement on the way — pieces can move through and onto its tile, they just don't survive it.
+- A sub-tier-3 **Juggernaut** is the one thing it can't erase: the Juggernaut absorbs the orb and tiers up, the same as with an ICBM blast or an earthquake. A **Slime** blob tile splits the blob as it's erased.
+- Several orbs can be in flight at once (fire again once the cooldown is up).
+- Serialization: orbs ride a trailing FEN token as `idx:df:dr:color:spawnPly`.
+- UI: a churning violet sphere with a tail behind it and a chevron ahead so its lane reads at a glance. Casting plays converging red/blue cursed-energy tones that collapse into a deep annihilation boom.
+- **Formation**: the sphere doesn't exist until the cast's red and blue halves actually meet. For the first 700ms (`HOLLOW_PURPLE_CAST_FORM_MS`) the square holds only the two motes rushing together; the orb then blooms out of the flash. With animations turned off there's no cast to wait on, so it simply appears.
+- **Motion**: the orb doesn't jump between squares — it glides across each one over 420ms (`HOLLOW_PURPLE_DRIFT_MS`), drifting in from where it was the previous ply. Scrubbing history replays the glide for the ply you land on, and video exports interpolate it along the same path.
+- **Impact**: when the drift runs a piece down, that piece stays on screen while the orb closes in (the same doomed-sprite channel ICBM uses, temporarily raised above the orb so the victim isn't hidden by it), then detonates on contact — a white flash, a dark void core that collapses inward, a ring, and shreds flung outward, with its own shorter impact SFX. Simultaneous kills stagger 130ms apart. A piece run down on the very ply it moved is drawn as *the mover* arriving on its destination (not as whatever used to stand there), so it too is seen making its move before it dies.
+- Sandbox note: the position editor has no ply clock, so firing Gojo there resolves the whole journey at once — the entire lane from the spawn square to the board edge is cleared in one click, with the impact blasts marching down the lane 240ms apart so the sweep still reads directionally.

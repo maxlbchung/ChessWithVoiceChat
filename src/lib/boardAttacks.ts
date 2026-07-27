@@ -97,9 +97,46 @@ function neighbors(sq: string): string[] {
 // Line-of-sight arrows that explain a checkmate: each checking piece → the king,
 // plus, for every escape square around the king (empty or capturable), each
 // enemy piece that controls it → that square.
-export function checkmateArrows(board: (Piece | null)[], kingSq: string, matedColor: 'w' | 'b'): { from: string; to: string }[] {
+type Arrow = { from: string; to: string };
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  return x;
+}
+
+function rayOf(ar: Arrow): { key: string; distance: number } | null {
+  const df = fileOf(ar.to) - fileOf(ar.from);
+  const dr = rankOf(ar.to) - rankOf(ar.from);
+  const distance = gcd(df, dr);
+  if (distance <= 0) return null;
+  const stepF = df / distance;
+  const stepR = dr / distance;
+  if (Math.abs(stepF) > 1 || Math.abs(stepR) > 1) return null;
+  return { key: `${ar.from}:${stepF},${stepR}`, distance };
+}
+
+function removeCoveredSamePieceArrows(arrows: Arrow[]): Arrow[] {
+  const rays = arrows.map(rayOf);
+  const longest = new Map<string, number>();
+  for (const ray of rays) {
+    if (!ray) continue;
+    longest.set(ray.key, Math.max(longest.get(ray.key) ?? 0, ray.distance));
+  }
+  return arrows.filter((_, i) => {
+    const ray = rays[i];
+    return !ray || ray.distance === longest.get(ray.key);
+  });
+}
+
+export function checkmateArrows(board: (Piece | null)[], kingSq: string, matedColor: 'w' | 'b'): Arrow[] {
   const enemy: 'w' | 'b' = matedColor === 'w' ? 'b' : 'w';
-  const arrows: { from: string; to: string }[] = [];
+  const arrows: Arrow[] = [];
   const seen = new Set<string>();
   const add = (from: string, to: string) => {
     const k = from + '>' + to;
@@ -114,5 +151,5 @@ export function checkmateArrows(board: (Piece | null)[], kingSq: string, matedCo
     if (occupant && occupant.color === matedColor) continue; // own piece blocks escape
     for (const sq of attackersOf(board, nb, enemy)) add(sq, nb);
   }
-  return arrows;
+  return removeCoveredSamePieceArrows(arrows);
 }

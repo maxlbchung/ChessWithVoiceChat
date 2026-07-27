@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
-import { MergeBoard } from '../components/MergeBoard';
+import { HOLLOW_PURPLE_DRIFT_MS, MergeBoard } from '../components/MergeBoard';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { CustomSelect } from '../components/CustomSelect';
 import { CashShop } from '../components/CashShop';
@@ -41,11 +41,19 @@ import {
   backRanksForGame as heroBackRanksForGame,
   applyMove as heroApply,
   kingSquareOf as heroKingSquareOf,
+  hollowPurpleOrigin as heroHollowPurpleOrigin,
   legalMovesFrom as heroLegal,
   abilityTargets as heroAbilityTargets,
   abilityReady as heroAbilityReady,
   abilityUci as heroAbilityUci,
   goofballLegalDestinations as heroGoofballLegalDestinations,
+  goofballPreview as heroGoofballPreview,
+  goofballHasFollowUp as heroGoofballHasFollowUp,
+  goofballSlides as heroGoofballSlides,
+  isWithinBlast as heroIsWithinBlast,
+  kamakazeDoomedSprites as heroKamakazeDoomedSprites,
+  killedSpriteAt as heroKilledSpriteAt,
+  type GoofballLeg,
   twinJutsuLegalDestinations as heroTwinJutsuLegalDestinations,
   flightLegalDestinations as heroFlightLegalDestinations,
   slimeLegalDestinations as heroSlimeLegalDestinations,
@@ -63,7 +71,19 @@ import {
   type MoveResult as HeroResult,
   type HeroKind,
 } from '../lib/heroChess';
+import {
+  applyMove as sweeperApply,
+  initialState as sweeperInitial,
+  idxToSq as sweeperIdxToSq,
+  legalMovesFrom as sweeperLegal,
+  minesForGame,
+  revealedCounts as sweeperRevealedCounts,
+  sqToIdx as sweeperSqToIdx,
+  type GameState as SweeperState,
+  type MoveResult as SweeperResult,
+} from '../lib/sweeperChess';
 import { HeroAbilities } from '../components/HeroAbilities';
+import { MineRail } from '../components/MineRail';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import type { AbilityAnim } from '../components/MergeBoard';
 import { renderPiece } from '../lib/pieceSvgs';
@@ -78,9 +98,23 @@ import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
-type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
+type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
 
 type Mode = 'idle' | 'searching' | 'hosting';
+
+// Kill-effect lead-in. A click-move slides the piece across the board
+// (piece-slide is 260ms), so the kill lands just as it arrives; a piece that's
+// already on its square (drag, or a scrub into the ply) only needs a beat to
+// register before it's destroyed. Same split Chesssweeper uses for mines.
+const KILL_ON_LANDING_MS = 275;
+const KILL_BEAT_MS = 150;
+
+// The from/to of a plain board-move uci, or null for ability pseudo-UCIs.
+function boardMoveOf(uci: string): { from: string; to: string } | null {
+  return /^[a-h][1-8][a-h][1-8]/.test(uci)
+    ? { from: uci.slice(0, 2), to: uci.slice(2, 4) }
+    : null;
+}
 
 export function Home() {
   const { identity, rating, loaded, signUp } = useIdentityStore();
@@ -102,7 +136,7 @@ export function Home() {
   // resolver knows which engine's apply path to dispatch to.
   const [freePromo, setFreePromo] = useState<{
     from: string; to: string;
-    variant: 'normal' | 'merge' | 'two' | 'hero';
+    variant: 'normal' | 'merge' | 'two' | 'hero' | 'sweeper';
     viaClick: boolean;
   } | null>(null);
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
@@ -124,6 +158,35 @@ export function Home() {
   // bought piece on a legal target square.
   const [cashShopLetter, setCashShopLetter] = useState<ShopLetter | null>(null);
 
+  // Chesssweeper — a fresh minefield every game. Free play isn't recorded or
+  // replayed, so an ephemeral random seed is fine (online games derive theirs
+  // from the shared gameId instead).
+  const freshSweeperInitial = () => sweeperInitial(minesForGame(Math.random().toString(36).slice(2)));
+  const [sweeperStates, setSweeperStates] = useState<SweeperState[]>(() => [freshSweeperInitial()]);
+  const [sweeperResults, setSweeperResults] = useState<SweeperResult[]>([]);
+  // Blast overlay + the doomed sprite held on the square for the beat before
+  // it goes off (same sequencing as the online SweeperGame page).
+  const [sweeperAnim, setSweeperAnim] = useState<AbilityAnim | null>(null);
+  const [sweeperDoomed, setSweeperDoomed] = useState<{ sq: string; letter: string }[]>([]);
+  // Suspected-mine flags. Pure scratch annotation — cleared with the board,
+  // never part of the game state. Flagging takes over the right-click gesture,
+  // so it sits behind a mode toggle; off, right-click still draws arrows.
+  const [sweeperFlags, setSweeperFlags] = useState<string[]>([]);
+  const [sweeperFlagMode, setSweeperFlagMode] = useState(false);
+  const toggleSweeperFlag = (sq: string) => {
+    setSweeperFlags((f) => (f.includes(sq) ? f.filter((s) => s !== sq) : [...f, sq]));
+    sfx.playSelect();
+  };
+  const sweeperBlastTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sweeperAnim) return;
+    const t = window.setTimeout(() => setSweeperAnim(null), 1200);
+    return () => clearTimeout(t);
+  }, [sweeperAnim]);
+  useEffect(() => () => {
+    if (sweeperBlastTimerRef.current != null) clearTimeout(sweeperBlastTimerRef.current);
+  }, []);
+
   // Hero state — picks default to Frost (W) / Warlord (B); changing either
   // resets the engine. abilityArmed signals "next click is a target".
   const [heroW, setHeroW] = useState<HeroKind>('frost');
@@ -140,6 +203,10 @@ export function Home() {
   // piece, second click picks where to send it. Cleared whenever the
   // ability is disarmed.
   const [goofballFrom, setGoofballFrom] = useState<string | null>(null);
+  // One Goofball activation forces up to TWO opponent moves. The first is
+  // staged here (not yet committed) while the player picks a second one — or
+  // ends the turn on just this one.
+  const [goofballLeg1, setGoofballLeg1] = useState<GoofballLeg | null>(null);
   // Twin-Jutsu is also two-click (pick piece → pick swap partner).
   const [twinJutsuFrom, setTwinJutsuFrom] = useState<string | null>(null);
   // Flight is two-click too (pick piece → pick empty destination square).
@@ -147,7 +214,10 @@ export function Home() {
   // Slime too (pick mini king → pick the diagonal corner it expands toward).
   const [slimeFrom, setSlimeFrom] = useState<string | null>(null);
   useEffect(() => {
-    if (!heroAbilityArmed) { setGoofballFrom(null); setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null); }
+    if (!heroAbilityArmed) {
+      setGoofballFrom(null); setGoofballLeg1(null);
+      setTwinJutsuFrom(null); setFlightFrom(null); setSlimeFrom(null);
+    }
   }, [heroAbilityArmed]);
   // Transient ability animation overlay (hero free play). Bumped to a fresh
   // key each time it should re-fire.
@@ -193,6 +263,11 @@ export function Home() {
     setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
+    setSweeperStates([freshSweeperInitial()]);
+    setSweeperResults([]);
+    setSweeperDoomed([]);
+    setSweeperAnim(null);
+    setSweeperFlags([]);
     // Clear any stale hero ability animation — without this, switching away
     // from hero and back would re-fire the last animation against a fresh
     // board (e.g. a Knight shake on the king's *old* square).
@@ -257,18 +332,35 @@ export function Home() {
   const mergeViewState: MergeState = mergeStates[freeViewPly] ?? mergeStates[0];
   const twoViewState: TwoState = twoStates[freeViewPly] ?? twoStates[0];
   const cashViewState: CashState = cashStates[freeViewPly] ?? cashStates[0];
-  const heroViewState: HeroState = heroStates[freeViewPly] ?? heroStates[0];
+  const heroBaseState: HeroState = heroStates[freeViewPly] ?? heroStates[0];
+  // Position after the staged first Goofball leg. It's still the same side's
+  // turn there with the ability still ready, so every hero code path below
+  // (targets, clicks, drops, board render) picks up the forced move for free
+  // and the player chooses the follow-up on the position it creates.
+  const heroGoofballStaged = useMemo<HeroState | null>(() => {
+    if (!goofballLeg1 || freeVariant !== 'hero' || freeViewPly !== heroResults.length) return null;
+    return heroGoofballPreview(
+      heroBaseState,
+      heroSqToIdx(goofballLeg1.from),
+      heroSqToIdx(goofballLeg1.to),
+      goofballLeg1.promo,
+    );
+  }, [goofballLeg1, freeVariant, freeViewPly, heroResults.length, heroBaseState]);
+  const heroViewState: HeroState = heroGoofballStaged ?? heroBaseState;
+  const sweeperViewState: SweeperState = sweeperStates[freeViewPly] ?? sweeperStates[0];
   const totalFreePly =
     freeVariant === 'normal' ? freeChess.history().length :
     freeVariant === 'merge' ? mergeResults.length :
     freeVariant === 'two' ? twoResults.length :
     freeVariant === 'cash' ? cashResults.length :
+    freeVariant === 'sweeper' ? sweeperResults.length :
     heroResults.length;
   const freeTurn: 'w' | 'b' =
     freeVariant === 'normal' ? previewChess.turn() :
     freeVariant === 'merge' ? mergeViewState.turn :
     freeVariant === 'two' ? twoViewState.turn :
     freeVariant === 'cash' ? cashViewState.turn :
+    freeVariant === 'sweeper' ? sweeperViewState.turn :
     heroViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
@@ -296,10 +388,19 @@ export function Home() {
       if (!r?.checkmate) return null;
       return { winner: cashViewState.turn === 'w' ? 'b' : 'w' };
     }
+    if (freeVariant === 'sweeper') {
+      // A blown-up king ends it just as hard as checkmate.
+      if (sweeperViewState.mineLoss) {
+        return { winner: sweeperViewState.mineLoss === 'w' ? 'b' : 'w' };
+      }
+      const r = sweeperResults[freeViewPly - 1];
+      if (!r?.checkmate) return null;
+      return { winner: sweeperViewState.turn === 'w' ? 'b' : 'w' };
+    }
     const r = heroResults[freeViewPly - 1];
     if (!r?.checkmate) return null;
     return { winner: heroViewState.turn === 'w' ? 'b' : 'w' };
-  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn, heroResults, heroViewState.turn]);
+  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn, heroResults, heroViewState.turn, sweeperResults, sweeperViewState]);
 
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
@@ -337,6 +438,29 @@ export function Home() {
       to: m.to, isCapture: m.isCapture, isMerge: m.isSpecial,
     }));
   }, [freeVariant, freeSelected, twoViewState]);
+
+  const sweeperLegalTargets = useMemo(() => {
+    if (freeVariant !== 'sweeper' || !freeSelected) return [];
+    return sweeperLegal(sweeperViewState, freeSelected);
+  }, [freeVariant, freeSelected, sweeperViewState]);
+
+  // Revealed numbers + craters at the viewed ply — scrubbing back un-learns
+  // whatever the board hadn't uncovered yet.
+  const sweeperBoardCounts = useMemo(
+    () => sweeperRevealedCounts(sweeperViewState).map(({ idx, count }) => ({ sq: sweeperIdxToSq(idx), count })),
+    [sweeperViewState],
+  );
+  // The engine marks a mine detonated the moment the move commits, but the
+  // crater must not appear under a piece that's still sliding toward it —
+  // that would spoil the mine before impact. `sweeperDoomed` holds that square
+  // for exactly the flight, so hide its crater until the blast goes off.
+  const sweeperBoardCraters = useMemo(
+    () => {
+      const inFlight = new Set(sweeperDoomed.map((d) => d.sq));
+      return sweeperViewState.detonated.map(sweeperIdxToSq).filter((sq) => !inFlight.has(sq));
+    },
+    [sweeperViewState, sweeperDoomed],
+  );
 
   // Cash buy-target squares are derived from the shop selection. When a shop
   // letter is selected, those squares get the green "special" ring and board
@@ -441,6 +565,7 @@ export function Home() {
     else if (freeVariant === 'two') uci = twoResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'cash') uci = cashResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'hero') uci = heroResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'sweeper') uci = sweeperResults[freeViewPly - 1]?.uci;
     if (!uci) return null;
     if (freeVariant === 'cash') {
       const buy = cashParseBuy(uci);
@@ -467,7 +592,10 @@ export function Home() {
       }
       if (hero === 'G' || hero === 'L' || hero === 'S') {
         // Goofball / Flight move a visible piece from → to; Slime grows a
-        // mini king (from) toward an empty corner (to) — tint both ends.
+        // mini king (from) toward an empty corner (to) — tint both ends. A
+        // two-move Goofball tints where the puppeting started and ended.
+        const legs = hero === 'G' ? heroGoofballSlides(uci) : [];
+        if (legs.length > 0) return { from: legs[0].from, to: legs[legs.length - 1].to };
         return { from: uci.slice(2, 4), to: uci.slice(4, 6) };
       }
       const sq = uci.slice(2, 4);
@@ -476,7 +604,7 @@ export function Home() {
     if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
     return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates]);
+  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates, sweeperResults]);
 
   const applyFreeMove = (from: string, to: string, promotion?: string, viaClick = false): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
@@ -613,6 +741,77 @@ export function Home() {
     return true;
   };
 
+  // Piece travels (sliding in, if this move animates) → blast + sfx → gone.
+  // The doomed sprite stands in for the mover while it's in flight, since the
+  // engine has already cleared the square. Mirrors the online SweeperGame page:
+  // a click-move detonates on landing (the slide is 260ms), a drag just gets a
+  // short beat since the piece is already there.
+  const triggerSweeperBlast = (
+    sq: string,
+    letter: string | null,
+    color: 'w' | 'b',
+    key: string,
+    sliding = false,
+  ) => {
+    if (!animationsEnabled) {
+      sfx.playExplosion();
+      return;
+    }
+    if (letter) setSweeperDoomed([{ sq, letter }]);
+    if (sweeperBlastTimerRef.current != null) clearTimeout(sweeperBlastTimerRef.current);
+    sweeperBlastTimerRef.current = window.setTimeout(() => {
+      sweeperBlastTimerRef.current = null;
+      setSweeperDoomed([]);
+      setSweeperAnim({ kind: 'mine', toSq: sq, color, key });
+      sfx.playExplosion();
+    }, sliding ? 275 : 150);
+  };
+
+  const applySweeperMove = (
+    from: string,
+    to: string,
+    promotion?: 'Q' | 'R' | 'B' | 'N',
+    viaClick = false,
+  ): boolean => {
+    // Branch in past: drop everything after viewPly, then apply on the snapshot we're viewing.
+    const truncStates = sweeperStates.slice(0, freeViewPly + 1);
+    const truncResults = sweeperResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    const mover = base.turn;
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    const res = sweeperApply(base, uci);
+    if (!res) return false;
+    const sliding = viaClick && animationsEnabled;
+    if (res.result.castled) sfx.playCastle();
+    else if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.mineIdx != null) {
+      triggerSweeperBlast(
+        sweeperIdxToSq(res.result.mineIdx),
+        res.result.destroyedLetter,
+        mover,
+        `mine-${truncResults.length}-${uci}`,
+        sliding,
+      );
+    } else if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setSweeperStates([...truncStates, res.state]);
+    setSweeperResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    // The move animates even when it ends on a mine: the engine has already
+    // cleared the square, so the doomed sprite is what slides in, and the
+    // blast fires as it arrives. Promotion pops are pointless for a piece
+    // that's about to be destroyed.
+    if (sliding) {
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
+    if (animationsEnabled && !!promotion && res.result.mineIdx == null) {
+      setPopAnim({ squares: [to], key: Date.now() });
+    }
+    return true;
+  };
+
   const commitCashMove = (uci: string, slides?: { from: string; to: string }[], pops?: string[]): boolean => {
     const truncStates = cashStates.slice(0, freeViewPly + 1);
     const truncResults = cashResults.slice(0, freeViewPly);
@@ -668,6 +867,8 @@ export function Home() {
     else if (res.result.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
     else if (res.result.abilityUsed === 'slime') sfx.playSlimeExpand();
     else if (res.result.abilityUsed === 'juggernaut') sfx.playJugQuake();
+    else if (res.result.abilityUsed === 'kamakaze') sfx.playKamakazeArm();
+    else if (res.result.abilityUsed === 'gojo') sfx.playHollowPurple();
     else if (res.result.castled) sfx.playCastle();
     else if (res.result.captured) sfx.playCapture();
     else sfx.playMove();
@@ -678,7 +879,7 @@ export function Home() {
     if (res.result.abilityUsed && animationsEnabled) {
       const ab = res.result.abilityUsed;
       // harem is passive and icbm has its own missile UI; skip overlay.
-      if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut') {
+      if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut' || ab === 'gojo') {
         const moverColor = base.turn;
         if (ab === 'flight') {
           // !L<from><to>[<promo>] — fly the selected piece from → to.
@@ -755,6 +956,34 @@ export function Home() {
           // staggered explosion clears them).
           setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== heroIdxToSq(m.idx)));
         }, at);
+      });
+    }
+    // A drifting Hollow Purple ran a piece down. Hold the victim's sprite for
+    // exactly as long as the orb takes to glide onto it, then detonate.
+    if (res.result.hollowPurpleBlasts && res.result.hollowPurpleBlasts.length > 0) {
+      const squares = res.result.hollowPurpleBlasts;
+      // A piece caught by the orb on the ply it moved died at its DESTINATION,
+      // so its sprite is the mover's, not the pre-move occupant's.
+      const doomed = squares
+        .map((sq) => {
+          const letter = heroKilledSpriteAt(base, sq, boardMoveOf(uci));
+          return letter ? { sq, letter: letter as string } : null;
+        })
+        .filter((d): d is { sq: string; letter: string } => d !== null);
+      if (doomed.length > 0) setHeroDoomedPieces((prev) => [...prev, ...doomed]);
+      squares.forEach((sq, i) => {
+        window.setTimeout(() => {
+          if (animationsEnabled) {
+            setHeroAbilityAnim({
+              kind: 'gojo-blast',
+              toSq: sq,
+              color: base.turn,
+              key: `gojo-blast-${res.result.uci}-${sq}-${i}-${Date.now()}`,
+            });
+          }
+          sfx.playHollowPurpleHit();
+          setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== sq));
+        }, HOLLOW_PURPLE_DRIFT_MS + i * 130);
       });
     }
     // Knight ability: the engine already cleared the victim, but we keep it
@@ -843,6 +1072,35 @@ export function Home() {
         }
       }
     }
+    // Whether this move will visibly slide a piece — same condition the slide
+    // branch below uses. A Kamakaze chain waits for it so the capture is seen.
+    const slidingIn = !!slides && slides.length > 0 && !res.result.abilityUsed
+      && !jugAbsorbed && animationsEnabled;
+    // A Kamakaze chain went off. The engine cleared every victim on commit, so
+    // hold their sprites while the capture plays out, then detonate — the
+    // attacker's sprite sits on its destination and rides the slide in.
+    if (res.result.kamakazeExplosions && res.result.kamakazeExplosions.length > 0) {
+      const centers = res.result.kamakazeExplosions;
+      const doomed = animationsEnabled
+        ? heroKamakazeDoomedSprites(base, res.state, centers, boardMoveOf(uci))
+        : [];
+      if (doomed.length > 0) setHeroDoomedPieces((prev) => [...prev, ...doomed]);
+      const lead = doomed.length === 0 ? 0 : slidingIn ? KILL_ON_LANDING_MS : KILL_BEAT_MS;
+      centers.forEach((sq, i) => {
+        window.setTimeout(() => {
+          if (animationsEnabled) {
+            setHeroAbilityAnim({
+              kind: 'kamakaze',
+              toSq: sq,
+              color: 'w',
+              key: `kamakaze-${res.result.uci}-${sq}-${i}-${Date.now()}`,
+            });
+          }
+          sfx.playExplosion();
+          setHeroDoomedPieces((prev) => prev.filter((d) => !heroIsWithinBlast(sq, d.sq)));
+        }, lead + i * 120);
+      });
+    }
     setHeroStates([...truncStates, res.state]);
     setHeroResults([...truncResults, res.result]);
     setFreeViewPly(truncStates.length);
@@ -860,10 +1118,9 @@ export function Home() {
       const b = uci.slice(4, 6);
       setSlideAnim({ moves: [{ from: a, to: b }, { from: b, to: a }], key: Date.now() });
     } else if (res.result.abilityUsed === 'goofball' && animationsEnabled) {
-      // !G<from><to>[<promo>] — the puppeted piece moves from→to.
-      const from = uci.slice(2, 4);
-      const to = uci.slice(4, 6);
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      // The puppeted piece(s) move from→to — one or two forced moves per
+      // activation.
+      setSlideAnim({ moves: heroGoofballSlides(uci), key: Date.now() });
     } else if (res.result.abilityUsed === 'juggernaut' && animationsEnabled) {
       // Edge Charge (tier 2) slides the Juggernaut to a corner. Earthquake
       // (tier 1) keeps it in place and just pops the spawn square. Slam
@@ -900,15 +1157,42 @@ export function Home() {
     return commitHeroMove(uci, viaClick ? [{ from, to }] : undefined);
   };
 
-  const applyHeroAbility = (to: string, from?: string, promo?: string): boolean => {
+  const applyHeroAbility = (to: string, from?: string, promo?: string, second?: GoofballLeg): boolean => {
     const hero = heroViewState.heroes[heroViewState.turn].hero;
-    return commitHeroMove(heroAbilityUci(hero, to, from, promo));
+    return commitHeroMove(heroAbilityUci(hero, to, from, promo, second));
+  };
+
+  // A Goofball activation forces up to two opponent moves. The first pick is
+  // staged (nothing hits the engine yet) so the second can be chosen on the
+  // resulting position; the second pick commits both at once. Free play
+  // auto-queens forced promotions, same as the single-move flow did.
+  const pickGoofballLeg = (from: string, to: string): boolean => {
+    if (goofballLeg1) {
+      const first = goofballLeg1;
+      setGoofballLeg1(null);
+      return applyHeroAbility(first.to, first.from, first.promo, { from, to, promo: 'Q' });
+    }
+    const preview = heroGoofballPreview(heroBaseState, heroSqToIdx(from), heroSqToIdx(to), 'Q');
+    if (!preview || !heroGoofballHasFollowUp(preview)) {
+      return applyHeroAbility(to, from, 'Q');
+    }
+    setGoofballLeg1({ from, to, promo: 'Q' });
+    sfx.playSelect();
+    return true;
+  };
+
+  // End the activation on the single staged forced move.
+  const finishGoofball = () => {
+    if (!goofballLeg1) return;
+    const first = goofballLeg1;
+    setGoofballLeg1(null);
+    applyHeroAbility(first.to, first.from, first.promo);
   };
 
   // Detect whether `from`→`to` would promote a pawn for the given variant.
   // Cash has no promotion (pawns cash in for gold instead) — always false.
   const isPromotionMove = (
-    variant: 'normal' | 'merge' | 'two' | 'cash' | 'hero',
+    variant: 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper',
     from: string,
     to: string,
   ): boolean => {
@@ -922,10 +1206,12 @@ export function Home() {
     const idx =
       variant === 'merge' ? mergeSqToIdx(from) :
       variant === 'two' ? twoSqToIdx(from) :
+      variant === 'sweeper' ? sweeperSqToIdx(from) :
       heroSqToIdx(from);
     const piece =
       variant === 'merge' ? mergeViewState.board[idx] :
       variant === 'two' ? twoViewState.board[idx] :
+      variant === 'sweeper' ? sweeperViewState.board[idx] :
       heroViewState.board[idx];
     return !!piece && piece.letter.toUpperCase() === 'P';
   };
@@ -954,6 +1240,12 @@ export function Home() {
       applyTwoMove(from, to, valid, viaClick);
       return;
     }
+    if (variant === 'sweeper') {
+      const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+        ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      applySweeperMove(from, to, valid, viaClick);
+      return;
+    }
     // hero — Mutation side accepts Z/C/A fused options. The applyHeroMove
     // signature still types its promotion as Q/R/B/N; the underlying engine
     // accepts the extra letters, so cast through.
@@ -971,6 +1263,15 @@ export function Home() {
       return true;
     }
     return applyFreeMove(from, to);
+  };
+
+  const handleSweeperDrop = (from: string, to: string): boolean => {
+    if (!sweeperLegal(sweeperViewState, from).some((m) => m.to === to)) return false;
+    if (isPromotionMove('sweeper', from, to)) {
+      setFreePromo({ from, to, variant: 'sweeper', viaClick: false });
+      return true;
+    }
+    return applySweeperMove(from, to);
   };
 
   const handleMergeDrop = (
@@ -1006,9 +1307,8 @@ export function Home() {
       if (fromPiece && fromPiece.color === opp) {
         const legals = heroGoofballLegalDestinations(heroViewState, heroSqToIdx(from));
         if (legals.includes(heroSqToIdx(to))) {
-          applyHeroAbility(to, from, 'Q');
           setGoofballFrom(null);
-          return true;
+          return pickGoofballLeg(from, to);
         }
       }
       return false;
@@ -1094,6 +1394,24 @@ export function Home() {
       setFreeSelected(null);
       return;
     }
+    if (freeVariant === 'sweeper') {
+      if (freeSelected && sweeperLegalTargets.some((t) => t.to === square)) {
+        if (isPromotionMove('sweeper', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'sweeper', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applySweeperMove(freeSelected, square, undefined, true);
+        return;
+      }
+      const piece = sweeperViewState.board[sweeperSqToIdx(square)];
+      if (piece && piece.color === sweeperViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
+      return;
+    }
     if (freeVariant === 'cash') {
       if (cashShopLetter) {
         if (cashBuyTargets.has(square)) {
@@ -1122,17 +1440,19 @@ export function Home() {
       const armedHero = heroViewState.heroes[heroViewState.turn].hero;
       if (armedHero === 'goofball') {
         // Two-click flow: first click picks an opponent piece, second
-        // click picks where to send it.
+        // click picks where to send it. Runs twice per activation — the
+        // first forced move is staged, the second commits both.
         if (!goofballFrom) {
           if (heroAbilityTargetSet.has(square)) {
             setGoofballFrom(square);
-          } else {
+          } else if (!goofballLeg1) {
+            // Not while a first leg is staged — disarming would drop it.
             setHeroAbilityArmed(false);
           }
           return;
         }
         if (heroAbilityTargetSet.has(square)) {
-          applyHeroAbility(square, goofballFrom, 'Q');
+          pickGoofballLeg(goofballFrom, square);
           setGoofballFrom(null);
           return;
         }
@@ -1257,6 +1577,12 @@ export function Home() {
       if (freeSelected !== from) setFreeSelected(from);
       return;
     }
+    if (freeVariant === 'sweeper') {
+      const piece = sweeperViewState.board[sweeperSqToIdx(from)];
+      if (!piece || piece.color !== sweeperViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
     if (freeVariant === 'hero') {
       // Goofball: dragging an enemy piece while armed is part of the
       // ability (drop fires it). Don't disarm and don't select our own
@@ -1271,7 +1597,9 @@ export function Home() {
           setGoofballFrom(from);
           return;
         }
-        // Otherwise (dragging own / empty) — fall through and disarm.
+        // Otherwise (dragging own / empty) — fall through and disarm, unless
+        // a first forced move is staged and would be thrown away with it.
+        if (goofballLeg1) return;
       }
       if (heroAbilityArmed) setHeroAbilityArmed(false);
       const piece = heroViewState.board[heroSqToIdx(from)];
@@ -1295,6 +1623,12 @@ export function Home() {
     setHeroStates([freshHeroInitial()]);
     setHeroResults([]);
     setHeroAbilityArmed(false);
+    // Reset re-rolls the minefield, so a replayed opening isn't already solved.
+    setSweeperStates([freshSweeperInitial()]);
+    setSweeperResults([]);
+    setSweeperDoomed([]);
+    setSweeperAnim(null);
+    setSweeperFlags([]);
     setFreeViewPly(0);
     setFreeSelected(null);
     setFreeAnnotationsClearKey((k) => k + 1);
@@ -1345,6 +1679,28 @@ export function Home() {
               if (r.check) sfx.playCheckReversed();
             }
           }
+        } else if (freeVariant === 'sweeper') {
+          const r = sweeperResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.castled) sfx.playCastle();
+              else if (r.captured) sfx.playCapture();
+              else sfx.playMove();
+              // Scrubbing forward into the ply that set a mine off replays
+              // the blast; a quiet move just plays its check cue.
+              if (r.mineIdx != null) {
+                triggerSweeperBlast(
+                  sweeperIdxToSq(r.mineIdx),
+                  r.destroyedLetter,
+                  r.mineLoss ?? (p % 2 === 0 ? 'w' : 'b'),
+                  `mine-view-${p}-${r.uci}`,
+                );
+              } else if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
         } else if (freeVariant === 'two') {
           const r = twoResults[forward ? p : next];
           if (r) {
@@ -1386,6 +1742,8 @@ export function Home() {
               else if (r.abilityUsed === 'twin-jutsu') sfx.playTwinJutsu();
               else if (r.abilityUsed === 'slime') sfx.playSlimeExpand();
               else if (r.abilityUsed === 'juggernaut') sfx.playJugQuake();
+              else if (r.abilityUsed === 'kamakaze') sfx.playKamakazeArm();
+              else if (r.abilityUsed === 'gojo') sfx.playHollowPurple();
               else if (r.castled) sfx.playCastle();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
@@ -1404,7 +1762,7 @@ export function Home() {
         const nextState = heroStates[p + 1];
         if (r && r.abilityUsed && prevState && nextState) {
           const ab = r.abilityUsed;
-          if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut') {
+          if (ab === 'frost' || ab === 'warlord' || ab === 'necromancer' || ab === 'flight' || ab === 'mutation' || ab === 'slime' || ab === 'juggernaut' || ab === 'gojo') {
             const moverColor = prevState.turn;
             if (ab === 'flight') {
               // !L<from><to>[<promo>] — fly the selected piece from → to.
@@ -1471,6 +1829,48 @@ export function Home() {
                 sfx.playExplosion();
                 setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== heroIdxToSq(m.idx)));
               }, at);
+            });
+          }
+          // Replay the chain on this scrubbed-into ply. Nothing slides on a
+          // scrub, so the victims just get the beat before they go up.
+          if (r.kamakazeExplosions && r.kamakazeExplosions.length > 0) {
+            const centers = r.kamakazeExplosions;
+            const doomed = heroKamakazeDoomedSprites(prevState, nextState, centers, boardMoveOf(r.uci));
+            if (doomed.length > 0) setHeroDoomedPieces((prev) => [...prev, ...doomed]);
+            centers.forEach((sq, i) => {
+              window.setTimeout(() => {
+                setHeroAbilityAnim({
+                  kind: 'kamakaze',
+                  toSq: sq,
+                  color: 'w',
+                  key: `kamakaze-${r.uci}-${sq}-${i}-${Date.now()}`,
+                });
+                sfx.playExplosion();
+                setHeroDoomedPieces((prev) => prev.filter((d) => !heroIsWithinBlast(sq, d.sq)));
+              }, (doomed.length === 0 ? 0 : KILL_BEAT_MS) + i * 120);
+            });
+          }
+          // Replay the orb's impact on this scrubbed-into ply.
+          if (r.hollowPurpleBlasts && r.hollowPurpleBlasts.length > 0) {
+            const squares = r.hollowPurpleBlasts;
+            const doomed = squares
+              .map((sq) => {
+                const letter = heroKilledSpriteAt(prevState, sq, boardMoveOf(r.uci));
+                return letter ? { sq, letter: letter as string } : null;
+              })
+              .filter((d): d is { sq: string; letter: string } => d !== null);
+            if (doomed.length > 0) setHeroDoomedPieces((prev) => [...prev, ...doomed]);
+            squares.forEach((sq, i) => {
+              window.setTimeout(() => {
+                setHeroAbilityAnim({
+                  kind: 'gojo-blast',
+                  toSq: sq,
+                  color: prevState.turn,
+                  key: `gojo-blast-${r.uci}-${sq}-${i}-${Date.now()}`,
+                });
+                sfx.playHollowPurpleHit();
+                setHeroDoomedPieces((prev) => prev.filter((d) => d.sq !== sq));
+              }, HOLLOW_PURPLE_DRIFT_MS + i * 130);
             });
           }
           // Replay warlord-ability doomed sprite on this scrubbed-into ply.
@@ -1803,7 +2203,19 @@ export function Home() {
             Chess with voice chat, new variants, and more!
           </p>
         </div>
-        <div className={`free-play-board${freeVariant === 'cash' || freeVariant === 'hero' ? ' with-shop' : ''}`}>
+        <div className={`free-play-board${freeVariant === 'cash' || freeVariant === 'hero' || freeVariant === 'sweeper' ? ' with-shop' : ''}`}>
+          {freeVariant === 'sweeper' && (
+            <div className="free-play-shop-col">
+              <MineRail
+                detonated={sweeperViewState.detonated.length}
+                flagMode={sweeperFlagMode}
+                onToggleFlagMode={() => {
+                  setSweeperFlagMode((v) => !v);
+                  sfx.playClick();
+                }}
+              />
+            </div>
+          )}
           {freeVariant === 'cash' && (
             <div className="free-play-shop-col">
               <CashShop
@@ -1847,6 +2259,7 @@ export function Home() {
                         else if (next === 'twin-jutsu') sfx.playTwinJutsu();
                         else if (next === 'slime') sfx.playSlimeExpand();
                         else if (next === 'juggernaut') sfx.playJugQuake();
+                        else if (next === 'kamakaze') sfx.playKamakazeArm();
                       }
                       setHeroW(next);
                     }}
@@ -1873,6 +2286,7 @@ export function Home() {
                         else if (next === 'twin-jutsu') sfx.playTwinJutsu();
                         else if (next === 'slime') sfx.playSlimeExpand();
                         else if (next === 'juggernaut') sfx.playJugQuake();
+                        else if (next === 'kamakaze') sfx.playKamakazeArm();
                       }
                       setHeroB(next);
                     }}
@@ -1891,6 +2305,11 @@ export function Home() {
                 armed={heroAbilityArmed}
                 onArm={() => { setFreeSelected(null); setHeroAbilityArmed(true); sfx.playSelect(); }}
                 onCancel={() => setHeroAbilityArmed(false)}
+                onFinish={goofballLeg1 ? finishGoofball : undefined}
+                finishLabel="End turn"
+                hintOverride={goofballLeg1
+                  ? 'Force a second opponent move — any piece, the same one included — or end your turn.'
+                  : undefined}
                 compact
                 myJugTier={heroJugTierOf(heroViewState, heroViewState.turn)}
                 oppJugTier={heroJugTierOf(heroViewState, heroViewState.turn === 'w' ? 'b' : 'w')}
@@ -1911,6 +2330,7 @@ export function Home() {
                   { value: 'two',    label: 'Guerrilla' },
                   { value: 'cash',   label: 'Cash Money' },
                   { value: 'hero',   label: 'Hero' },
+                  { value: 'sweeper', label: 'Chesssweeper' },
                 ]}
                 onChange={(next) => {
                   if (next !== freeVariant) {
@@ -1918,6 +2338,7 @@ export function Home() {
                     else if (next === 'two') sfx.playPush();
                     else if (next === 'cash') sfx.playPlace();
                     else if (next === 'hero') sfx.playSlice();
+                    else if (next === 'sweeper') sfx.playExplosion();
                     else sfx.playMove();
                   }
                   setFreeVariant(next);
@@ -1961,6 +2382,29 @@ export function Home() {
                   popSquares={popAnim?.squares}
                   popKey={popAnim?.key}
                   mergeAnim={mergeAnim}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
+                />
+              ) : freeVariant === 'sweeper' ? (
+                <MergeBoard
+                  board={sweeperViewState.board as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={freeSelected}
+                  legalTargets={sweeperLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleSweeperDrop}
+                  onDragStartSquare={onFreeDragStart}
+                  onRightClickSquare={sweeperFlagMode ? toggleSweeperFlag : undefined}
+                  lastMove={freeLastMove}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  abilityAnim={sweeperAnim}
+                  doomedPieces={sweeperDoomed as { sq: string; letter: MergePiece['letter'] }[]}
+                  sweeperCounts={sweeperBoardCounts}
+                  sweeperCraters={sweeperBoardCraters}
+                  sweeperFlags={sweeperFlags}
+                  sweeperZone
                   clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : freeVariant === 'merge' ? (
@@ -2119,12 +2563,23 @@ export function Home() {
                   stunnedSquares={heroViewState.stunned
                     .filter((s) => heroViewState.ply < s.expiresAtPly)
                     .map((s) => heroIdxToSq(s.idx))}
+                  explosiveSquares={heroViewState.explosives
+                    .filter((idx) => heroViewState.board[idx] != null)
+                    .map((idx) => heroIdxToSq(idx))}
                   earthquakes={(heroViewState.earthquakes ?? []).map((eq) => ({
                     sq: heroIdxToSq(eq.idx),
                     df: eq.df,
                     dr: eq.dr,
                     color: eq.color,
                   }))}
+                  hollowPurples={(heroViewState.hollowPurples ?? []).map((hp) => ({
+                    sq: heroIdxToSq(hp.idx),
+                    df: hp.df,
+                    dr: hp.dr,
+                    color: hp.color,
+                    from: heroHollowPurpleOrigin(heroViewState, hp) ?? undefined,
+                  }))}
+                  hollowPurpleSlideKey={heroViewState.ply}
                 />
               )}
               {freePromo && (

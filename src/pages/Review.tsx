@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MergeBoard } from '../components/MergeBoard';
+import { MineRail } from '../components/MineRail';
 import { computeCaptures } from '../lib/captures';
 import { PlayerCard } from '../components/PlayerCard';
 import { ResultAvatar } from '../components/EndScreenAvatars';
@@ -311,11 +312,13 @@ export function Review() {
   // replay's ply-0 board. Works uniformly across every variant since
   // displayAt() already normalizes each engine's piece state into the
   // shared MergePiece shape.
-  const initialDisplay = useMemo(() => displayAt(replay, 0), [replay]);
-  const captures = useMemo(
-    () => computeCaptures(display.board, initialDisplay.board),
-    [display.board, initialDisplay.board],
-  );
+  //
+  // Deliberately NOT useMemo: everything below this point sits after the
+  // `if (!loaded)` early return above, so a hook here would change the hook
+  // count between the empty and loaded renders and React would throw
+  // "rendered more hooks than during the previous render" on import.
+  const initialDisplay = displayAt(replay, 0);
+  const captures = computeCaptures(display.board, initialDisplay.board);
   const canUndo = viewPly > 0;
   const canRedo = viewPly < total;
   const tc = getTimeControl(exp.timeControlId);
@@ -332,7 +335,12 @@ export function Review() {
 
   return (
     <div className="game-layout">
-      <div className="board-column">
+      <div className={`board-column${exp.variant === 'sweeper' ? ' with-mine-rail' : ''}`}>
+        {exp.variant === 'sweeper' && (
+          <div className="mine-side-rail">
+            <MineRail detonated={display.sweeperCraters?.length ?? 0} />
+          </div>
+        )}
         <div className="board-wrap viewing-history">
           <MergeBoard
             board={display.board}
@@ -346,7 +354,13 @@ export function Review() {
             slimeKingSquares={display.slimeKingSquares ?? null}
             juggernauts={display.juggernauts ?? null}
             stunnedSquares={display.stunnedSquares ?? null}
+            explosiveSquares={display.explosiveSquares ?? null}
             earthquakes={display.earthquakes ?? null}
+            hollowPurples={display.hollowPurples ?? null}
+            hollowPurpleSlideKey={viewPly}
+            sweeperCounts={display.sweeperCounts ?? null}
+            sweeperCraters={display.sweeperCraters ?? null}
+            sweeperZone={exp.variant === 'sweeper'}
             interactive={false}
             draggable={false}
           />
@@ -497,6 +511,7 @@ const VARIANT_LABEL: Record<ExportedGame['variant'], string> = {
   two: 'Guerrilla',
   cash: 'Cash Money',
   hero: 'Hero',
+  sweeper: 'Chesssweeper',
 };
 
 function MovesPanel({
@@ -587,5 +602,6 @@ function labelFor(reason: GameEndReason): string {
     case 'timeout': return 'on time';
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
+    case 'mine': return 'the king stepped on a mine';
   }
 }

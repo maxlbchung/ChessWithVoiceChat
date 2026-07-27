@@ -119,11 +119,35 @@ type Props = {
   // Squares holding pieces stunned by the Juggernaut's slam — dizzy stars
   // overlay. Stunned pieces can still be captured (unlike frozen).
   stunnedSquares?: Square[] | null;
+  // Kamakaze-marked pieces. They shake and glow red until a capture
+  // detonates them.
+  explosiveSquares?: Square[] | null;
   // Live earthquakes (Juggernaut tier-1). Each renders a shaking ground
   // crack on its current square plus a small arrow indicating direction.
   earthquakes?: { sq: Square; df: number; dr: number; color: 'w' | 'b' }[] | null;
+  // Live Hollow Purple orbs (Gojo). Each renders a churning violet sphere on
+  // its current square with a comet trail pointing the way it's drifting.
+  // `from` is the square it drifted in from this ply (absent on the ply it
+  // was cast) — the orb glides across from there instead of teleporting.
+  hollowPurples?: { sq: Square; df: number; dr: number; color: 'w' | 'b'; from?: Square }[] | null;
+  // Bumped whenever the orbs should re-play their drift (i.e. every ply).
+  // Rides the React key so the CSS animation restarts from 0%.
+  hollowPurpleSlideKey?: string | number;
   // Transient emoji reactions shown beside the emitting side's king(s).
   emojiBubble?: { emoji: string; squares: Square[]; key: string | number } | null;
+  // Chesssweeper: squares a piece has landed on, with the number of live
+  // mines still touching them. Drawn behind the pieces so a number stays
+  // readable once something parks on top of it.
+  sweeperCounts?: { sq: Square; count: number }[] | null;
+  // Chesssweeper: mines that have already gone off — permanent craters.
+  sweeperCraters?: Square[] | null;
+  // Chesssweeper: squares the local player has flagged as suspected mines.
+  // Purely a personal annotation — never shared with the opponent. Drawn in
+  // the same slot as the numbers, and takes precedence over one.
+  sweeperFlags?: Square[] | null;
+  // Chesssweeper: shade ranks 4-5 a touch darker so the buried zone reads at
+  // a glance without spelling it out.
+  sweeperZone?: boolean;
 };
 
 export type MergeAnim = {
@@ -146,7 +170,7 @@ export type MergeAnim = {
 };
 
 export type AbilityAnim = {
-  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm' | 'slime-expand' | 'slime-split' | 'juggernaut' | 'juggernaut-leap' | 'jug-absorb' | 'jug-slam';
+  kind: 'frost' | 'frost-shatter' | 'warlord' | 'necromancer' | 'flight' | 'mutation' | 'icbm' | 'kamakaze' | 'mine' | 'slime-expand' | 'slime-split' | 'juggernaut' | 'juggernaut-leap' | 'jug-absorb' | 'jug-slam' | 'gojo' | 'gojo-blast';
   // Flight: flyer's old square. Warlord: king's square (pivot for swing).
   // Slime-expand: the mini king's square (the corner the blob grows out of).
   // Juggernaut-leap: the tier-2 king's takeoff square.
@@ -170,10 +194,160 @@ export type AbilityAnim = {
 
 type Arrow = { from: Square; to: Square };
 
+// How long a Hollow Purple takes to glide one square. Shared with the pages
+// so the impact explosion fires exactly when the orb lands on its victim.
+export const HOLLOW_PURPLE_DRIFT_MS = 420;
+// When the orb becomes real during its cast. The red and blue motes converge
+// at 420ms and the merged energy collapses to a point through 740ms, so the
+// sphere only materialises once that flash fires — before then there is
+// nothing on the square but the two halves rushing together. Keep in step
+// with the .ability-gojo keyframes in styles.css.
+export const HOLLOW_PURPLE_CAST_FORM_MS = 700;
+
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 // Warm amber for the right-click annotation arrows and square highlights.
 const ARROW_COLOR = 'rgb(255,170,0)';
 const HIGHLIGHT_COLOR = 'rgba(255,170,0,0.45)';
+
+type EmojiBubblePlacement = {
+  sq: Square;
+  placement: 'above' | 'below';
+  x: number;
+  y: number;
+  bubbleW: number;
+  bubbleH: number;
+  bubblePad: number;
+  tailPoints: string;
+};
+
+type BubbleRect = { x: number; y: number; w: number; h: number };
+
+function clampPx(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function bubbleOverlapArea(a: BubbleRect, b: BubbleRect, margin: number): number {
+  const x = Math.min(a.x + a.w + margin, b.x + b.w + margin) - Math.max(a.x - margin, b.x - margin);
+  const y = Math.min(a.y + a.h + margin, b.y + b.h + margin) - Math.max(a.y - margin, b.y - margin);
+  return x > 0 && y > 0 ? x * y : 0;
+}
+
+function emojiCenterForSquare(sq: Square, orientation: 'white' | 'black', squarePx: number): { x: number; y: number } {
+  const file = sq.charCodeAt(0) - 97;
+  const rank = parseInt(sq[1], 10) - 1;
+  const col = orientation === 'white' ? file : 7 - file;
+  const row = orientation === 'white' ? 7 - rank : rank;
+  return { x: col * squarePx + squarePx / 2, y: row * squarePx + squarePx / 2 };
+}
+
+function emojiTailTip(
+  center: { x: number; y: number },
+  base: { x: number; y: number },
+  squarePx: number,
+): { x: number; y: number } {
+  const dx = base.x - center.x;
+  const dy = base.y - center.y;
+  const len = Math.hypot(dx, dy);
+  if (!len) return center;
+  const stopShort = squarePx * 0.24;
+  return {
+    x: center.x + (dx / len) * stopShort,
+    y: center.y + (dy / len) * stopShort,
+  };
+}
+
+function buildEmojiCandidate(
+  sq: Square,
+  center: { x: number; y: number },
+  effectiveSize: number,
+  squarePx: number,
+  placement: 'above' | 'below',
+  horizontalDir: 1 | -1,
+  lane: number,
+  order: number,
+): EmojiBubblePlacement & { rect: BubbleRect; order: number } {
+  const bubbleW = squarePx * 0.82;
+  const bubbleH = squarePx * 0.82;
+  const pad = squarePx * 0.08;
+  const gap = squarePx * (0.29 + lane * 0.12);
+  const xOffset = squarePx * (0.48 + lane * 0.18) * horizontalDir;
+  const rawX = center.x + xOffset - bubbleW / 2;
+  const x = clampPx(rawX, pad, effectiveSize - bubbleW - pad);
+  const rawY = placement === 'above'
+    ? center.y - bubbleH - gap
+    : center.y + gap;
+  const y = clampPx(rawY, pad, effectiveSize - bubbleH - pad);
+  const bubbleCenterX = x + bubbleW / 2;
+  const baseLocalX = bubbleCenterX >= center.x ? bubbleW * 0.28 : bubbleW * 0.72;
+  const baseHalf = squarePx * 0.1;
+  const baseX = x + baseLocalX;
+  const baseY = placement === 'above' ? y + bubbleH - 1 : y + 1;
+  const tip = emojiTailTip(center, { x: baseX, y: baseY }, squarePx);
+  const tailPoints = [
+    `${baseX - baseHalf},${baseY}`,
+    `${baseX + baseHalf},${baseY}`,
+    `${tip.x},${tip.y}`,
+  ].join(' ');
+  return {
+    sq,
+    placement,
+    x,
+    y,
+    bubbleW,
+    bubbleH,
+    bubblePad: squarePx * 0.14,
+    tailPoints,
+    rect: { x, y, w: bubbleW, h: bubbleH },
+    order,
+  };
+}
+
+function layoutEmojiBubbles(
+  squares: Square[],
+  orientation: 'white' | 'black',
+  squarePx: number,
+  effectiveSize: number,
+): EmojiBubblePlacement[] {
+  const uniqueSquares = Array.from(new Set(squares));
+  const placed: BubbleRect[] = [];
+  const margin = squarePx * 0.06;
+  return uniqueSquares.map((sq) => {
+    const center = emojiCenterForSquare(sq, orientation, squarePx);
+    const primaryHorizontal = center.x <= effectiveSize / 2 ? 1 : -1;
+    const primaryVertical: 'above' | 'below' = center.y >= effectiveSize / 2 ? 'above' : 'below';
+    const verticals: Array<'above' | 'below'> = [primaryVertical, primaryVertical === 'above' ? 'below' : 'above'];
+    const horizontals: Array<1 | -1> = [primaryHorizontal, primaryHorizontal === 1 ? -1 : 1];
+    const candidates: Array<EmojiBubblePlacement & { rect: BubbleRect; order: number }> = [];
+    let order = 0;
+    for (const placement of verticals) {
+      for (let lane = 0; lane < 3; lane++) {
+        for (const horizontalDir of horizontals) {
+          candidates.push(buildEmojiCandidate(sq, center, effectiveSize, squarePx, placement, horizontalDir, lane, order++));
+        }
+      }
+    }
+
+    let best = candidates[0];
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const overlap = placed.reduce(
+        (sum, rect) => sum + bubbleOverlapArea(candidate.rect, rect, margin),
+        0,
+      );
+      if (overlap === 0) {
+        best = candidate;
+        break;
+      }
+      const score = overlap + candidate.order * 0.01;
+      if (score < bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    placed.push(best.rect);
+    return best;
+  });
+}
 
 export function MergeBoard({
   board,
@@ -211,9 +385,25 @@ export function MergeBoard({
   slimeShiftArrows,
   juggernauts,
   stunnedSquares,
+  explosiveSquares,
   earthquakes,
+  hollowPurples,
+  hollowPurpleSlideKey,
   emojiBubble,
+  sweeperCounts,
+  sweeperCraters,
+  sweeperFlags,
+  sweeperZone,
 }: Props) {
+  // Chesssweeper lookups — revealed numbers, blown craters and the local
+  // player's flags, keyed by square.
+  const sweeperCountBySq = useMemo(() => {
+    const m = new Map<Square, number>();
+    for (const c of sweeperCounts ?? []) m.set(c.sq, c.count);
+    return m;
+  }, [sweeperCounts]);
+  const craterSet = useMemo(() => new Set(sweeperCraters ?? []), [sweeperCraters]);
+  const flagSet = useMemo(() => new Set(sweeperFlags ?? []), [sweeperFlags]);
   // Indexed map for O(1) per-square missile lookup during render.
   const missilesBySq = useMemo(() => {
     const m = new Map<Square, { pliesLeft: number; firedBy: 'w' | 'b' }>();
@@ -359,11 +549,19 @@ export function MergeBoard({
     return m;
   }, [juggernauts]);
   const stunnedSet = useMemo(() => new Set(stunnedSquares ?? []), [stunnedSquares]);
+  const explosiveSet = useMemo(() => new Set(explosiveSquares ?? []), [explosiveSquares]);
   const earthquakesBySq = useMemo(() => {
     const m = new Map<Square, { df: number; dr: number; color: 'w' | 'b' }>();
     for (const eq of earthquakes ?? []) m.set(eq.sq, { df: eq.df, dr: eq.dr, color: eq.color });
     return m;
   }, [earthquakes]);
+  const hollowPurplesBySq = useMemo(() => {
+    const m = new Map<Square, { df: number; dr: number; color: 'w' | 'b'; from?: Square }>();
+    for (const hp of hollowPurples ?? []) {
+      m.set(hp.sq, { df: hp.df, dr: hp.dr, color: hp.color, from: hp.from });
+    }
+    return m;
+  }, [hollowPurples]);
 
   const slideMap = useMemo(() => {
     const m = new Map<Square, { dx: number; dy: number }>();
@@ -586,6 +784,10 @@ export function MergeBoard({
     return { x: col * squarePx + squarePx / 2, y: row * squarePx + squarePx / 2 };
   };
 
+  const emojiBubblePlacements = emojiBubble
+    ? layoutEmojiBubbles(emojiBubble.squares, orientation, squarePx, effectiveSize)
+    : [];
+
   // All arrows to render — committed + the in-progress preview at half opacity.
   const renderedArrows = useMemo<Array<Arrow & { preview?: boolean }>>(
     () => {
@@ -642,8 +844,14 @@ export function MergeBoard({
           const isFrozen = !!frozenSquares && frozenSquares.includes(sq);
           const isFrozenCracking = isFrozen && !!frozenCrackingSquares && frozenCrackingSquares.includes(sq);
 
+          // Chesssweeper buries its mines in ranks 4-5 only; shading that band
+          // a step darker makes the danger zone obvious without a legend.
+          const inMineZone = !!sweeperZone && (r === 3 || r === 4);
+
           const style: CSSProperties = {
-            background: isLight ? '#dfe5f0' : '#5d6c89',
+            background: isLight
+              ? (inMineZone ? '#a1aecb' : '#dfe5f0')
+              : (inMineZone ? '#36425a' : '#5d6c89'),
             position: 'relative',
             display: 'flex',
             alignItems: 'center',
@@ -726,6 +934,42 @@ export function MergeBoard({
                   }}
                 />
               )}
+              {craterSet.has(sq) && <div className="sweeper-crater" aria-hidden />}
+              {(() => {
+                // Flags and numbers share one slot behind the pieces. The
+                // number always sits small in the corner — it's reference
+                // information, and having it swell to fill the tile whenever a
+                // piece steps off would make the board flicker between two
+                // layouts. A flag is a deliberate mark, so it claims the whole
+                // tile when the square is empty, and wins the slot over a
+                // number — unflag the square to read the count again.
+                const flagged = flagSet.has(sq);
+                const count = sweeperCountBySq.get(sq);
+                if (!flagged && (count == null || craterSet.has(sq))) return null;
+                // Dark squares (and the darker mine band especially) need a
+                // stronger halo, and the near-black "0" has to flip light.
+                const shade = isLight ? '' : ' on-dark';
+                if (flagged) {
+                  return (
+                    <div
+                      className={`sweeper-flag${piece ? ' corner' : ''}`}
+                      style={{ fontSize: (piece ? 0.3 : 0.6) * squarePx }}
+                      aria-hidden
+                    >
+                      🚩
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    className={`sweeper-count n${count}${shade}`}
+                    style={{ fontSize: 0.3 * squarePx }}
+                    aria-hidden
+                  >
+                    {count}
+                  </div>
+                );
+              })()}
               {kingGlowColor && (() => {
                 // During Flight, the static king on the destination square
                 // is hidden until the flying overlay lands — the glow needs
@@ -847,6 +1091,7 @@ export function MergeBoard({
                     neutralKingTier={jugBySq.get(sq)}
                     juggernautLeap={isJugLeapDest}
                     slimeGoo={slimeMiniSet.has(sq) && !slimeTileSet.has(sq)}
+                    explosive={explosiveSet.has(sq)}
                   />
                 );
               })()}
@@ -995,8 +1240,15 @@ export function MergeBoard({
                 const keys = lettersToPieceKeys(letter as PieceLetter);
                 const fullSize = squarePx * 0.95;
                 const pairSize = squarePx * 0.7;
+                // A doomed piece can still be mid-move — Chesssweeper slides
+                // the mover onto the mine and detonates it on arrival — so it
+                // rides the same slide a live sprite would. The slideKey in
+                // the React key restarts the animation from 0% each move.
+                const slide = slideMap.get(sq);
                 return (
                   <div
+                    key={slide ? `doomed-slide-${slideKey}-${sq}` : `doomed-${sq}`}
+                    className="doomed-piece"
                     aria-hidden
                     style={{
                       position: 'absolute',
@@ -1005,7 +1257,18 @@ export function MergeBoard({
                       alignItems: 'center',
                       justifyContent: 'center',
                       pointerEvents: 'none',
-                      zIndex: 4,
+                      // Normally under the square's effect overlays. A Hollow
+                      // Purple gliding onto this square is the exception: it
+                      // draws above pieces, and would hide the very victim
+                      // this overlay exists to keep on screen.
+                      zIndex: hollowPurplesBySq.has(sq) ? 7 : 4,
+                      ...(slide
+                        ? {
+                            ['--slide-dx' as any]: `${slide.dx}px`,
+                            ['--slide-dy' as any]: `${slide.dy}px`,
+                            animation: 'piece-slide 260ms cubic-bezier(0.33, 1, 0.68, 1) both',
+                          }
+                        : null),
                     }}
                   >
                     {keys.length === 1
@@ -1340,6 +1603,70 @@ export function MergeBoard({
                         </>
                       )}
                     </svg>
+                  </div>
+                );
+              })()}
+              {(() => {
+                // Hollow Purple overlay (Gojo) — a churning violet sphere
+                // with a streaming tail behind it and a chevron ahead, so
+                // the lane it is about to erase reads at a glance.
+                //
+                // df is a file delta (+ = right), dr a rank delta (+ = up
+                // the board); screen y grows downward, so the drawn heading
+                // is atan2(-dr, df) with the artwork drawn pointing east.
+                // The whole marker counter-rotates with the board flip so a
+                // black-perspective view still points where the orb goes.
+                const hp = hollowPurplesBySq.get(sq);
+                if (!hp) return null;
+                const flip = orientation === 'white' ? 1 : -1;
+                const heading = Math.atan2(-hp.dr * flip, hp.df * flip) * 180 / Math.PI;
+                // The orb is rendered on the square it has already reached in
+                // the engine, so the drift animation translates it back to
+                // `from` and eases it forward — the same trick the piece
+                // slide uses. `df`/`dr` are board deltas; on screen the drift
+                // runs one square along the (flipped) heading.
+                const drift = hp.from
+                  ? { dx: -hp.df * flip * squarePx, dy: hp.dr * flip * squarePx }
+                  : null;
+                // The cast is mid-flight on this square: the orb doesn't
+                // exist yet, it's still two halves of cursed energy rushing
+                // together. Hold it hidden until they merge, then bloom it
+                // out of the flash. When animations are off the parent never
+                // sets abilityAnim, so the orb just appears — correct.
+                const casting = abilityAnim?.kind === 'gojo' && abilityAnim.toSq === sq;
+                return (
+                  <div
+                    key={`hp-${hollowPurpleSlideKey}-${sq}`}
+                    className="hollow-purple-marker"
+                    aria-hidden
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      pointerEvents: 'none',
+                      zIndex: 6,
+                      ...(casting
+                        ? {
+                          animation: `hollow-purple-form 260ms cubic-bezier(0.2, 0.9, 0.35, 1) ${HOLLOW_PURPLE_CAST_FORM_MS}ms both`,
+                        }
+                        : drift
+                        ? {
+                          ['--hp-dx' as any]: `${drift.dx}px`,
+                          ['--hp-dy' as any]: `${drift.dy}px`,
+                          animation: `hollow-purple-drift ${HOLLOW_PURPLE_DRIFT_MS}ms cubic-bezier(0.35, 0.05, 0.4, 1) both`,
+                        }
+                        : null),
+                    }}
+                  >
+                    <span className="hp-halo" />
+                    {/* Rotation rides a custom property, not an inline
+                        transform — the class already owns a centring
+                        translate() that an inline transform would clobber. */}
+                    <span className="hp-heading" style={{ ['--hp-rot' as any]: `${heading}deg` }}>
+                      <span className="hp-trail" />
+                      <span className="hp-chevron" />
+                    </span>
+                    <span className="hp-orb" />
+                    <span className="hp-core" />
                   </div>
                 );
               })()}
@@ -1744,41 +2071,21 @@ export function MergeBoard({
           centerOf={center}
         />
       )}
-      {emojiBubble && emojiBubble.squares.map((sq, i) => {
-        const c = center(sq);
-        const bubbleW = squarePx * 0.82;
-        const bubbleH = squarePx * 0.82;
-        const pad = squarePx * 0.08;
-        const gap = squarePx * 0.34;
-        const horizontalDir = c.x <= effectiveSize / 2 ? 1 : -1;
-        const placement: 'above' | 'below' = c.y >= effectiveSize / 2 ? 'above' : 'below';
-        const rawX = c.x + horizontalDir * squarePx * 0.48 - bubbleW / 2;
-        const x = Math.max(pad, Math.min(effectiveSize - bubbleW - pad, rawX));
-        const rawY = placement === 'above' ? c.y - bubbleH - gap : c.y + gap;
-        const y = Math.max(pad, Math.min(effectiveSize - bubbleH - pad, rawY));
-        const bubbleCenterX = x + bubbleW / 2;
-        const baseLocalX = bubbleCenterX >= c.x ? bubbleW * 0.28 : bubbleW * 0.72;
-        const baseHalf = squarePx * 0.12;
-        const baseY = placement === 'above' ? y + bubbleH - 1 : y + 1;
-        const tailPoints = [
-          `${x + baseLocalX - baseHalf},${baseY}`,
-          `${x + baseLocalX + baseHalf},${baseY}`,
-          `${c.x},${c.y}`,
-        ].join(' ');
+      {emojiBubble && emojiBubblePlacements.map((bubble, i) => {
         return (
-          <Fragment key={`${emojiBubble.key}-${sq}-${i}`}>
-            <svg className={`king-emoji-tail ${placement}`} aria-hidden viewBox={`0 0 ${effectiveSize} ${effectiveSize}`}>
-              <polygon points={tailPoints} />
+          <Fragment key={`${emojiBubble.key}-${bubble.sq}-${i}`}>
+            <svg className={`king-emoji-tail ${bubble.placement}`} aria-hidden viewBox={`0 0 ${effectiveSize} ${effectiveSize}`}>
+              <polygon points={bubble.tailPoints} />
             </svg>
             <div
-              className={`king-emoji-bubble ${placement}`}
+              className={`king-emoji-bubble ${bubble.placement}`}
               style={{
-                ['--bubble-x' as any]: `${x}px`,
-                ['--bubble-y' as any]: `${y}px`,
+                ['--bubble-x' as any]: `${bubble.x}px`,
+                ['--bubble-y' as any]: `${bubble.y}px`,
                 ['--bubble-size' as any]: `${squarePx}px`,
-                ['--bubble-w' as any]: `${bubbleW}px`,
-                ['--bubble-h' as any]: `${bubbleH}px`,
-                ['--bubble-pad' as any]: `${squarePx * 0.14}px`,
+                ['--bubble-w' as any]: `${bubble.bubbleW}px`,
+                ['--bubble-h' as any]: `${bubble.bubbleH}px`,
+                ['--bubble-pad' as any]: `${bubble.bubblePad}px`,
               }}
               aria-hidden
             >
@@ -2247,6 +2554,118 @@ function AbilityOverlay({
       </div>
     );
   }
+  if (anim.kind === 'mine') {
+    // Landmine blast (Chesssweeper). Ground-level burst: white flash, dirty
+    // fireball, two shockwave rings, plus debris flung outward and a puff of
+    // smoke that lingers over the fresh crater.
+    const debris = Array.from({ length: 10 }, (_, i) => {
+      const angle = (i / 10) * Math.PI * 2 + 0.31;
+      return (
+        <span
+          key={i}
+          className="ability-mine-debris"
+          style={{
+            ['--dx' as any]: `${Math.cos(angle) * squarePx * (0.9 + (i % 3) * 0.35)}px`,
+            ['--dy' as any]: `${Math.sin(angle) * squarePx * (0.9 + (i % 3) * 0.35)}px`,
+            ['--delay' as any]: `${(i % 4) * 22}ms`,
+          }}
+          aria-hidden
+        />
+      );
+    });
+    return (
+      <div
+        className="ability-mine"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="ability-mine-flash" aria-hidden />
+        <span className="ability-mine-fireball" aria-hidden />
+        <span className="ability-mine-shock r1" aria-hidden />
+        <span className="ability-mine-shock r2" aria-hidden />
+        {debris}
+        <span className="ability-mine-smoke" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'kamakaze') {
+    return (
+      <div
+        className="ability-kamakaze"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="ability-kamakaze-flash" aria-hidden />
+        <span className="ability-kamakaze-fireball" aria-hidden />
+        <span className="ability-kamakaze-shock r1" aria-hidden />
+        <span className="ability-kamakaze-shock r2" aria-hidden />
+        <span className="ability-kamakaze-smoke" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'gojo') {
+    // Hollow Purple condensing: red and blue cursed-energy motes rush the
+    // spawn square from opposite sides, collapse into a violet singularity,
+    // then blow out as a ring. Pairs with the hollow-purple SFX.
+    return (
+      <div
+        className="ability-gojo"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="gojo-mote blue" aria-hidden />
+        <span className="gojo-mote red" aria-hidden />
+        <span className="gojo-collapse" aria-hidden />
+        <span className="gojo-flash" aria-hidden />
+        <span className="gojo-ring r1" aria-hidden />
+        <span className="gojo-ring r2" aria-hidden />
+      </div>
+    );
+  }
+  if (anim.kind === 'gojo-blast') {
+    // A drifting orb ran a piece down. Violet annihilation: a hard flash, a
+    // ring, and shreds of the victim torn outward into the void.
+    const shreds = Array.from({ length: 8 }, (_, i) => {
+      const angle = (i / 8) * Math.PI * 2 + Math.PI / 11;
+      const dist = squarePx * (0.55 + (i % 3) * 0.22);
+      return (
+        <span
+          key={i}
+          className="gojo-shred"
+          aria-hidden
+          style={{
+            ['--shred-dx' as any]: `${Math.cos(angle) * dist}px`,
+            ['--shred-dy' as any]: `${Math.sin(angle) * dist}px`,
+            animationDelay: `${i * 15}ms`,
+          }}
+        />
+      );
+    });
+    return (
+      <div
+        className="ability-gojo-blast"
+        style={{
+          ['--cx' as any]: `${to.x}px`,
+          ['--cy' as any]: `${to.y}px`,
+          ['--size' as any]: `${squarePx}px`,
+        }}
+      >
+        <span className="gojo-blast-flash" aria-hidden />
+        <span className="gojo-blast-void" aria-hidden />
+        <span className="gojo-blast-ring" aria-hidden />
+        {shreds}
+      </div>
+    );
+  }
   if (anim.kind === 'slime-expand' && anim.fromSq) {
     // Goo burst at the centre of the new 2×2 quadrant (midpoint between the
     // mini king and the far corner) while the blob layer plays its grow.
@@ -2424,6 +2843,7 @@ function PieceSprite({
   neutralKingTier,
   juggernautLeap,
   slimeGoo,
+  explosive,
 }: {
   piece: Piece;
   squarePx: number;
@@ -2460,6 +2880,7 @@ function PieceSprite({
   // the bubble was a sibling on the cell, which made it disappear during
   // moves / drags and snap back at rest.)
   slimeGoo?: boolean;
+  explosive?: boolean;
 }) {
   const keys = lettersToPieceKeys(piece.letter);
   const isMerged = keys.length > 1;
@@ -2467,8 +2888,8 @@ function PieceSprite({
   const pairSize = squarePx * 0.7;
   // Stack two drop-shadows for a tight inner ring + soft outer halo that
   // hugs the actual piece silhouette (not the square).
-  const glowFilter = glowColor
-    ? `drop-shadow(0 0 ${squarePx * 0.06}px ${glowColor}) drop-shadow(0 0 ${squarePx * 0.18}px ${glowColor})`
+  const glowFilter = glowColor || explosive
+    ? `drop-shadow(0 0 ${squarePx * 0.06}px ${glowColor ?? '#ff3535'}) drop-shadow(0 0 ${squarePx * 0.18}px ${glowColor ?? '#ff3535'})${explosive ? ` drop-shadow(0 0 ${squarePx * 0.28}px rgba(255, 20, 20, 0.85))` : ''}`
     : undefined;
 
   const slideStyle: CSSProperties = slideFrom
@@ -2549,6 +2970,7 @@ function PieceSprite({
       }}
     >
       {slimeGoo && <span className="slime-goo slime-goo-mini" aria-hidden />}
+      {explosive && <span className="explosive-aura" aria-hidden />}
       <div
         style={{
           ['--size' as any]: `${squarePx}px`,
@@ -2564,7 +2986,7 @@ function PieceSprite({
       >
         {juggernautLeap && <span className="piece-jug-leap-shadow" aria-hidden />}
         <div
-          className={juggernautLeap ? 'piece-jug-leap-body' : undefined}
+          className={`${juggernautLeap ? 'piece-jug-leap-body' : ''}${explosive ? ' piece-explosive-body' : ''}`.trim() || undefined}
           style={contentStyle}
         >
           {neutralKing ? (

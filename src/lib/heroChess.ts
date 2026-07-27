@@ -38,8 +38,8 @@ export type PieceLetter =
 export type Piece = { color: C2Color; letter: PieceLetter };
 export type Square = string;
 
-export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu' | 'slime' | 'juggernaut';
-export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jutsu', 'slime', 'juggernaut'];
+export type HeroKind = 'frost' | 'warlord' | 'necromancer' | 'flight' | 'harem' | 'mutation' | 'icbm' | 'goofball' | 'twin-jutsu' | 'slime' | 'juggernaut' | 'kamakaze' | 'gojo';
+export const HERO_KINDS: HeroKind[] = ['frost', 'warlord', 'necromancer', 'flight', 'harem', 'mutation', 'icbm', 'goofball', 'twin-jutsu', 'slime', 'juggernaut', 'kamakaze', 'gojo'];
 
 // 'twin-jutsu' was misspelled 'twin-jitsu' before the rename. Old saved
 // records, exported JSON files, and stale peers can still carry the old id —
@@ -200,9 +200,9 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
   goofball: {
     kind: 'goofball',
     name: 'Goofball',
-    blurb: 'Make a legal move for your opponent on their behalf.',
+    blurb: 'Make up to two legal moves for your opponent on their behalf — any pieces, including the same one twice.',
     glowColor: '#f7d000',
-    cooldownTurns: 0,
+    cooldownTurns: 2,
   },
   'twin-jutsu': {
     kind: 'twin-jutsu',
@@ -224,6 +224,20 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     blurb: 'Fields only a lone colorless king with three lives. Capturing it kills the attacker and only enrages it — it tiers up, swapping its active ability each time, and it can’t be checked until tier 3, where the next hit finally fells it. Walks one square in any direction at every tier; the tier abilities carry the reach.',
     glowColor: '#b08d57',
     cooldownTurns: 3,
+  },
+  kamakaze: {
+    kind: 'kamakaze',
+    name: 'Kamakaze',
+    blurb: 'Mark one of your pieces explosive. It detonates in a 1-tile radius when it captures or gets captured, chaining through nearby explosives.',
+    glowColor: '#e02b2b',
+    cooldownTurns: 5,
+  },
+  gojo: {
+    kind: 'gojo',
+    name: 'Gojo',
+    blurb: 'Spawn Hollow Purple beside your king. It drifts one square every ply in a straight line to the board edge, annihilating every piece it touches — yours included.',
+    glowColor: '#b026ff',
+    cooldownTurns: 10,
   },
 };
 
@@ -287,6 +301,13 @@ export type GameState = {
   // tile per ply in the direction it was launched, killing the first enemy
   // it lands on and dissipating at the board edge.
   earthquakes: Earthquake[];
+  // Kamakaze-marked explosive pieces. The marker follows the piece as it
+  // moves and is cleared when the piece is destroyed or detonates.
+  explosives: number[];
+  // Gojo's Hollow Purple orbs. Unlike earthquakes these drift one tile on
+  // EVERY ply regardless of who moved, annihilating whatever they touch
+  // (both sides') until they fall off the board edge.
+  hollowPurples: HollowPurple[];
 };
 
 export type SlimeGroup = { tiles: number[] };
@@ -299,6 +320,19 @@ export type Earthquake = {
   color: C2Color;
   // Ply on which the wave was spawned; it sits still until ply advances
   // past this value so its first move feels like "next turn".
+  spawnedAtPly: number;
+};
+
+export type HollowPurple = {
+  idx: number;
+  df: number;
+  dr: number;
+  // Side that cast it — recorded for the overlay's tint and the replay log.
+  // It does NOT spare that side's pieces: Hollow Purple erases friend and foe
+  // alike.
+  color: C2Color;
+  // Ply the orb appeared on; it holds still until `ply` moves past this so
+  // its first drift happens on the following ply.
   spawnedAtPly: number;
 };
 
@@ -332,6 +366,14 @@ export type MoveResult = {
   // in check under normal rules. The Juggernaut is immune (check=false), but
   // the idea calls for the check sound to still play as a flavor cue.
   jugPhantomCheck?: boolean;
+  // Ordered centers of Kamakaze explosions triggered by this move. Chains
+  // append subsequent detonations in propagation order for staggered UI.
+  kamakazeExplosions?: Square[];
+  // Squares where a drifting Hollow Purple annihilated a piece this ply.
+  // The UI holds the victim's sprite until the orb finishes sliding in, then
+  // detonates it there. The orb's own spawn kill isn't listed — the cast
+  // animation already covers that square.
+  hollowPurpleBlasts?: Square[];
 };
 
 // True if `idx` currently has an active freeze entry that hasn't expired.
@@ -350,6 +392,29 @@ export function isStunned(state: GameState, idx: number): boolean {
     if (s.idx === idx && state.ply < s.expiresAtPly) return true;
   }
   return false;
+}
+
+function explosiveIdxs(state: Pick<GameState, 'explosives'>): number[] {
+  return Array.isArray((state as any).explosives) ? (state as any).explosives : [];
+}
+
+export function isExplosive(state: Pick<GameState, 'explosives'>, idx: number): boolean {
+  return explosiveIdxs(state).includes(idx);
+}
+
+function withExplosiveMoved(explosives: number[], fromIdx: number, toIdx: number): number[] {
+  const out = new Set<number>();
+  for (const idx of explosives) {
+    if (idx === toIdx) continue;
+    out.add(idx === fromIdx ? toIdx : idx);
+  }
+  return [...out];
+}
+
+function compactExplosives(state: GameState): void {
+  state.explosives = explosiveIdxs(state).filter((idx, i, arr) =>
+    idx >= 0 && idx < 64 && state.board[idx] != null && arr.indexOf(idx) === i,
+  );
 }
 
 // Tier of the Juggernaut king sitting on `idx`, or 0 if the square doesn't
@@ -505,6 +570,8 @@ export function initialState(heroW: HeroKind, heroB: HeroKind, backRanks?: BackR
     jugTier: { w: 1, b: 1 },
     stunned: [],
     earthquakes: [],
+    explosives: [],
+    hollowPurples: [],
   };
   // Twin-Jutsu: mask every piece of that side at game-start. Pieces unmask
   // when they move (or are captured); the swap ability re-masks both endpoints.
@@ -578,6 +645,7 @@ function processMissileLandings(next: GameState): { kingDestroyed: C2Color | nul
       // gone, the reference would be a dangling index otherwise.
       next.frozen = next.frozen.filter((f) => f.idx !== m.idx);
       next.stunned = next.stunned.filter((s) => s.idx !== m.idx);
+      next.explosives = explosiveIdxs(next).filter((x) => x !== m.idx);
       // Mask flag on a now-empty square is meaningless; clear it.
       if (next.masked) next.masked[m.idx] = false;
     } else {
@@ -639,6 +707,7 @@ function processEarthquakes(
         next.board[newIdx] = null;
         next.frozen = next.frozen.filter((fz) => fz.idx !== newIdx);
         next.stunned = next.stunned.filter((s) => s.idx !== newIdx);
+        next.explosives = explosiveIdxs(next).filter((x) => x !== newIdx);
         if (newIdx === 56) next.castling.wQ = false;
         if (newIdx === 63) next.castling.wK = false;
         if (newIdx === 0)  next.castling.bQ = false;
@@ -654,6 +723,246 @@ function processEarthquakes(
   if (hadW && !hasAnyKingSquare(next, 'w')) kingDestroyed = 'w';
   else if (hadB && !hasAnyKingSquare(next, 'b')) kingDestroyed = 'b';
   return { kingDestroyed };
+}
+
+// ------------------------------------------------------------------
+// Hollow Purple (hero: gojo)
+// ------------------------------------------------------------------
+function hollowPurpleList(state: Pick<GameState, 'hollowPurples'>): HollowPurple[] {
+  return Array.isArray((state as any).hollowPurples) ? (state as any).hollowPurples : [];
+}
+
+// Annihilate whatever sits on `idx` under a Hollow Purple sweep. Friend and
+// foe alike — the orb has no allegiance. A sub-tier-3 Juggernaut is the one
+// thing it can't erase: it absorbs the orb and tiers up instead, exactly as
+// it does with an ICBM blast or an earthquake.
+function hollowPurpleConsume(next: GameState, idx: number): 'absorbed' | 'cleared' | 'empty' {
+  const victim = next.board[idx];
+  if (!victim) return 'empty';
+  const jt = jugTierAt(next, idx);
+  if (jt >= 1 && jt < 3) {
+    next.jugTier[victim.color] = jt + 1;
+    next.halfmove = 0;
+    return 'absorbed';
+  }
+  if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
+  next.board[idx] = null;
+  next.frozen = next.frozen.filter((f) => f.idx !== idx);
+  next.stunned = next.stunned.filter((s) => s.idx !== idx);
+  next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
+  if (idx === 56) next.castling.wQ = false;
+  if (idx === 63) next.castling.wK = false;
+  if (idx === 0)  next.castling.bQ = false;
+  if (idx === 7)  next.castling.bK = false;
+  if (next.masked) next.masked[idx] = false;
+  next.halfmove = 0;
+  return 'cleared';
+}
+
+// Drift every live orb one tile along its fixed heading. Unlike earthquakes
+// (which only creep when their owner walks the Juggernaut) this runs on EVERY
+// ply — the orb doesn't care whose turn it is. Each step clears the tile it
+// is leaving, so a piece that stepped into the orb this ply is erased too,
+// then the tile it lands on. It winks out at the board edge.
+function processHollowPurples(next: GameState): { kingDestroyed: C2Color | null; blasts: number[] } {
+  const orbs = hollowPurpleList(next);
+  if (orbs.length === 0) return { kingDestroyed: null, blasts: [] };
+  const hadW = hasAnyKingSquare(next, 'w');
+  const hadB = hasAnyKingSquare(next, 'b');
+  const surviving: HollowPurple[] = [];
+  const blasts: number[] = [];
+  for (const hp of orbs) {
+    // A freshly-cast orb holds still on the ply it appeared.
+    if (hp.spawnedAtPly >= next.ply) { surviving.push(hp); continue; }
+    const leaving = hollowPurpleConsume(next, hp.idx);
+    if (leaving === 'cleared') blasts.push(hp.idx);
+    if (leaving === 'absorbed') continue;
+    const [f, r] = frOfIdx(hp.idx);
+    const nf = f + hp.df, nr = r + hp.dr;
+    // Reached the edge — the orb dissipates.
+    if (!onBoard(nf, nr)) continue;
+    const newIdx = idxFR(nf, nr);
+    const arriving = hollowPurpleConsume(next, newIdx);
+    if (arriving === 'cleared') blasts.push(newIdx);
+    if (arriving === 'absorbed') continue;
+    surviving.push({ ...hp, idx: newIdx });
+  }
+  next.hollowPurples = surviving;
+  let kingDestroyed: C2Color | null = null;
+  if (hadW && !hasAnyKingSquare(next, 'w')) kingDestroyed = 'w';
+  else if (hadB && !hasAnyKingSquare(next, 'b')) kingDestroyed = 'b';
+  return { kingDestroyed, blasts };
+}
+
+// Where an orb was sitting on the previous ply — one step back along its
+// fixed heading, which is exact because the heading never changes. Null on
+// the ply it was cast (it hasn't drifted yet), so the UI knows not to slide
+// it in from anywhere.
+export function hollowPurpleOrigin(state: GameState, hp: HollowPurple): Square | null {
+  if (hp.spawnedAtPly >= state.ply) return null;
+  const [f, r] = frOfIdx(hp.idx);
+  const pf = f - hp.df, pr = r - hp.dr;
+  if (!onBoard(pf, pr)) return null;
+  return idxToSq(idxFR(pf, pr));
+}
+
+// Advance the orbs and stash which side (if any) lost its last king square to
+// one. `legalMovesFrom` / `applyMove` normally reject a move that spends the
+// mover's last king — that rule exists to ban suicide captures into a
+// Juggernaut, and it must not fire when the king was taken by an orb sweeping
+// past instead. Marked non-enumerably so the FEN / position key are untouched.
+function stepHollowPurples(next: GameState): void {
+  const { kingDestroyed, blasts } = processHollowPurples(next);
+  if (blasts.length > 0) {
+    Object.defineProperty(next, '__hpBlasts', {
+      value: blasts,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (!kingDestroyed) return;
+  Object.defineProperty(next, '__hpKingKill', {
+    value: kingDestroyed,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+function hollowPurpleKilledKing(state: GameState, color: C2Color): boolean {
+  return (state as any).__hpKingKill === color;
+}
+
+function hollowPurpleBlastSquares(state: GameState): Square[] {
+  const idxs = (state as any).__hpBlasts as number[] | undefined;
+  return idxs && idxs.length > 0 ? idxs.map(idxToSq) : [];
+}
+
+function explosionRadius(centerIdx: number): number[] {
+  const [cf, cr] = frOfIdx(centerIdx);
+  const out: number[] = [];
+  for (let df = -1; df <= 1; df++) {
+    for (let dr = -1; dr <= 1; dr++) {
+      const f = cf + df, r = cr + dr;
+      if (onBoard(f, r)) out.push(idxFR(f, r));
+    }
+  }
+  return out;
+}
+
+function clearSquareByKamakaze(next: GameState, idx: number): boolean {
+  const target = next.board[idx];
+  if (!target) {
+    next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
+    if (next.masked) next.masked[idx] = false;
+    return false;
+  }
+  const jt = jugTierAt(next, idx);
+  if (jt >= 1 && jt < 3) {
+    next.jugTier[target.color] = jt + 1;
+    next.halfmove = 0;
+    next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
+    return true;
+  }
+  if (target.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, idx);
+  next.board[idx] = null;
+  next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
+  next.stunned = next.stunned.filter((s) => s.idx !== idx);
+  next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
+  if (idx === 56) next.castling.wQ = false;
+  if (idx === 63) next.castling.wK = false;
+  if (idx === 0)  next.castling.bQ = false;
+  if (idx === 7)  next.castling.bK = false;
+  if (next.masked) next.masked[idx] = false;
+  next.halfmove = 0;
+  return true;
+}
+
+function processKamakazeExplosions(next: GameState, centers: number[]): number[] {
+  const queue = centers.filter((idx) => idx >= 0 && idx < 64);
+  const detonated: number[] = [];
+  const seen = new Set<number>();
+  while (queue.length > 0) {
+    const center = queue.shift()!;
+    if (seen.has(center)) continue;
+    seen.add(center);
+    detonated.push(center);
+    const radius = explosionRadius(center);
+    for (const idx of radius) {
+      if (isExplosive(next, idx) && !seen.has(idx)) queue.push(idx);
+    }
+    for (const idx of radius) clearSquareByKamakaze(next, idx);
+  }
+  compactExplosives(next);
+  return detonated;
+}
+
+function recordKamakazeExplosions(next: GameState, centers: number[]): void {
+  if (centers.length === 0) return;
+  Object.defineProperty(next, '__kamakazeExplosions', {
+    value: centers,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+function kamakazeExplosionSquares(next: GameState): Square[] {
+  const centers = (next as any).__kamakazeExplosions as number[] | undefined;
+  if (!centers || centers.length === 0) return [];
+  return centers.map(idxToSq);
+}
+
+// Which sprite should stay drawn at `sq` after a kill effect emptied it?
+// Normally whatever stood there before the move — but if `sq` is the move's
+// DESTINATION, the piece that died there is the mover, which the pre-move
+// board has at `from`. Without this the attacker that blows itself up on
+// arrival vanishes from its origin and is never seen making the capture.
+export function killedSpriteAt(
+  prev: GameState, sq: Square, move?: { from: Square; to: Square } | null,
+): PieceLetter | null {
+  if (move && sq === move.to) {
+    const mover = prev.board[sqToIdx(move.from)];
+    if (mover) return mover.letter;
+  }
+  return prev.board[sqToIdx(sq)]?.letter ?? null;
+}
+
+// Sprites to keep drawing after a Kamakaze chain went off: every piece the
+// blast destroyed, at the square where it died. The mover is reported at its
+// destination (see killedSpriteAt) so its sprite rides the move animation in
+// and dies on arrival — capturing an armed piece should read as "slide across,
+// then explode", not "vanish mid-board". Squares are scoped to the blast radii
+// so unrelated same-ply removals (en-passant, castling rook, a missile
+// landing) can't be mistaken for blast victims.
+export function kamakazeDoomedSprites(
+  prev: GameState,
+  next: GameState,
+  centers: Square[],
+  move?: { from: Square; to: Square } | null,
+): { sq: Square; letter: PieceLetter }[] {
+  const fromIdx = move ? sqToIdx(move.from) : -1;
+  const out: { sq: Square; letter: PieceLetter }[] = [];
+  const seen = new Set<number>();
+  for (const center of centers) {
+    for (const idx of explosionRadius(sqToIdx(center))) {
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+      // The mover legitimately vacated its origin — nothing died there.
+      if (idx === fromIdx) continue;
+      // Still standing? Then the blast didn't clear it (Juggernaut absorb).
+      if (next.board[idx]) continue;
+      const letter = killedSpriteAt(prev, idxToSq(idx), move);
+      if (letter) out.push({ sq: idxToSq(idx), letter });
+    }
+  }
+  return out;
+}
+
+// True when `sq` is inside the 1-tile blast radius of `center`. Lets the UI
+// clear each doomed sprite exactly when the blast that consumes it fires.
+export function isWithinBlast(center: Square, sq: Square): boolean {
+  const [cf, cr] = frOfIdx(sqToIdx(center));
+  const [f, r] = frOfIdx(sqToIdx(sq));
+  return Math.abs(cf - f) <= 1 && Math.abs(cr - r) <= 1;
 }
 
 // ------------------------------------------------------------------
@@ -1183,6 +1492,20 @@ export function abilityTargets(state: GameState): number[] {
       if (up !== 'B' && up !== 'R' && up !== 'Q') continue;
       out.push(i);
     }
+  } else if (hero === 'kamakaze') {
+    // Mark any of your own pieces that is not already armed as explosive.
+    for (let i = 0; i < 64; i++) {
+      const p = state.board[i];
+      if (!p || p.color !== color) continue;
+      if (isExplosive(state, i)) continue;
+      out.push(i);
+    }
+  } else if (hero === 'gojo') {
+    // Every on-board square adjacent to my king — that square is where the
+    // orb materialises, and the king→square offset fixes its heading. No
+    // occupancy rule: Hollow Purple erases whatever is standing there,
+    // including my own piece.
+    for (const idx of squaresAdjacentToKing(state, color)) out.push(idx);
   } else if (hero === 'icbm') {
     // Any square. No restrictions — including own pieces or empty squares.
     for (let i = 0; i < 64; i++) out.push(i);
@@ -1288,6 +1611,10 @@ export function twinJutsuLegalDestinations(state: GameState, fromIdx: number): n
   return out;
 }
 
+// One forced opponent move inside a Goofball activation. An activation is
+// one leg (encoded inline in the ability UCI) plus an optional second leg.
+export type GoofballLeg = { from: Square; to: Square; promo?: string };
+
 // Given the user has armed Goofball and picked an enemy `fromIdx`, which
 // destination squares are legal? Reuses the standard legal-move generator
 // from the opponent's POV. The final filter rejects moves that would leave
@@ -1306,11 +1633,33 @@ export function goofballLegalDestinations(state: GameState, fromIdx: number): nu
   for (const m of moves) {
     const toIdx = sqToIdx(m.to);
     // Simulate the forced move and reject any that leave the user in check.
-    const after = applyAbility(state, 'goofball', toIdx, fromIdx, m.promotion);
-    if (isInCheck(after, color)) continue;
+    const after = goofballStep(state, color, toIdx, fromIdx, m.promotion);
+    if (!after || isInCheck(after, color)) continue;
     out.push(toIdx);
   }
   return out;
+}
+
+// The state after ONE forced Goofball move, with the turn still pointing at
+// the Goofball user and the cooldown untouched. That shape is deliberate:
+// the second leg of the activation (and the UI previewing it) can treat the
+// result as a normal "my turn, ability ready" position and reuse
+// `abilityTargets` / `goofballLegalDestinations` unchanged.
+export function goofballPreview(
+  state: GameState, fromIdx: number, toIdx: number, promo?: string,
+): GameState | null {
+  const color = state.turn;
+  if (state.heroes[color].hero !== 'goofball') return null;
+  if (!abilityReady(state, color)) return null;
+  if (!goofballLegalDestinations(state, fromIdx).includes(toIdx)) return null;
+  return goofballStep(state, color, toIdx, fromIdx, promo);
+}
+
+// Is there any legal second leg from `state` (a `goofballPreview` result)?
+// `abilityTargets` alone isn't enough — every destination of every enemy
+// piece can still be filtered out for leaving the user in check.
+export function goofballHasFollowUp(state: GameState): boolean {
+  return abilityTargets(state).some((idx) => goofballLegalDestinations(state, idx).length > 0);
 }
 
 // Given the user has armed Flight and picked their own piece at `fromIdx`,
@@ -1361,41 +1710,71 @@ export function slimeLegalDestinations(state: GameState, fromIdx: number): numbe
 // ------------------------------------------------------------------
 // Apply a (validated) ability action.
 // ------------------------------------------------------------------
+// One forced opponent move, played by the Goofball user `color`. The result
+// keeps the turn on the USER (applyPseudo flips opp→user and we leave it
+// there) and does NOT touch the cooldown, so legs can be chained and the
+// intermediate position stays a valid "user to move" state. Null when the
+// requested move isn't playable.
+function goofballStep(
+  state: GameState,
+  color: C2Color,
+  targetIdx: number,
+  fromIdx: number,
+  promo?: string,
+): GameState | null {
+  const oppColor: C2Color = color === 'w' ? 'b' : 'w';
+  const oppState: GameState = { ...state, turn: oppColor };
+  const pseudos = pseudoMoves(oppState, fromIdx).filter((m) => m.to === targetIdx);
+  let chosen: PseudoMove | null = null;
+  for (const pm of pseudos) {
+    if (pm.promotion) {
+      if (promo && pm.promotion === promo.toUpperCase()) { chosen = pm; break; }
+    } else if (!promo) {
+      chosen = pm; break;
+    }
+  }
+  if (!chosen) {
+    // Fallback when caller forgot to specify promotion: pick the first
+    // pseudo that matches the to-square.
+    chosen = pseudos[0] ?? null;
+  }
+  if (!chosen) return null;
+  const moved = applyPseudo(oppState, chosen);
+  moved.heroes = {
+    w: { ...state.heroes.w },
+    b: { ...state.heroes.b },
+  };
+  return moved;
+}
+
 function applyAbility(
   state: GameState,
   hero: HeroKind,
   targetIdx: number,
   fromIdx?: number,
   promo?: string,
+  second?: GoofballLeg,
 ): GameState {
   const color = state.turn;
   const info = HERO_INFO[hero];
 
-  // Goofball: replay the opponent's chosen move on the board, but leave
+  // Goofball: replay the opponent's chosen move(s) on the board, but leave
   // the turn pointing at the opponent so they still get to play their
-  // normal move next. applyPseudo flips opp→user; we flip back to opp.
-  // Net effect: White spends their ply to force one Black move, then
-  // Black still moves on their own turn.
+  // normal move next. One activation forces up to TWO opponent moves — any
+  // pieces, the same one twice included. Net effect: White spends their ply
+  // to force one or two Black moves, then Black still moves on their own turn.
   if (hero === 'goofball') {
     if (fromIdx == null) return state;
     const oppColor: C2Color = color === 'w' ? 'b' : 'w';
-    const oppState: GameState = { ...state, turn: oppColor };
-    const pseudos = pseudoMoves(oppState, fromIdx).filter((m) => m.to === targetIdx);
-    let chosen: PseudoMove | null = null;
-    for (const pm of pseudos) {
-      if (pm.promotion) {
-        if (promo && pm.promotion === promo.toUpperCase()) { chosen = pm; break; }
-      } else if (!promo) {
-        chosen = pm; break;
-      }
+    const baseHistoryLen = state.positionHistory.length;
+    let moved = goofballStep(state, color, targetIdx, fromIdx, promo);
+    if (!moved) return state;
+    if (second) {
+      const moved2 = goofballStep(
+        moved, color, sqToIdx(second.to), sqToIdx(second.from), second.promo,
+      );
+      if (moved2) moved = moved2;
     }
-    if (!chosen) {
-      // Fallback when caller forgot to specify promotion: pick the first
-      // pseudo that matches the to-square.
-      chosen = pseudos[0] ?? null;
-    }
-    if (!chosen) return state;
-    const moved = applyPseudo(oppState, chosen);
     moved.heroes = {
       w: { ...state.heroes.w },
       b: { ...state.heroes.b },
@@ -1403,12 +1782,14 @@ function applyAbility(
     moved.heroes[color].cooldownUntilPly = moved.ply + (info.cooldownTurns! * 2);
     // Don't skip the opponent's normal turn — leave it pointing at them.
     moved.turn = oppColor;
-    // applyPseudo wrote the post-move position key with turn=user; fix the
-    // last entry so threefold-repetition tracking sees the right turn.
-    if (moved.positionHistory.length > 0) {
-      moved.positionHistory = moved.positionHistory.slice(0, -1);
-      moved.positionHistory.push(positionKey(moved));
-    }
+    // Each leg pushed its own position key with turn=user. Collapse them
+    // into one entry for the position the opponent actually gets to move
+    // from, so threefold-repetition tracking sees the right turn and
+    // doesn't count the mid-activation positions.
+    moved.positionHistory = [
+      ...moved.positionHistory.slice(0, baseHistoryLen),
+      positionKey(moved),
+    ];
     return moved;
   }
 
@@ -1432,6 +1813,8 @@ function applyAbility(
     jugTier: { ...state.jugTier },
     stunned: state.stunned.slice(),
     earthquakes: state.earthquakes.slice(),
+    explosives: explosiveIdxs(state).slice(),
+    hollowPurples: hollowPurpleList(state).slice(),
   };
 
   if (hero === 'frost') {
@@ -1444,6 +1827,7 @@ function applyAbility(
   } else if (hero === 'warlord') {
     next.board[targetIdx] = null;
     next.masked[targetIdx] = false;
+    next.explosives = explosiveIdxs(next).filter((idx) => idx !== targetIdx);
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
   } else if (hero === 'necromancer') {
     const pieceLetter: PieceLetter = color === 'w' ? 'P' : 'p';
@@ -1465,6 +1849,30 @@ function applyAbility(
       };
     }
     next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
+  } else if (hero === 'kamakaze') {
+    if (next.board[targetIdx]?.color === color && !isExplosive(next, targetIdx)) {
+      next.explosives = [...explosiveIdxs(next), targetIdx];
+    }
+    next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
+  } else if (hero === 'gojo') {
+    // Hollow Purple: the orb condenses on the chosen adjacent square and
+    // takes the king→square offset as its permanent heading. Whatever is
+    // standing on the spawn square is annihilated on the spot (or, if it's a
+    // sub-tier-3 Juggernaut, absorbs the orb before it ever gets moving).
+    const k = findKing(next, color);
+    if (k !== -1) {
+      const [kf, kr] = frOfIdx(k);
+      const [tf, tr] = frOfIdx(targetIdx);
+      const df = Math.sign(tf - kf);
+      const dr = Math.sign(tr - kr);
+      if (hollowPurpleConsume(next, targetIdx) !== 'absorbed') {
+        next.hollowPurples = [
+          ...hollowPurpleList(next),
+          { idx: targetIdx, df, dr, color, spawnedAtPly: next.ply },
+        ];
+      }
+    }
+    next.heroes[color].cooldownUntilPly = next.ply + (info.cooldownTurns! * 2);
   } else if (hero === 'flight') {
     // Two-click teleport: fly the piece at fromIdx to the (empty) target.
     if (fromIdx == null) return state;
@@ -1472,6 +1880,7 @@ function applyAbility(
     if (flyer) {
       next.board[targetIdx] = flyer;
       next.board[fromIdx] = null;
+      next.explosives = withExplosiveMoved(explosiveIdxs(next), fromIdx, targetIdx);
       next.masked[fromIdx] = false;
       next.masked[targetIdx] = false;
       // A pawn flown onto its promotion rank promotes. The player picks the
@@ -1512,8 +1921,13 @@ function applyAbility(
     if (fromIdx == null) return state;
     const a = next.board[fromIdx];
     const b = next.board[targetIdx];
+    const aExplosive = isExplosive(next, fromIdx);
+    const bExplosive = isExplosive(next, targetIdx);
     next.board[fromIdx] = b;
     next.board[targetIdx] = a;
+    next.explosives = explosiveIdxs(next).filter((idx) => idx !== fromIdx && idx !== targetIdx);
+    if (aExplosive) next.explosives.push(targetIdx);
+    if (bExplosive) next.explosives.push(fromIdx);
     next.masked[fromIdx] = true;
     next.masked[targetIdx] = true;
     // A pawn swapped onto its promotion rank promotes. The player picks the
@@ -1602,6 +2016,7 @@ function applyAbility(
             next.board[targetIdx] = null;
             next.frozen = next.frozen.filter((fz) => fz.idx !== targetIdx);
             next.stunned = next.stunned.filter((s) => s.idx !== targetIdx);
+            next.explosives = explosiveIdxs(next).filter((x) => x !== targetIdx);
             if (targetIdx === 56) next.castling.wQ = false;
             if (targetIdx === 63) next.castling.wK = false;
             if (targetIdx === 0)  next.castling.bQ = false;
@@ -1655,6 +2070,7 @@ function applyAbility(
               next.halfmove = 0;
               next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
               next.stunned = next.stunned.filter((s) => s.idx !== idx);
+              next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
               if (idx === 56) next.castling.wQ = false;
               if (idx === 63) next.castling.wK = false;
               if (idx === 0)  next.castling.bQ = false;
@@ -1699,6 +2115,7 @@ function applyAbility(
                   next.board[idx] = null;
                   next.frozen = next.frozen.filter((fz) => fz.idx !== idx);
                   next.stunned = next.stunned.filter((s) => s.idx !== idx);
+                  next.explosives = explosiveIdxs(next).filter((x) => x !== idx);
                   if (idx === 56) next.castling.wQ = false;
                   if (idx === 63) next.castling.wK = false;
                   if (idx === 0)  next.castling.bQ = false;
@@ -1735,6 +2152,8 @@ function applyAbility(
   // spawn, edge charge, slam) count as the Jug acting.
   const abilityJugColor = state.heroes[color].hero === 'juggernaut' ? color : null;
   processEarthquakes(next, abilityJugColor);
+  // Hollow Purple drifts on every ply, ability plies included.
+  stepHollowPurples(next);
 
   // Expire any active freezes / stuns whose lifetime has now ended.
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
@@ -1770,6 +2189,8 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     jugTier: { ...state.jugTier },
     stunned: state.stunned.slice(),
     earthquakes: state.earthquakes.slice(),
+    explosives: explosiveIdxs(state).slice(),
+    hollowPurples: hollowPurpleList(state).slice(),
   };
 
   // Slime big-king shift: the whole 2×2 blob containing mv.from slides one
@@ -1788,16 +2209,19 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
         return idxFR(f + df, r + dr);
       });
       let crushed = false;
+      const crushedExplosions: number[] = [];
       for (const tIdx of newTiles) {
         if (oldTiles.includes(tIdx)) continue;
         const victim = next.board[tIdx];
         if (victim) {
           crushed = true;
+          if (isExplosive(next, tIdx)) crushedExplosions.push(tIdx);
           // Crushing an enemy big-king tile splits THAT blob before the
           // square clears.
           if (victim.letter.toUpperCase() === 'S') splitSlimeGroupAt(next, tIdx);
           next.board[tIdx] = null;
           next.stunned = next.stunned.filter((s) => s.idx !== tIdx);
+          next.explosives = explosiveIdxs(next).filter((x) => x !== tIdx);
         }
         // Crushing a rook on its home corner forfeits that wing.
         if (tIdx === 56) next.castling.wQ = false;
@@ -1817,11 +2241,13 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       }
       group.tiles = newTiles;
       if (crushed) next.halfmove = 0;
+      recordKamakazeExplosions(next, processKamakazeExplosions(next, crushedExplosions));
     }
     processMissileLandings(next);
     // Slime shift — no Juggernaut moved on this ply (each side picks one
     // hero), so no waves advance.
     processEarthquakes(next, null);
+    stepHollowPurples(next);
     next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
     next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
     const hist = state.positionHistory.slice();
@@ -1833,6 +2259,10 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   const mover = next.board[mv.from]!;
   const moverUp = mover.letter.toUpperCase();
   const dest = next.board[mv.to];
+  const moverWasExplosive = isExplosive(next, mv.from);
+  const destWasExplosive = !!dest && isExplosive(next, mv.to);
+  let enPassantCaptureIdx: number | null = null;
+  let enPassantWasExplosive = false;
   if (dest) next.halfmove = 0;
 
   // Juggernaut absorb: capturing a sub-tier-3 Juggernaut never completes.
@@ -1844,8 +2274,10 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   if (dest && dest.color !== mover.color) {
     const jt = jugTierAt(next, mv.to);
     if (jt >= 1 && jt < 3) {
+      const attackerExplodes = isExplosive(next, mv.from);
       next.board[mv.from] = null;
       next.masked[mv.from] = false;
+      next.explosives = explosiveIdxs(next).filter((x) => x !== mv.from);
       next.jugTier[dest.color] = jt + 1;
       next.halfmove = 0;
       // A rook that died charging off its home corner still forfeits that
@@ -1854,6 +2286,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       if (mv.from === 63) next.castling.wK = false;
       if (mv.from === 0)  next.castling.bQ = false;
       if (mv.from === 7)  next.castling.bK = false;
+      recordKamakazeExplosions(next, processKamakazeExplosions(next, attackerExplodes ? [mv.to] : []));
       processMissileLandings(next);
       // The attacking piece was just absorbed by a Juggernaut. If that
       // attacker happened to be the OTHER side's Juggernaut making a
@@ -1863,6 +2296,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
         state.heroes[mover.color].hero === 'juggernaut'
       ) ? mover.color : null;
       processEarthquakes(next, absorbJugColor);
+      stepHollowPurples(next);
       next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
       next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
       const hist = state.positionHistory.slice();
@@ -1887,11 +2321,15 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
   if (mv.enPassantCapture) {
     const [tf, tr] = frOfIdx(mv.to);
     const capRank = mover.color === 'w' ? tr - 1 : tr + 1;
-    next.board[idxFR(tf, capRank)] = null;
+    enPassantCaptureIdx = idxFR(tf, capRank);
+    enPassantWasExplosive = isExplosive(next, enPassantCaptureIdx);
+    next.board[enPassantCaptureIdx] = null;
+    next.explosives = explosiveIdxs(next).filter((x) => x !== enPassantCaptureIdx);
     next.halfmove = 0;
   }
   next.board[mv.to] = resultPiece;
   next.board[mv.from] = null;
+  next.explosives = withExplosiveMoved(explosiveIdxs(next), mv.from, mv.to);
   if (moverUp === 'P') next.halfmove = 0;
   if (mv.doublePawn) {
     const [tf, tr] = frOfIdx(mv.to);
@@ -1907,6 +2345,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       const rookTo = isWhite ? 61 : 5;
       next.board[rookTo] = next.board[rookFrom];
       next.board[rookFrom] = null;
+      next.explosives = withExplosiveMoved(explosiveIdxs(next), rookFrom, rookTo);
       next.masked[rookFrom] = false;
       next.masked[rookTo] = false;
     } else {
@@ -1914,6 +2353,7 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
       const rookTo = isWhite ? 59 : 3;
       next.board[rookTo] = next.board[rookFrom];
       next.board[rookFrom] = null;
+      next.explosives = withExplosiveMoved(explosiveIdxs(next), rookFrom, rookTo);
       next.masked[rookFrom] = false;
       next.masked[rookTo] = false;
     }
@@ -1929,6 +2369,12 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     const capRank = mover.color === 'w' ? tr - 1 : tr + 1;
     next.masked[idxFR(tf, capRank)] = false;
   }
+
+  const kamakazeCenters: number[] = [];
+  if (moverWasExplosive && (dest || mv.enPassantCapture)) kamakazeCenters.push(mv.to);
+  if (destWasExplosive) kamakazeCenters.push(mv.to);
+  if (enPassantCaptureIdx != null && enPassantWasExplosive) kamakazeCenters.push(enPassantCaptureIdx);
+  recordKamakazeExplosions(next, processKamakazeExplosions(next, kamakazeCenters));
 
   // Castling rights: lose them when the king moves (board move or implicit
   // via castle) and when a rook moves off / is captured on its home corner.
@@ -1958,6 +2404,8 @@ function applyPseudo(state: GameState, mv: PseudoMove): GameState {
     state.heroes[mover.color].hero === 'juggernaut'
   ) ? mover.color : null;
   processEarthquakes(next, moverJugColor);
+  // Hollow Purple drifts on every ply, no matter who moved or what they did.
+  stepHollowPurples(next);
 
   next.frozen = next.frozen.filter((f) => next.ply < f.expiresAtPly);
   next.stunned = next.stunned.filter((s) => next.ply < s.expiresAtPly);
@@ -2008,8 +2456,13 @@ export function legalMovesFrom(state: GameState, from: Square): LegalMove[] {
     // Capturing a sub-tier-3 Juggernaut costs the attacker its life. A move
     // that would spend the mover's LAST king square (the king itself
     // charging in) is illegal, same as moving into check. A multi-king
-    // Slime side may legally sacrifice one of its spares.
-    if (hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor)) continue;
+    // Slime side may legally sacrifice one of its spares. A king erased by a
+    // Hollow Purple drifting past is NOT the mover's doing — that loss is
+    // unavoidable, so it must not make every move illegal.
+    if (
+      hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor) &&
+      !hollowPurpleKilledKing(next, moverColor)
+    ) continue;
     const dest = state.board[pm.to];
     const isCapture = !!dest || !!pm.enPassantCapture || (pm.slimeCrushes != null && pm.slimeCrushes.length > 0);
     out.push({ to: idxToSq(pm.to), promotion: pm.promotion, isCapture, isSpecial: false });
@@ -2039,10 +2492,10 @@ function anyLegalAbility(state: GameState): boolean {
 // ------------------------------------------------------------------
 // Harem is passive — no entry. Mutation uses M; ICBM uses I; Goofball uses G.
 const ABILITY_PREFIX_TO_HERO: Record<string, HeroKind> = {
-  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jutsu', S: 'slime', J: 'juggernaut',
+  F: 'frost', W: 'warlord', N: 'necromancer', L: 'flight', M: 'mutation', I: 'icbm', G: 'goofball', T: 'twin-jutsu', S: 'slime', J: 'juggernaut', K: 'kamakaze', P: 'gojo',
 };
 const HERO_TO_ABILITY_PREFIX: Partial<Record<HeroKind, string>> = {
-  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jutsu': 'T', slime: 'S', juggernaut: 'J',
+  frost: 'F', warlord: 'W', necromancer: 'N', flight: 'L', mutation: 'M', icbm: 'I', goofball: 'G', 'twin-jutsu': 'T', slime: 'S', juggernaut: 'J', kamakaze: 'K', gojo: 'P',
 };
 
 export function isAbilityUci(uci: string): boolean {
@@ -2050,10 +2503,11 @@ export function isAbilityUci(uci: string): boolean {
 }
 // Most abilities carry just a `to` square. Goofball, Twin-Jutsu and Flight
 // additionally carry a `from` square (the piece being moved / swapped) and
-// an optional promotion letter.
+// an optional promotion letter. Goofball can carry a second forced move
+// after a comma.
 export function parseAbility(
   uci: string,
-): { hero: HeroKind; to: Square; from?: Square; promo?: string } | null {
+): { hero: HeroKind; to: Square; from?: Square; promo?: string; second?: GoofballLeg } | null {
   if (!isAbilityUci(uci)) return null;
   const hero = ABILITY_PREFIX_TO_HERO[uci[1]];
   if (!hero) return null;
@@ -2063,20 +2517,53 @@ export function parseAbility(
     // arbitrary); Flight teleports an own piece. The promo letter applies
     // when a pawn lands on its back rank. !S<from><to> is the Slime
     // expansion: <from> is the mini king, <to> the far corner (no promo).
-    if (uci.length < 6) return null;
-    const from = uci.slice(2, 4);
-    const to = uci.slice(4, 6);
-    const promo = uci.length >= 7 ? uci[6].toUpperCase() : undefined;
+    // Goofball's optional second forced move rides after a comma:
+    // !G<from><to>[<promo>],<from2><to2>[<promo2>]. The comma keeps the
+    // first leg at its historical offsets, so anything slicing (2,4)/(4,6)
+    // still reads it.
+    const [head, tail] = uci.split(',');
+    if (head.length < 6) return null;
+    const from = head.slice(2, 4);
+    const to = head.slice(4, 6);
+    const promo = head.length >= 7 ? head[6].toUpperCase() : undefined;
     if (from.length !== 2 || to.length !== 2) return null;
-    return { hero, from, to, promo };
+    let second: GoofballLeg | undefined;
+    if (tail != null) {
+      if (hero !== 'goofball' || tail.length < 4) return null;
+      second = {
+        from: tail.slice(0, 2),
+        to: tail.slice(2, 4),
+        promo: tail.length >= 5 ? tail[4].toUpperCase() : undefined,
+      };
+    }
+    return { hero, from, to, promo, second };
   }
   const to = uci.slice(2, 4);
   if (to.length !== 2) return null;
   return { hero, to };
 }
-export function abilityUci(hero: HeroKind, to: Square, from?: Square, promo?: string): string {
+// The visible piece travel for a Goofball uci — one entry per forced move.
+// A second leg that continues with the SAME piece is collapsed into a single
+// slide: the intermediate square is empty afterwards, so animating the two
+// hops separately would drop the first one on the floor.
+export function goofballSlides(uci: string): { from: Square; to: Square }[] {
+  const parsed = parseAbility(uci);
+  if (!parsed || parsed.hero !== 'goofball' || !parsed.from) return [];
+  const first = { from: parsed.from, to: parsed.to };
+  if (!parsed.second) return [first];
+  if (parsed.second.from === first.to) return [{ from: first.from, to: parsed.second.to }];
+  return [first, { from: parsed.second.from, to: parsed.second.to }];
+}
+
+export function abilityUci(
+  hero: HeroKind, to: Square, from?: Square, promo?: string, second?: GoofballLeg,
+): string {
   if (hero === 'goofball' || hero === 'twin-jutsu' || hero === 'flight' || hero === 'slime') {
-    return `!${HERO_TO_ABILITY_PREFIX[hero]}${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
+    const head = `!${HERO_TO_ABILITY_PREFIX[hero]}${from ?? ''}${to}${promo ? promo.toLowerCase() : ''}`;
+    if (hero === 'goofball' && second) {
+      return `${head},${second.from}${second.to}${second.promo ? second.promo.toLowerCase() : ''}`;
+    }
+    return head;
   }
   return `!${HERO_TO_ABILITY_PREFIX[hero]}${to}`;
 }
@@ -2099,21 +2586,30 @@ export function pieceAtImpactBeforeBlast(
     // empties out, `to` gets the moved (optionally promoted) piece — so the
     // renderer sees the right doomed sprite when a missile lands on either.
     if ((parsed.hero === 'goofball' || parsed.hero === 'flight') && parsed.from) {
-      const fromIdx = sqToIdx(parsed.from);
-      const toIdx = sqToIdx(parsed.to);
-      if (fromIdx === impactIdx) return null;
-      if (toIdx === impactIdx) {
-        const mover = state.board[fromIdx];
-        if (!mover) return null;
-        if (parsed.promo) {
-          const letter = (mover.color === 'w'
-            ? parsed.promo.toUpperCase()
-            : parsed.promo.toLowerCase()) as PieceLetter;
-          return { color: mover.color, letter };
-        }
-        return mover;
+      // Walk the leg(s) over a shadow board — Goofball can force two moves
+      // in one activation, so the piece sitting on the impact square may be
+      // one the second leg dropped there.
+      const legs: GoofballLeg[] = [
+        { from: parsed.from, to: parsed.to, promo: parsed.promo },
+        ...(parsed.second ? [parsed.second] : []),
+      ];
+      const shadow = state.board.slice();
+      for (const leg of legs) {
+        const fromIdx = sqToIdx(leg.from);
+        const toIdx = sqToIdx(leg.to);
+        const mover = shadow[fromIdx];
+        shadow[fromIdx] = null;
+        if (!mover) { shadow[toIdx] = null; continue; }
+        shadow[toIdx] = leg.promo
+          ? {
+            color: mover.color,
+            letter: (mover.color === 'w'
+              ? leg.promo.toUpperCase()
+              : leg.promo.toLowerCase()) as PieceLetter,
+          }
+          : mover;
       }
-      return state.board[impactIdx] ?? null;
+      return shadow[impactIdx] ?? null;
     }
     // Twin-Jutsu swaps two of the active side's pieces. A missile that lands
     // on either endpoint hits whatever just swapped INTO that square.
@@ -2221,6 +2717,16 @@ export function pieceAtImpactBeforeBlast(
       // square (no doomed piece to draw).
       return null;
     }
+    if (parsed.hero === 'gojo') {
+      // The orb condensed here and annihilated the occupant — unless it was a
+      // sub-tier-3 Juggernaut, which absorbs the orb and stays standing.
+      const p = state.board[impactIdx];
+      if (p) {
+        const jt = jugTierAt(state, impactIdx);
+        if (jt >= 1 && jt < 3) return p;
+      }
+      return null;
+    }
     // Frost / mutation / ICBM: no board change at the target square beyond
     // what was already there.
     return state.board[impactIdx] ?? null;
@@ -2279,9 +2785,20 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       if (!parsed.from) return null;
       const fromIdx = sqToIdx(parsed.from);
       if (!goofballLegalDestinations(state, fromIdx).includes(targetIdx)) return null;
-      // Track whether the forced opp move was a capture so SFX still play.
+      // Track whether either forced opp move was a capture so SFX still play.
       captured = !!state.board[targetIdx];
-      next = applyAbility(state, 'goofball', targetIdx, fromIdx, parsed.promo);
+      if (parsed.second) {
+        // The optional second leg is validated against the position the
+        // first leg leaves behind — same rules, so it can re-use the piece
+        // that just moved or pick a different one.
+        const mid = goofballStep(state, state.turn, targetIdx, fromIdx, parsed.promo);
+        if (!mid) return null;
+        const from2 = sqToIdx(parsed.second.from);
+        const to2 = sqToIdx(parsed.second.to);
+        if (!goofballLegalDestinations(mid, from2).includes(to2)) return null;
+        captured = captured || !!mid.board[to2];
+      }
+      next = applyAbility(state, 'goofball', targetIdx, fromIdx, parsed.promo, parsed.second);
     } else if (parsed.hero === 'twin-jutsu') {
       if (!parsed.from) return null;
       const fromIdx = sqToIdx(parsed.from);
@@ -2302,10 +2819,11 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       next = applyAbility(state, parsed.hero, targetIdx);
       if (parsed.hero === 'warlord') {
         captured = true;
-      } else if (parsed.hero === 'juggernaut') {
+      } else if (parsed.hero === 'juggernaut' || parsed.hero === 'gojo') {
         // Quake leap can capture; rampage can flatten several pieces;
-        // convert only flips allegiance. A simple piece-count diff covers
-        // all three (plus any missile landing on the same ply).
+        // convert only flips allegiance. A Hollow Purple erases whatever it
+        // condenses on. A simple piece-count diff covers all of them (plus
+        // any missile landing on the same ply).
         const count = (b: (Piece | null)[]) => b.reduce((n, p) => n + (p ? 1 : 0), 0);
         captured = count(next.board) < count(state.board);
       }
@@ -2313,6 +2831,8 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     if (isInCheck(next, color)) return null;
     const kingDestroyed = detectKingDestroyed(state, next);
     const slimeSplits = detectSlimeSplits(state, next);
+    const kamakazeExplosions = kamakazeExplosionSquares(next);
+    const hollowPurpleBlasts = hollowPurpleBlastSquares(next);
     const check = isInCheck(next, next.turn);
     const jugPhantom = !check && jugWouldBeInCheck(next);
     const oppHasMoves = allLegalBoardMoves(next).length > 0 || anyLegalAbility(next);
@@ -2334,6 +2854,8 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
         kingDestroyed,
         ...(slimeSplits.length > 0 ? { slimeSplits } : {}),
         ...(jugPhantom ? { jugPhantomCheck: true } : {}),
+        ...(kamakazeExplosions.length > 0 ? { kamakazeExplosions } : {}),
+        ...(hollowPurpleBlasts.length > 0 ? { hollowPurpleBlasts } : {}),
       },
     };
   }
@@ -2364,12 +2886,18 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   const next = applyPseudo(state, chosen);
   if (isInCheck(next, moverColor)) return null;
   // Spending your last king square to capture a sub-tier-3 Juggernaut is
-  // suicide — illegal, mirroring the filter in legalMovesFrom.
-  if (hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor)) return null;
+  // suicide — illegal, mirroring the filter in legalMovesFrom (Hollow Purple
+  // king kills excepted, same as there).
+  if (
+    hasAnyKingSquare(state, moverColor) && !hasAnyKingSquare(next, moverColor) &&
+    !hollowPurpleKilledKing(next, moverColor)
+  ) return null;
 
   const dest = state.board[toIdx];
   const kingDestroyed = detectKingDestroyed(state, next);
   const slimeSplits = detectSlimeSplits(state, next);
+  const kamakazeExplosions = kamakazeExplosionSquares(next);
+  const hollowPurpleBlasts = hollowPurpleBlastSquares(next);
   // Missile demolition on the same ply counts as a capture for sfx/result —
   // but only when the missile actually destroys something. A piece moving
   // OFF the impact square leaves it empty before the explosion lands, so
@@ -2402,6 +2930,8 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
       kingDestroyed,
       ...(slimeSplits.length > 0 ? { slimeSplits } : {}),
       ...(jugPhantom ? { jugPhantomCheck: true } : {}),
+      ...(kamakazeExplosions.length > 0 ? { kamakazeExplosions } : {}),
+      ...(hollowPurpleBlasts.length > 0 ? { hollowPurpleBlasts } : {}),
     },
   };
 }
@@ -2512,7 +3042,15 @@ export function toFen(state: GameState): string {
   const earthquakes = state.earthquakes.length === 0
     ? '-'
     : state.earthquakes.map((e) => `${e.idx}:${e.df}:${e.dr}:${e.color}:${e.spawnedAtPly}`).join(',');
-  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked} ${slimes} ${stunned} ${earthquakes}`;
+  const explosives = explosiveIdxs(state).length === 0
+    ? '-'
+    : explosiveIdxs(state).join(',');
+  // Hollow Purple orbs (Gojo) — `idx:df:dr:color:spawnPly`, same shape as the
+  // earthquake token.
+  const hollow = hollowPurpleList(state).length === 0
+    ? '-'
+    : hollowPurpleList(state).map((h) => `${h.idx}:${h.df}:${h.dr}:${h.color}:${h.spawnedAtPly}`).join(',');
+  return `${board} ${state.turn} ${cas} ${ep} ${state.halfmove} ${state.fullmove} ${state.ply} ${hero} ${frozen} ${missiles} ${masked} ${slimes} ${stunned} ${earthquakes} ${explosives} ${hollow}`;
 }
 
 function positionKey(state: GameState): string {
@@ -2558,5 +3096,10 @@ export function isInsufficientMaterial(state: GameState): boolean {
   // A Slime side can grow its last king back into a blob, which can mate.
   if (state.heroes.w.hero === 'slime' && state.ply >= state.heroes.w.cooldownUntilPly) return false;
   if (state.heroes.b.hero === 'slime' && state.ply >= state.heroes.b.cooldownUntilPly) return false;
+  // A Gojo side can still win bare-kings: Hollow Purple erases the enemy king
+  // outright. Any orb already drifting counts too.
+  if (state.heroes.w.hero === 'gojo' && state.ply >= state.heroes.w.cooldownUntilPly) return false;
+  if (state.heroes.b.hero === 'gojo' && state.ply >= state.heroes.b.cooldownUntilPly) return false;
+  if (hollowPurpleList(state).length > 0) return false;
   return true;
 }

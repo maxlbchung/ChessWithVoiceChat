@@ -236,9 +236,11 @@ const HERO_ABILITY_SOUND: Record<string, string> = {
   mutation: 'mutate',
   icbm: 'missile',
   goofball: 'goofball',
+  kamakaze: 'kamakaze',
   'twin-jutsu': 'twin',
   slime: 'slime',
   juggernaut: 'jug',
+  gojo: 'gojo',
   harem: 'harem',
 };
 
@@ -501,8 +503,12 @@ export function VideoEditor() {
         if (k === 'a') { e.preventDefault(); selectAll(); return; }
         return;
       }
+      if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        onPlayPause();
+        return;
+      }
       switch (e.key) {
-        case ' ': e.preventDefault(); onPlayPause(); break;
         case 'ArrowRight': e.preventDefault(); stepMove(1); break;
         case 'ArrowLeft': e.preventDefault(); stepMove(-1); break;
         case 'Home': e.preventDefault(); seek(0); break;

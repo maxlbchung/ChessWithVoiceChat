@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent as ReactDragEvent } from 'react';
 import { Chess } from 'chess.js';
-import { MergeBoard } from '../components/MergeBoard';
+import { HOLLOW_PURPLE_DRIFT_MS, MergeBoard } from '../components/MergeBoard';
 import { CustomSelect } from '../components/CustomSelect';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import {
@@ -24,6 +24,7 @@ import {
 } from '../lib/chess2';
 import {
   initialState as cashInitial,
+  buyUci,
   legalMovesFrom as cashLegalFrom,
   isInCheck as cashIsInCheck,
   isCheckmate as cashIsCheckmate,
@@ -31,6 +32,7 @@ import {
 import {
   initialState as heroInitial,
   backRanksForGame,
+  abilityUci,
   legalMovesFrom as heroLegalFrom,
   abilityTargets as heroAbilityTargets,
   goofballLegalDestinations,
@@ -51,7 +53,9 @@ import type { AbilityAnim } from '../components/MergeBoard';
 import { renderPiece, renderNeutralKing, lettersToPieceKeys } from '../lib/pieceSvgs';
 import * as sfx from '../lib/sfx';
 import { useSettingsStore } from '../store/settingsStore';
-import { buildSandboxExport, downloadSandboxJson, downloadSandboxPng } from '../lib/sandboxExport';
+import { downloadSandboxPng } from '../lib/sandboxExport';
+import { buildGameExport, downloadGameExport } from '../lib/gameExport';
+import type { Move } from '../lib/types';
 import type { DisplaySnapshot } from '../lib/replayView';
 
 type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
@@ -79,6 +83,10 @@ type SandboxState = {
   // (no ply counter to expire them) — markers clear when the piece moves or
   // is deleted, same bookkeeping as frozenIdxs.
   stunnedIdxs: number[];
+  explosiveIdxs: number[];
+  // UCI-ish action that produced this state from the previous one. Used only
+  // for Export Game so sandbox exports match normal game JSON.
+  moveUci?: string;
 };
 
 // Piece sets per variant, in the order they appear in the palette (top→bottom).
@@ -148,6 +156,8 @@ function frozenAfterClear(frozenIdxs: number[], idx: number): number[] {
 // clear drops the marker).
 const stunnedAfterMove = frozenAfterMove;
 const stunnedAfterClear = frozenAfterClear;
+const explosiveAfterMove = frozenAfterMove;
+const explosiveAfterClear = frozenAfterClear;
 
 function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): SandboxState {
   const board = initialBoard(variant, heroW, heroB);
@@ -168,7 +178,48 @@ function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): 
     enPassant: null,
     masked,
     stunnedIdxs: [],
+    explosiveIdxs: [],
   };
+}
+
+function newSandboxGameId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `sandbox-${crypto.randomUUID()}`;
+  } catch {
+    /* fall through */
+  }
+  return `sandbox-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sandboxTimeControlId(variant: SandboxVariant): string {
+  switch (variant) {
+    case 'merge': return 'merge-blitz-5+0';
+    case 'two': return 'two-blitz-5+0';
+    case 'cash': return 'cash-blitz-5+0';
+    case 'hero': return 'hero-blitz-5+0';
+    default: return 'blitz-5+0';
+  }
+}
+
+function moveFromUci(uci: string, index: number): Move {
+  return {
+    uci,
+    fenAfter: '',
+    ply: index + 1,
+    whiteClockMs: 0,
+    blackClockMs: 0,
+  };
+}
+
+function heroBackRanksFromInitial(state: SandboxState): { w?: string; b?: string } | undefined {
+  const out: { w?: string; b?: string } = {};
+  if (state.heroW === 'twin-jutsu') {
+    out.w = state.board.slice(56, 64).map((p) => p?.letter.toUpperCase() ?? 'K').join('');
+  }
+  if (state.heroB === 'twin-jutsu') {
+    out.b = state.board.slice(0, 8).map((p) => p?.letter.toUpperCase() ?? 'K').join('');
+  }
+  return out.w || out.b ? out : undefined;
 }
 
 // Letter casing → color. 'K' = white king, 'k' = black king.
@@ -674,7 +725,7 @@ export function Sandbox() {
   const canRedo = viewPly < history.length - 1;
 
   // Truncate any "future" redo states and append a new state on top.
-  const pushState = (next: SandboxState) => {
+  const pushState = (next: SandboxState, moveUci?: string) => {
     // Layer a check / checkmate sound on top of the action sound played by
     // movePiece / spawnPiece / etc. — same as free play. Compute it from the
     // before→after transition so a check that was already present before the
@@ -694,7 +745,7 @@ export function Sandbox() {
     }
     setHistory((h) => {
       const trunc = h.slice(0, viewPly + 1);
-      return [...trunc, next];
+      return [...trunc, { ...next, moveUci }];
     });
     setViewPly((p) => p + 1);
   };
@@ -731,7 +782,7 @@ export function Sandbox() {
   };
   const handleClear = () => {
     sfx.playReset();
-    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], stunnedIdxs: [], enPassant: null, masked: new Array(64).fill(false) }]);
+    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], stunnedIdxs: [], explosiveIdxs: [], enPassant: null, masked: new Array(64).fill(false), moveUci: undefined }]);
     setViewPly((p) => p + 1);
     setSelectedSq(null);
     setShopArmed(null);
@@ -740,13 +791,21 @@ export function Sandbox() {
   };
 
   // Spawn a piece on the board (palette → drop, or shop-letter → click).
-  const spawnPiece = (letter: PieceLetter, sq: string) => {
+  const spawnPiece = (letter: PieceLetter, sq: string, moveUci?: string) => {
     const idx = mergeSqToIdx(sq);
     const nextBoard = current.board.slice();
     nextBoard[idx] = { color: colorOf(letter), letter };
     const nextMasked = current.masked.slice();
     nextMasked[idx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: frozenAfterClear(current.frozenIdxs, idx), stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, idx), enPassant: null, masked: nextMasked });
+    pushState({
+      ...current,
+      board: nextBoard,
+      frozenIdxs: frozenAfterClear(current.frozenIdxs, idx),
+      stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, idx),
+      explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
+      enPassant: null,
+      masked: nextMasked,
+    }, moveUci);
     sfx.playPlace();
     if (animationsEnabled) {
       setPopAnim({ squares: [sq], key: Date.now() });
@@ -771,6 +830,7 @@ export function Sandbox() {
     const moving = current.board[fromIdx];
     if (!moving) return false;
     const target = current.board[toIdx];
+    const uci = from + to;
 
     // Juggernaut absorb (hero variant): capturing a sub-tier-3 Juggernaut
     // kills the attacker and feeds the boss a tier — mirror the live engine.
@@ -787,9 +847,10 @@ export function Sandbox() {
           board: nextBoard,
           frozenIdxs: frozenAfterClear(current.frozenIdxs, fromIdx),
           stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, fromIdx),
+          explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, fromIdx),
           enPassant: null,
           masked: nextMasked,
-        });
+        }, uci);
         (target.color === 'w' ? setJugTierW : setJugTierB)((t) => Math.min(3, t + 1));
         window.setTimeout(() => sfx.playJugQuake(), 320);
         if (animationsEnabled) {
@@ -865,7 +926,7 @@ export function Sandbox() {
           nextBoard[t] = { color: moving.color, letter: moving.letter };
           nextMasked[t] = false;
         }
-        pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+        pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked }, uci);
         if (split) sfx.playSlimeSplit();
         else if (captured) sfx.playCapture();
         else sfx.playMove();
@@ -924,7 +985,7 @@ export function Sandbox() {
         nextMasked[srcIdx] = false;
         nextMasked[idxOf(sf + df, sr + dr)] = false;
       }
-      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked }, uci);
       sfx.playPush();
       // Animate the rook + each pushed piece chained behind it.
       if (viaClick && animationsEnabled) {
@@ -999,11 +1060,13 @@ export function Sandbox() {
     if (epCapturedIdx != null) nextFrozen = frozenAfterClear(nextFrozen, epCapturedIdx);
     let nextStunned = stunnedAfterMove(current.stunnedIdxs, fromIdx, toIdx);
     if (epCapturedIdx != null) nextStunned = stunnedAfterClear(nextStunned, epCapturedIdx);
+    let nextExplosive = explosiveAfterMove(current.explosiveIdxs, fromIdx, toIdx);
+    if (epCapturedIdx != null) nextExplosive = explosiveAfterClear(nextExplosive, epCapturedIdx);
     const nextMasked = current.masked.slice();
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
     if (epCapturedIdx != null) nextMasked[epCapturedIdx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, stunnedIdxs: nextStunned, enPassant: nextEnPassant, masked: nextMasked });
+    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, stunnedIdxs: nextStunned, explosiveIdxs: nextExplosive, enPassant: nextEnPassant, masked: nextMasked }, uci);
     if (isMerge) sfx.playMerge();
     else if (target && target.color !== moving.color && target.letter.toUpperCase() === 'S') sfx.playSlimeSplit();
     else if (target || epCapturedIdx != null) sfx.playCapture();
@@ -1039,6 +1102,7 @@ export function Sandbox() {
       board: nextBoard,
       frozenIdxs: frozenAfterClear(current.frozenIdxs, idx),
       stunnedIdxs: stunnedAfterClear(current.stunnedIdxs, idx),
+      explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
       enPassant: null,
       masked: nextMasked,
     });
@@ -1073,10 +1137,14 @@ export function Sandbox() {
     nextBoard[fromIdx] = null;
     nextBoard[toIdx] = placed;
     const nextFrozen = frozenAfterMove(current.frozenIdxs, fromIdx, toIdx);
+    const nextExplosive = explosiveAfterMove(current.explosiveIdxs, fromIdx, toIdx);
     const nextMasked = current.masked.slice();
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+    pushState(
+      { ...current, board: nextBoard, frozenIdxs: nextFrozen, explosiveIdxs: nextExplosive, enPassant: null, masked: nextMasked },
+      abilityUci('goofball', targetSq, heroIdxToSq(fromIdx), promoLetter),
+    );
     sfx.playGoofball();
     if (animationsEnabled) {
       setSlideAnim({
@@ -1118,7 +1186,15 @@ export function Sandbox() {
     const nextMasked = current.masked.slice();
     nextMasked[fromIdx] = true;
     nextMasked[toIdx] = true;
-    pushState({ ...current, board: nextBoard, frozenIdxs: current.frozenIdxs, enPassant: null, masked: nextMasked });
+    const aExplosive = current.explosiveIdxs.includes(fromIdx);
+    const bExplosive = current.explosiveIdxs.includes(toIdx);
+    const nextExplosive = current.explosiveIdxs.filter((idx) => idx !== fromIdx && idx !== toIdx);
+    if (aExplosive) nextExplosive.push(toIdx);
+    if (bExplosive) nextExplosive.push(fromIdx);
+    pushState(
+      { ...current, board: nextBoard, frozenIdxs: current.frozenIdxs, explosiveIdxs: nextExplosive, enPassant: null, masked: nextMasked },
+      abilityUci('twin-jutsu', targetSq, heroIdxToSq(fromIdx), promoLetter),
+    );
     sfx.playTwinJutsu();
     if (animationsEnabled) {
       setSlideAnim({
@@ -1152,10 +1228,14 @@ export function Sandbox() {
     nextBoard[fromIdx] = null;
     nextBoard[toIdx] = placed;
     const nextFrozen = frozenAfterMove(current.frozenIdxs, fromIdx, toIdx);
+    const nextExplosive = explosiveAfterMove(current.explosiveIdxs, fromIdx, toIdx);
     const nextMasked = current.masked.slice();
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked });
+    pushState(
+      { ...current, board: nextBoard, frozenIdxs: nextFrozen, explosiveIdxs: nextExplosive, enPassant: null, masked: nextMasked },
+      abilityUci('flight', targetSq, heroIdxToSq(fromIdx), promoLetter),
+    );
     sfx.playFly();
     if (animationsEnabled) {
       setAbilityAnim({
@@ -1191,9 +1271,10 @@ export function Sandbox() {
       ...current,
       board: nextBoard,
       frozenIdxs: frozenAfterClear(current.frozenIdxs, fromIdx),
+      explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, fromIdx),
       enPassant: null,
       masked: nextMasked,
-    });
+    }, abilityUci('slime', heroIdxToSq(toIdx), heroIdxToSq(fromIdx)));
     sfx.playSlimeExpand();
     if (animationsEnabled) {
       setAbilityAnim({
@@ -1460,7 +1541,10 @@ export function Sandbox() {
         // amplified ground impact); skip the standard pop on this tier
         // so it doesn't clash with the leap-body scale animation.
       }
-      pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked, stunnedIdxs: nextStunned });
+      pushState(
+        { ...current, board: nextBoard, frozenIdxs: nextFrozen, enPassant: null, masked: nextMasked, stunnedIdxs: nextStunned },
+        abilityUci('juggernaut', targetSq),
+      );
       sfx.playJugQuake();
       if (animationsEnabled) {
         setAbilityAnim({
@@ -1468,6 +1552,90 @@ export function Sandbox() {
           toSq: targetSq,
           color,
           key: `jug-${Date.now()}`,
+        });
+      }
+      setAbilityArmed(null);
+      return;
+    }
+
+    // Gojo: single-click. The sandbox has no ply clock for the orb to drift
+    // on, so Hollow Purple resolves its entire journey at once — everything
+    // from the chosen adjacent square out to the board edge is annihilated,
+    // this side's own pieces included (Slime tiles split as they're erased).
+    if (hero === 'gojo') {
+      if (!heroLegalAbilityTargets.has(idx)) { setAbilityArmed(null); return; }
+      let k = -1;
+      for (let i = 0; i < 64; i++) {
+        const p = current.board[i];
+        if (p && p.color === color && p.letter.toUpperCase() === 'K') { k = i; break; }
+      }
+      if (k === -1) { setAbilityArmed(null); return; }
+      const nextBoard = current.board.slice();
+      const nextMasked = current.masked.slice();
+      let nextFrozen = current.frozenIdxs;
+      let nextStunned = current.stunnedIdxs;
+      let nextExplosive = current.explosiveIdxs;
+      const groups = deriveSlimeGroups(current.board);
+      const dCol = Math.sign((idx % 8) - (k % 8));
+      const dRow = Math.sign(Math.floor(idx / 8) - Math.floor(k / 8));
+      const swept: string[] = [];
+      // Squares that actually held something — each gets a staggered blast so
+      // the sweep reads as the orb travelling down the lane.
+      const hits: { sq: string; letter: string }[] = [];
+      let c2 = idx % 8, r2 = Math.floor(idx / 8);
+      while (c2 >= 0 && c2 < 8 && r2 >= 0 && r2 < 8) {
+        const pIdx = r2 * 8 + c2;
+        const victim = nextBoard[pIdx];
+        if (victim) {
+          hits.push({ sq: heroIdxToSq(pIdx), letter: victim.letter });
+          if (victim.letter.toUpperCase() === 'S') {
+            const vGroup = groups.find((g) => g.tiles.includes(pIdx));
+            if (vGroup) {
+              for (const vt of vGroup.tiles) {
+                const vp = nextBoard[vt];
+                if (vt !== pIdx && vp && vp.letter.toUpperCase() === 'S') {
+                  nextBoard[vt] = { color: vp.color, letter: (vp.color === 'w' ? 'K' : 'k') as PieceLetter };
+                }
+              }
+            }
+          }
+          nextBoard[pIdx] = null;
+          nextFrozen = frozenAfterClear(nextFrozen, pIdx);
+          nextStunned = stunnedAfterClear(nextStunned, pIdx);
+          nextExplosive = explosiveAfterClear(nextExplosive, pIdx);
+        }
+        nextMasked[pIdx] = false;
+        swept.push(heroIdxToSq(pIdx));
+        c2 += dCol; r2 += dRow;
+      }
+      pushState({
+        ...current,
+        board: nextBoard,
+        frozenIdxs: nextFrozen,
+        stunnedIdxs: nextStunned,
+        explosiveIdxs: nextExplosive,
+        masked: nextMasked,
+        enPassant: null,
+      }, abilityUci('gojo', targetSq));
+      sfx.playHollowPurple();
+      if (animationsEnabled) {
+        setAbilityAnim({ kind: 'gojo', toSq: targetSq, color, key: `gojo-${Date.now()}` });
+        setPopAnim({ squares: swept, key: Date.now() });
+        // Walk a blast down the lane, one per victim, at the same cadence the
+        // orb would drift at in a real game — and hold each victim's sprite
+        // until its own blast fires.
+        if (hits.length > 0) setDoomedPieces((prev) => [...prev, ...hits]);
+        hits.forEach((hit, i) => {
+          window.setTimeout(() => {
+            setAbilityAnim({
+              kind: 'gojo-blast',
+              toSq: hit.sq,
+              color,
+              key: `gojo-blast-${hit.sq}-${i}-${Date.now()}`,
+            });
+            sfx.playHollowPurpleHit();
+            setDoomedPieces((prev) => prev.filter((d) => d.sq !== hit.sq));
+          }, HOLLOW_PURPLE_DRIFT_MS + i * 240);
         });
       }
       setAbilityArmed(null);
@@ -1486,7 +1654,7 @@ export function Sandbox() {
       if (alreadyFrozen) nextFrozen = current.frozenIdxs.filter((f) => f !== idx);
       else if (targetPiece) nextFrozen = [...current.frozenIdxs, idx];
       else { setAbilityArmed(null); return; }
-      pushState({ ...current, frozenIdxs: nextFrozen, enPassant: null });
+      pushState({ ...current, frozenIdxs: nextFrozen, enPassant: null }, alreadyFrozen ? undefined : abilityUci('frost', targetSq));
       sfx.playFreeze();
       if (animationsEnabled) setAbilityAnim({ kind: 'frost', toSq: targetSq, color, key: `frost-${Date.now()}` });
     } else if (hero === 'warlord') {
@@ -1497,8 +1665,9 @@ export function Sandbox() {
         ...current,
         board: nextBoard,
         frozenIdxs: frozenAfterClear(current.frozenIdxs, idx),
+        explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
         enPassant: null,
-      });
+      }, abilityUci('warlord', targetSq));
       // Slice fires at swing-start; its internal climax lands at the swing
       // midpoint so the whistle leads INTO the blade's apex strike.
       sfx.playSlice();
@@ -1523,7 +1692,7 @@ export function Sandbox() {
       if (targetPiece) return;
       const nextBoard = current.board.slice();
       nextBoard[idx] = { color, letter: (color === 'w' ? 'P' : 'p') as PieceLetter };
-      pushState({ ...current, board: nextBoard, enPassant: null });
+      pushState({ ...current, board: nextBoard, enPassant: null }, abilityUci('necromancer', targetSq));
       sfx.playSpawn();
       if (animationsEnabled) {
         setAbilityAnim({ kind: 'necromancer', toSq: targetSq, color, key: `necro-${Date.now()}` });
@@ -1542,12 +1711,21 @@ export function Sandbox() {
         color: targetPiece.color,
         letter: (wasLower ? mergedUp.toLowerCase() : mergedUp) as PieceLetter,
       };
-      pushState({ ...current, board: nextBoard, enPassant: null });
+      pushState({ ...current, board: nextBoard, enPassant: null }, abilityUci('mutation', targetSq));
       sfx.playMutate();
       if (animationsEnabled) {
         setAbilityAnim({ kind: 'mutation', toSq: targetSq, color, key: `mut-${Date.now()}` });
         setPopAnim({ squares: [targetSq], key: Date.now() });
       }
+    } else if (hero === 'kamakaze') {
+      if (!targetPiece || targetPiece.color !== color) return;
+      if (current.explosiveIdxs.includes(idx)) return;
+      pushState({
+        ...current,
+        explosiveIdxs: [...current.explosiveIdxs, idx],
+        enPassant: null,
+      }, abilityUci('kamakaze', targetSq));
+      sfx.playKamakazeArm();
     } else if (hero === 'icbm') {
       // Sandbox compresses the 7-ply missile flight into an immediate strike:
       // the target square is demolished now, with the launch + explosion sfx
@@ -1558,8 +1736,9 @@ export function Sandbox() {
         ...current,
         board: nextBoard,
         frozenIdxs: frozenAfterClear(current.frozenIdxs, idx),
+        explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
         enPassant: null,
-      });
+      }, abilityUci('icbm', targetSq));
       sfx.playMissileLaunch();
       window.setTimeout(() => sfx.playExplosion(), 450);
       if (animationsEnabled) {
@@ -1581,7 +1760,7 @@ export function Sandbox() {
       const letterCased = shopArmed.color === 'w'
         ? (shopArmed.letter as PieceLetter)
         : (shopArmed.letter.toLowerCase() as PieceLetter);
-      spawnPiece(letterCased, sq);
+      spawnPiece(letterCased, sq, buyUci(shopArmed.letter as Parameters<typeof buyUci>[0], sq));
       setShopArmed(null);
       return;
     }
@@ -1719,6 +1898,7 @@ export function Sandbox() {
         masked: current.masked,
         slimes: deriveSlimeGroups(current.board),
         jugTier: jugTiers,
+        explosives: current.explosiveIdxs,
       };
       const armedHero = abilityArmed === 'w' ? current.heroW : current.heroB;
       if (armedHero === 'goofball' && goofballFrom != null) {
@@ -1755,6 +1935,7 @@ export function Sandbox() {
         masked: current.masked,
         slimes: deriveSlimeGroups(current.board),
         jugTier: jugTiers,
+        explosives: current.explosiveIdxs,
       };
       return slimeShiftOptions(state as any, idx);
     } catch {
@@ -1849,25 +2030,32 @@ export function Sandbox() {
       slimeKingSquares,
       juggernauts,
       stunnedSquares: variant === 'hero' ? current.stunnedIdxs.map((i) => heroIdxToSq(i)) : [],
+      explosiveSquares: variant === 'hero' ? current.explosiveIdxs.map((i) => heroIdxToSq(i)) : [],
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, variant, lastMove, kingGlows, frozenSquares, jugTierW, jugTierB]);
 
   const handleExportGame = () => {
-    const exp = buildSandboxExport({
+    const moveUcis = history
+      .slice(1, viewPly + 1)
+      .map((state) => state.moveUci)
+      .filter((uci): uci is string => typeof uci === 'string' && uci.length > 0);
+    const startedAt = Date.now();
+    const exp = buildGameExport({
       variant,
-      orientation,
-      board: current.board,
-      heroW: current.heroW,
-      heroB: current.heroB,
-      jugTierW,
-      jugTierB,
-      frozenIdxs: current.frozenIdxs,
-      stunnedIdxs: current.stunnedIdxs,
-      masked: current.masked,
-      enPassant: current.enPassant,
+      gameId: newSandboxGameId(),
+      timeControlId: sandboxTimeControlId(variant),
+      white: { handle: 'Sandbox White', rating: 0 },
+      black: { handle: 'Sandbox Black', rating: 0 },
+      startedAt,
+      endedAt: null,
+      outcome: null,
+      reason: null,
+      moves: moveUcis.map(moveFromUci),
+      ...(variant === 'hero' ? { heroes: { w: current.heroW, b: current.heroB } } : {}),
+      ...(variant === 'hero' ? { heroBackRanks: heroBackRanksFromInitial(history[0]) } : {}),
     });
-    downloadSandboxJson(exp);
+    downloadGameExport(exp);
     sfx.playSelect();
   };
 
@@ -1890,6 +2078,7 @@ export function Sandbox() {
           masked: current.masked,
           slimes: deriveSlimeGroups(current.board),
           jugTier: jugTiers,
+          explosives: current.explosiveIdxs,
         };
         return heroAbilityTargets(state as any).length > 0;
       } catch {
@@ -2020,6 +2209,7 @@ export function Sandbox() {
                 return out;
               })()}
               stunnedSquares={variant === 'hero' ? current.stunnedIdxs.map((i) => heroIdxToSq(i)) : []}
+              explosiveSquares={variant === 'hero' ? current.explosiveIdxs.map((i) => heroIdxToSq(i)) : []}
             />
             {isFullscreen && (
               <button
@@ -2136,6 +2326,8 @@ export function Sandbox() {
                     else if (h === 'twin-jutsu') sfx.playTwinJutsu();
                     else if (h === 'slime') sfx.playSlimeExpand();
                     else if (h === 'juggernaut') sfx.playJugQuake();
+                    else if (h === 'kamakaze') sfx.playKamakazeArm();
+                    else if (h === 'gojo') sfx.playHollowPurple();
                   }
                   setHeroW(h);
                 }}
@@ -2152,6 +2344,8 @@ export function Sandbox() {
                     else if (h === 'twin-jutsu') sfx.playTwinJutsu();
                     else if (h === 'slime') sfx.playSlimeExpand();
                     else if (h === 'juggernaut') sfx.playJugQuake();
+                    else if (h === 'kamakaze') sfx.playKamakazeArm();
+                    else if (h === 'gojo') sfx.playHollowPurple();
                   }
                   setHeroB(h);
                 }}

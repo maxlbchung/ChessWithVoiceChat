@@ -1,7 +1,8 @@
 import { Chess } from 'chess.js';
 import type { Piece as MergePiece } from './mergeChess';
 import type { Replay } from './gameExport';
-import { HERO_INFO, idxToSq as heroIdxToSq, kingSquareOf } from './heroChess';
+import { HERO_INFO, goofballSlides, hollowPurpleOrigin, idxToSq as heroIdxToSq, kingSquareOf } from './heroChess';
+import { idxToSq as sweeperIdxToSq, revealedCounts } from './sweeperChess';
 
 // A board snapshot at a given ply, normalized across every variant into the
 // shared MergePiece board shape plus the optional Hero/Slime/etc. overlays.
@@ -19,7 +20,12 @@ export type DisplaySnapshot = {
   slimeKingSquares?: string[];
   juggernauts?: { sq: string; tier: number }[];
   stunnedSquares?: string[];
+  explosiveSquares?: string[];
   earthquakes?: { sq: string; df: number; dr: number; color: 'w' | 'b' }[];
+  hollowPurples?: { sq: string; df: number; dr: number; color: 'w' | 'b'; from?: string }[];
+  // Chesssweeper: revealed adjacency numbers + craters left by blown mines.
+  sweeperCounts?: { sq: string; count: number }[];
+  sweeperCraters?: string[];
 };
 
 export function totalPlyOf(r: Replay): number {
@@ -77,6 +83,16 @@ export function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
     }
     return { board: state.board as unknown as (MergePiece | null)[], lastMove };
   }
+  if (r.variant === 'sweeper') {
+    const state = r.states[viewPly] ?? r.states[0];
+    const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));
+    return {
+      board: state.board as (MergePiece | null)[],
+      lastMove,
+      sweeperCounts: revealedCounts(state).map(({ idx, count }) => ({ sq: sweeperIdxToSq(idx), count })),
+      sweeperCraters: state.detonated.map(sweeperIdxToSq),
+    };
+  }
   // hero
   const state = r.states[viewPly] ?? r.states[0];
   const uci = viewPly > 0 ? r.results[viewPly - 1]?.uci : undefined;
@@ -87,7 +103,12 @@ export function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
       // visually informative tint per kind. Twin-Jutsu/Goofball/Flight encode
       // two squares; the others encode one target.
       const hero = uci[1];
-      if (hero === 'T' || hero === 'G' || hero === 'L' || hero === 'S') {
+      if (hero === 'G' && goofballSlides(uci).length > 0) {
+        // Goofball forces one or two opponent moves — tint where the
+        // puppeting started and where it ended up.
+        const legs = goofballSlides(uci);
+        lastMove = { from: legs[0].from, to: legs[legs.length - 1].to };
+      } else if (hero === 'T' || hero === 'G' || hero === 'L' || hero === 'S') {
         const a = uci.slice(2, 4);
         const b = uci.slice(4, 6);
         lastMove = { from: a, to: b };
@@ -144,13 +165,23 @@ export function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
   const stunnedSquares = state.stunned
     .filter((s) => state.ply < s.expiresAtPly)
     .map((s) => heroIdxToSq(s.idx));
+  const explosiveSquares = (state.explosives ?? [])
+    .filter((idx) => state.board[idx] != null)
+    .map((idx) => heroIdxToSq(idx));
   const earthquakes = (state.earthquakes ?? []).map((eq) => ({
     sq: heroIdxToSq(eq.idx),
     df: eq.df,
     dr: eq.dr,
     color: eq.color,
   }));
-  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares, slimeBigKings, slimeKingSquares, juggernauts, stunnedSquares, earthquakes };
+  const hollowPurples = (state.hollowPurples ?? []).map((hp) => ({
+    sq: heroIdxToSq(hp.idx),
+    df: hp.df,
+    dr: hp.dr,
+    color: hp.color,
+    from: hollowPurpleOrigin(state, hp) ?? undefined,
+  }));
+  return { board, lastMove, kingGlows, frozenSquares, missiles, maskedAsKingSquares, slimeBigKings, slimeKingSquares, juggernauts, stunnedSquares, explosiveSquares, earthquakes, hollowPurples };
 }
 
 export function lastMoveFromUci(viewPly: number, ucis: string[]): { from: string; to: string } | null {
