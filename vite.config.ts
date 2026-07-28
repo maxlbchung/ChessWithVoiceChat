@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { renderAnnouncementsHtml } from './landing/announcements.ts';
 
 // In-memory matchmaker for `npm run dev`. In production, the Cloudflare Pages
 // Function in functions/api/matchmake.ts handles this with a Durable Object.
@@ -195,10 +196,27 @@ function devMatchmakerPlugin(): Plugin {
   };
 }
 
+// Generates the landing page's Announcements column from landing/announcements.ts
+// and drops it into the marker in index.html. Runs for dev and build alike, so
+// the page that ships is still static HTML — the changelog is data, but nothing
+// renders it at runtime. app/index.html has no marker and passes through
+// untouched. Vite watches config dependencies, so editing the list restarts dev.
+function announcementsPlugin(): Plugin {
+  const MARKER = '<!--announcements-->';
+  return {
+    name: 'landing-announcements',
+    transformIndexHtml: {
+      order: 'pre',
+      handler: (html) =>
+        html.includes(MARKER) ? html.replace(MARKER, renderAnnouncementsHtml()) : html,
+    },
+  };
+}
+
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
-  plugins: [react(), devMatchmakerPlugin()],
+  plugins: [react(), devMatchmakerPlugin(), announcementsPlugin()],
   server: { port: 5173 },
   optimizeDeps: {
     include: ['react-dom/server'],

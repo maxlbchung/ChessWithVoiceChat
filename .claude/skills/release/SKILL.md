@@ -27,17 +27,30 @@ never mutate a stored shape in place; bump the key and migrate like
 
 ## 1b. Landing-page announcement
 
-The root `index.html` "Announcements" section is the user-facing changelog. For a
-notable feature (roughly: anything worth a minor bump), add a card:
+The landing page's "Announcements" column is the user-facing changelog. It's generated:
+the cards live in **`landing/announcements.ts`**, and the `landing-announcements` plugin
+in `vite.config.ts` renders them into the `<!--announcements-->` marker in the root
+`index.html` at dev and build time (the shipped page stays static HTML — no runtime JS).
+Never hand-edit cards into `index.html`.
 
-- Write the new entry as `<article class="news news-latest">` at the top, with
-  `<span class="tag tag-new">New</span>` (features) or `tag-update` (changes/reworks)
-  and a `<time datetime="YYYY-MM-DD">Mon D, YYYY</time>` of today.
-- Demote the previous `news-latest` card into the `news-grid` below (drop its
-  `news-latest` class) so the grid stays newest-first; keep the grid to ~4 entries.
-- Copy style: short punchy `<h3>` + 1–2 sentence player-facing description — match the
-  existing cards' voice, not commit-message tone.
+For a notable feature (roughly: anything worth a minor bump), add one entry at the top
+of `ANNOUNCEMENTS`:
+
+```ts
+{ date: '2026-07-27', kind: 'new', title: 'Kamakaze arms your own pieces', body: '…' },
+```
+
+- `date` — ISO `YYYY-MM-DD` of today; renders as "Jul 27, 2026". The list is sorted
+  newest-first at render, so an out-of-order entry still lands correctly; entries
+  sharing a date keep their file order.
+- `kind` — `'new'` for features, `'update'` for changes/reworks. Picks the badge.
+- Layout is automatic: newest entry becomes the big lead card, the next `GRID_COUNT`
+  (5) follow in the column, the rest stay in the file as history. No demoting by hand.
+- Copy style: short punchy `title` + 1–2 sentence player-facing `body` — match the
+  existing entries' voice, not commit-message tone.
 - Patch-level fixes don't get announcements.
+- Verify with `node scripts/verify-announcements.mjs` (dev on 5199 + preview on 5184).
+  A bad date throws at build time rather than rendering "NaN".
 
 ## 2. Pre-deploy checks
 

@@ -158,8 +158,13 @@ record → export → replay → snapshot → scene → canvas → WebM:
      (`chess.summaries.v2.*`, `chess.identity.v1`, `vcc.settings.v1`). Never mutate a
      stored shape in place: bump the key version and write a migration; the pattern is
      `ensureMigrated()` in `storage.ts` (memoized one-shot v1→v2 fan-out).
-  4. Landing-page Announcements — the root `index.html` news column is the
-     user-facing changelog (see the `release` skill for the update pattern).
+  4. Landing-page Announcements — the news column at `/` is the user-facing
+     changelog. Entries live in `landing/announcements.ts`; the
+     `landing-announcements` plugin in `vite.config.ts` renders them into the
+     `<!--announcements-->` marker in the root `index.html` at dev and build time,
+     so the landing page ships as static HTML with no JS. Sorting, the lead-card
+     split and date formatting are derived — adding an entry is the whole edit
+     (see the `release` skill).
 - **CSS**: one monolithic `src/styles.css`. No modules/Tailwind. `:root` design tokens,
   BEM-ish kebab-case classes, per-instance color via inline CSS vars
   (`['--hero-color' as any]`). Landing page has its own `landing/landing.css`.

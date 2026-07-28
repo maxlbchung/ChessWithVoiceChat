@@ -33,7 +33,8 @@ Playwright screenshots you actually look at.
   for single-value tweaks (a pitch, a margin nudge). Related version systems: export
   `formatVersion` constants, versioned storage keys (never mutate a stored shape —
   bump key + migrate), and the landing-page Announcements column (the user-facing
-  changelog) — see "Versioning" in docs/ARCHITECTURE.md.
+  changelog — add an entry to `landing/announcements.ts`; it renders itself into
+  `index.html`) — see "Versioning" in docs/ARCHITECTURE.md.
 - **Generalize edits across variants.** Six modes share `MergeBoard.tsx` and one
   `styles.css`; if a change makes sense on other boards/modes, apply it everywhere it
   fits.
