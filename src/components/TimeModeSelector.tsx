@@ -86,18 +86,16 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
 
       <Section title="Hero" open={open.hero} onToggle={() => toggle('hero')}>
         <div className="muted small time-mode-blurb">
-          Pick a hero king with a unique ability — Frost freezes, Warlord
-          destroys adjacent, Necromancer spawns pawns, Flight teleports pieces.
-          Using an ability takes your turn.
+          Pick a hero king with a unique ability. Abilities take up your turn,
+          and have cooldowns.
         </div>
         {renderGrid(timeControlsForVariant('hero'))}
       </Section>
 
       <Section title="Chesssweeper" open={open.sweeper} onToggle={() => toggle('sweeper')}>
         <div className="muted small time-mode-blurb">
-          Normal chess, but 4 hidden landmines are buried in the middle two
-          ranks. Landing on a square reveals how many mines touch it — land on
-          a mine and the piece is destroyed. Blow up your king and you lose.
+          Landmines are hidden in the chess board, if a peice travels over a
+          bomb it explodes.
         </div>
         {renderGrid(timeControlsForVariant('sweeper'))}
       </Section>

@@ -546,10 +546,12 @@ export function SweeperGame() {
     setViewPly((p) => p + 1);
     // The move animates even when it ends on a mine: the engine has already
     // cleared the square, so the doomed sprite is what slides in, and the
-    // blast fires as it arrives. Promotion pops are pointless for a piece
-    // that's about to be destroyed.
+    // blast fires as it arrives. A mine caught in transit stops the slide
+    // there — that square is where the piece died. Promotion pops are
+    // pointless for a piece that's about to be destroyed.
     if (sliding) {
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      const stop = res.result.abortedAt != null ? idxToSq(res.result.abortedAt) : to;
+      setSlideAnim({ moves: [{ from, to: stop }], key: Date.now() });
     }
     if (animationsEnabled && !!promotion && res.result.mineIdx == null) {
       setPopAnim({ squares: [to], key: Date.now() });
@@ -753,8 +755,12 @@ export function SweeperGame() {
     if (viewPly <= 0) return null;
     const uci = moves[viewPly - 1]?.uci;
     if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
-    return { from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square };
-  }, [viewPly, moves]);
+    // A move cut short by a mine never reached its destination — tint where
+    // the piece actually died instead.
+    const aborted = results[viewPly - 1]?.abortedAt;
+    const to = aborted != null ? idxToSq(aborted) : uci.slice(2, 4);
+    return { from: uci.slice(0, 2) as Square, to: to as Square };
+  }, [viewPly, moves, results]);
 
   // Scrub one ply. Plays the move's normal SFX going forward, reversed going
   // back. The Undo/Redo buttons pass playSfx=false so they rely on the global

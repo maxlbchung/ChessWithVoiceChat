@@ -1,7 +1,9 @@
 // Chesssweeper — standard chess played over a hidden minefield. Four
 // landmines are buried in the middle two ranks (4 and 5). Moving a piece onto
-// a square reveals how many live mines sit in the eight squares around it;
-// moving onto a mine detonates it and destroys the piece that stepped on it.
+// a square reveals how many live mines sit in the eight squares around it.
+// A piece detonates any live mine it *travels over*, not just the one it lands
+// on: the first mine on its path takes it there and the move never completes.
+// Knights are the exception — they jump, so only their landing square counts.
 //
 // Legality comes straight from chess.js, so castling, en passant, promotion
 // and check detection all behave exactly like normal chess. The mine effect is
@@ -55,10 +57,15 @@ export type MoveResult = {
   check: boolean;
   checkmate: boolean;
   stalemate: boolean;
-  // Square the mover landed on — newly revealed by this move.
+  // Square the mover stopped on — newly revealed by this move. That's the
+  // destination normally, or the mine square when the move died in transit.
   revealedIdx: number;
-  // Index of the mine this move set off, or null for a quiet move.
+  // Index of the mine this move set off, or null for a quiet move. May sit
+  // short of the destination — see `abortedAt`.
   mineIdx: number | null;
+  // Set when a mine went off *under way*: the mover never reached `to`, so
+  // nothing was captured there. Equals `mineIdx` in that case, else null.
+  abortedAt: number | null;
   // Piece the blast destroyed (the mover), for the capture/animation UI.
   destroyedLetter: PieceLetter | null;
   // Side that lost outright to the blast (king destroyed / king exposed).
@@ -116,6 +123,24 @@ export function minesForGame(seed: string): number[] {
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   return pool.slice(0, MINE_COUNT).sort((a, b) => a - b);
+}
+
+// Squares a piece slides across on its way from `from` to `to`, excluding both
+// ends. Only rank/file/diagonal moves have any — a knight's jump is never
+// aligned, which is precisely why knights trip nothing but the mine they land
+// on.
+export function transitSquares(fromIdx: number, toIdx: number): number[] {
+  const fromFile = fromIdx % 8;
+  const fromRow = Math.floor(fromIdx / 8);
+  const df = (toIdx % 8) - fromFile;
+  const dr = Math.floor(toIdx / 8) - fromRow;
+  if (df !== 0 && dr !== 0 && Math.abs(df) !== Math.abs(dr)) return [];
+  const stepF = Math.sign(df);
+  const stepR = Math.sign(dr);
+  const steps = Math.max(Math.abs(df), Math.abs(dr));
+  const out: number[] = [];
+  for (let i = 1; i < steps; i++) out.push((fromRow + stepR * i) * 8 + (fromFile + stepF * i));
+  return out;
 }
 
 // The eight squares touching `idx`, clipped to the board.
@@ -243,47 +268,94 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   }
   if (!mv) return null;
 
+  const fromIdx = sqToIdx(from);
   const toIdx = sqToIdx(to);
-  const hitsMine = state.mines.includes(toIdx) && !state.detonated.includes(toIdx);
   const mover: SweeperColor = mv.color as SweeperColor;
+  const opp: SweeperColor = mover === 'w' ? 'b' : 'w';
+  const isLive = (idx: number) => state.mines.includes(idx) && !state.detonated.includes(idx);
+
+  // The first live mine under the piece's path stops it dead there. Knight
+  // jumps have no path, so they only ever set off what they land on.
+  const abortedAt = transitSquares(fromIdx, toIdx).find(isLive) ?? null;
+  const mineIdx = abortedAt ?? (isLive(toIdx) ? toIdx : null);
 
   let destroyedLetter: PieceLetter | null = null;
   let mineLoss: SweeperColor | null = null;
   let kingBlownAt: number | null = null;
+  let fenAfter: string;
+  let board: (Piece | null)[];
+  let turnAfter: SweeperColor;
+  // The position the opponent receives, for check/mate queries. Left null when
+  // the blast already decided the game — a position with the mover's king en
+  // prise won't load back into chess.js, and the flags are moot anyway.
+  let after: Chess | null = null;
 
-  if (hitsMine) {
-    const victim = chess.get(to as never);
-    if (victim) {
-      destroyedLetter = (victim.color === 'w' ? victim.type.toUpperCase() : victim.type) as PieceLetter;
-      if (victim.type === 'k') {
-        // A king can't simply be lifted off — a kingless FEN won't load back
-        // into chess.js. Leave it in the position, end the game, and clear it
-        // from the display board below so the blast still reads as fatal.
-        mineLoss = mover;
-        kingBlownAt = toIdx;
-      } else {
-        chess.remove(to as never);
-        // The blast can open a line onto the mover's own king (a piece that
-        // slid along a pin onto a mine). That position is illegal to play on —
-        // the opponent would just take the king — so it ends the game there.
-        const kingSq = kingSquare(chess, mover);
-        if (kingSq && chess.isAttacked(kingSq as never, (mover === 'w' ? 'b' : 'w') as never)) {
+  if (abortedAt != null) {
+    // The move never happened: rewind to the position before it and lift the
+    // traveller off its starting square instead. Nothing on `to` is captured.
+    const aborted = new Chess(state.fen);
+    const traveller = aborted.get(from as never);
+    if (traveller) destroyedLetter = letterOf(traveller);
+    aborted.remove(from as never);
+    // `aborted` still has the mover to move, which is exactly what the king
+    // safety test wants: the piece that was going to block or capture died on
+    // the way, so its own king can be left hanging.
+    const kingSq = kingSquare(aborted, mover);
+    if (!kingSq || aborted.isAttacked(kingSq as never, opp as never)) mineLoss = mover;
+    // Hand the position over: chess.js already fixed up castling rights when
+    // the piece was removed, an en-passant square can't outlive the pawn that
+    // made it, and losing a piece resets the fifty-move clock like a capture.
+    const fields = aborted.fen().split(' ');
+    // Only the move counter is borrowed from the position the move *would*
+    // have produced; the rest of it describes an arrival that never happened.
+    const post = chess.fen().split(' ');
+    fields[1] = opp;
+    fields[3] = '-';
+    fields[4] = '0';
+    fields[5] = post[5];
+    fenAfter = fields.join(' ');
+    board = boardOf(aborted);
+    turnAfter = opp;
+    if (!mineLoss) after = new Chess(fenAfter);
+  } else {
+    if (mineIdx != null) {
+      const victim = chess.get(to as never);
+      if (victim) {
+        destroyedLetter = letterOf(victim);
+        if (victim.type === 'k') {
+          // A king can't simply be lifted off — a kingless FEN won't load back
+          // into chess.js. Leave it in the position, end the game, and clear it
+          // from the display board below so the blast still reads as fatal.
           mineLoss = mover;
+          kingBlownAt = toIdx;
+        } else {
+          chess.remove(to as never);
+          // The blast can open a line onto the mover's own king (a piece that
+          // slid along a pin onto a mine). That position is illegal to play on —
+          // the opponent would just take the king — so it ends the game there.
+          const kingSq = kingSquare(chess, mover);
+          if (kingSq && chess.isAttacked(kingSq as never, opp as never)) mineLoss = mover;
         }
       }
     }
+    fenAfter = chess.fen();
+    board = boardOf(chess);
+    if (kingBlownAt != null) board[kingBlownAt] = null;
+    turnAfter = chess.turn() as SweeperColor;
+    if (!mineLoss) after = chess;
   }
 
-  const fenAfter = chess.fen();
-  const board = boardOf(chess);
-  if (kingBlownAt != null) board[kingBlownAt] = null;
-
-  const detonated = hitsMine ? [...state.detonated, toIdx] : state.detonated;
-  const revealed = state.revealed.includes(toIdx) ? state.revealed : [...state.revealed, toIdx];
+  // Only the square the piece actually stopped on is learned — a move cut
+  // short in transit tells you nothing about where it was headed.
+  const stoppedIdx = abortedAt ?? toIdx;
+  const detonated = mineIdx != null ? [...state.detonated, mineIdx] : state.detonated;
+  const revealed = state.revealed.includes(stoppedIdx)
+    ? state.revealed
+    : [...state.revealed, stoppedIdx];
 
   const next: GameState = {
     board,
-    turn: chess.turn() as SweeperColor,
+    turn: turnAfter,
     fen: fenAfter,
     mines: state.mines,
     revealed,
@@ -298,18 +370,23 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     uci,
     fenAfter,
     san: mv.san,
-    captured: !!mv.captured,
-    castled: !!mv.flags && (mv.flags.includes('k') || mv.flags.includes('q')),
-    check: !mineLoss && chess.isCheck(),
-    checkmate: !mineLoss && chess.isCheckmate(),
-    stalemate: !mineLoss && chess.isStalemate(),
-    revealedIdx: toIdx,
-    mineIdx: hitsMine ? toIdx : null,
+    captured: abortedAt == null && !!mv.captured,
+    castled: abortedAt == null && !!mv.flags && (mv.flags.includes('k') || mv.flags.includes('q')),
+    check: !!after && after.isCheck(),
+    checkmate: !!after && after.isCheckmate(),
+    stalemate: !!after && after.isStalemate(),
+    revealedIdx: stoppedIdx,
+    mineIdx,
+    abortedAt,
     destroyedLetter,
     mineLoss,
   };
 
   return { state: next, result };
+}
+
+function letterOf(piece: { color: string; type: string }): PieceLetter {
+  return (piece.color === 'w' ? piece.type.toUpperCase() : piece.type) as PieceLetter;
 }
 
 function kingSquare(chess: Chess, color: SweeperColor): Square | null {

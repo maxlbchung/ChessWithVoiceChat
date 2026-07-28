@@ -602,6 +602,10 @@ export function Home() {
       return { from: sq, to: sq };
     }
     if (!/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
+    // A Chesssweeper move cut short by a mine never reached its destination —
+    // tint where the piece actually died instead.
+    const aborted = freeVariant === 'sweeper' ? sweeperResults[freeViewPly - 1]?.abortedAt : null;
+    if (aborted != null) return { from: uci.slice(0, 2), to: sweeperIdxToSq(aborted) };
     return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates, sweeperResults]);
@@ -801,10 +805,12 @@ export function Home() {
     setFreeSelected(null);
     // The move animates even when it ends on a mine: the engine has already
     // cleared the square, so the doomed sprite is what slides in, and the
-    // blast fires as it arrives. Promotion pops are pointless for a piece
-    // that's about to be destroyed.
+    // blast fires as it arrives. A mine caught in transit stops the slide
+    // there — that square is where the piece died. Promotion pops are
+    // pointless for a piece that's about to be destroyed.
     if (sliding) {
-      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      const stop = res.result.abortedAt != null ? sweeperIdxToSq(res.result.abortedAt) : to;
+      setSlideAnim({ moves: [{ from, to: stop }], key: Date.now() });
     }
     if (animationsEnabled && !!promotion && res.result.mineIdx == null) {
       setPopAnim({ squares: [to], key: Date.now() });
