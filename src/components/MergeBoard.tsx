@@ -1774,15 +1774,19 @@ export function MergeBoard({
                   </div>
                 );
               })()}
+              {/* Rank / file coordinates. Set in the app's mono face — board
+                  coordinates are notation, and mono keeps the eight digits
+                  optically identical down the edge. */}
               {f === filesLeftRight[0] && (
                 <span
                   style={{
                     position: 'absolute',
                     left: 3,
                     top: 1,
-                    fontSize: Math.max(9, squarePx * 0.18),
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: Math.max(9, squarePx * 0.17),
                     color: isLight ? '#5d6c89' : '#dfe5f0',
-                    fontWeight: 600,
+                    fontWeight: 500,
                     pointerEvents: 'none',
                   }}
                 >
@@ -1795,9 +1799,10 @@ export function MergeBoard({
                     position: 'absolute',
                     right: 3,
                     bottom: 0,
-                    fontSize: Math.max(9, squarePx * 0.18),
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: Math.max(9, squarePx * 0.17),
                     color: isLight ? '#5d6c89' : '#dfe5f0',
-                    fontWeight: 600,
+                    fontWeight: 500,
                     pointerEvents: 'none',
                   }}
                 >

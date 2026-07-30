@@ -2266,6 +2266,7 @@ export function Home() {
                         else if (next === 'slime') sfx.playSlimeExpand();
                         else if (next === 'juggernaut') sfx.playJugQuake();
                         else if (next === 'kamakaze') sfx.playKamakazeArm();
+                        else if (next === 'gojo') sfx.playHollowPurple();
                       }
                       setHeroW(next);
                     }}
@@ -2293,6 +2294,7 @@ export function Home() {
                         else if (next === 'slime') sfx.playSlimeExpand();
                         else if (next === 'juggernaut') sfx.playJugQuake();
                         else if (next === 'kamakaze') sfx.playKamakazeArm();
+                        else if (next === 'gojo') sfx.playHollowPurple();
                       }
                       setHeroB(next);
                     }}

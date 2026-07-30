@@ -198,7 +198,8 @@ export function Profile() {
           </div>
           <div className="profile-field">
             <div className="muted small">Record</div>
-            <div className="profile-value">
+            {/* W/L/D is data — mono, like the rating and the clocks. */}
+            <div className="profile-value mono">
               {aggregate.wins}W / {aggregate.losses}L / {aggregate.draws}D
               <span className="muted small"> ({aggregate.total} total)</span>
             </div>

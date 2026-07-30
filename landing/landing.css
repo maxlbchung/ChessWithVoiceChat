@@ -8,36 +8,43 @@
    ====================================================================== */
 
 :root {
-  /* Deep ocean — mirrored from the app's palette. */
-  --bg: #0c1e2c;
-  --bg-grad-1: #10283a;
-  --bg-grad-2: #0a1f30;
-  --bg-grad-3: #163245;
-  --glass: rgba(255, 255, 255, 0.05);
-  --glass-strong: rgba(255, 255, 255, 0.1);
-  --glass-soft: rgba(255, 255, 255, 0.03);
-  --border: rgba(168, 216, 185, 0.2);
-  --border-strong: rgba(168, 216, 185, 0.38);
+  /* Deep ocean — mirrored from the app's palette (src/styles.css). */
+  --bg: #08151f;
+  --bg-grad-1: #0d2333;
+  --bg-grad-2: #071823;
+  --bg-grad-3: #122c3e;
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-strong: rgba(255, 255, 255, 0.085);
+  --glass-soft: rgba(255, 255, 255, 0.025);
+  --border: rgba(168, 216, 185, 0.16);
+  --border-strong: rgba(168, 216, 185, 0.34);
+  --rule: rgba(168, 216, 185, 0.13);
+  --rule-strong: rgba(168, 216, 185, 0.26);
   --text: #e6f0ea;
-  --muted: #88a8b3;
+  --muted: #85a3af;
   --accent: #a8d8b9;
   --accent-strong: #7ec39a;
   --accent-soft: rgba(168, 216, 185, 0.15);
+  --brass: #dcb87e;
   --warn: #e0c08a;
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --plate: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 1px 2px rgba(0, 0, 0, 0.3),
+    0 10px 30px -12px rgba(0, 0, 0, 0.55);
 
   /* Board squares for the hero motif. */
   --sq-light: rgba(230, 240, 234, 0.09);
   --sq-dark: rgba(230, 240, 234, 0.02);
 
-  /* A classical serif for display type — the page is about a 1500-year-old
-     game, and the app's UI sans stays for body copy so the two read as one
-     family of things. */
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
-    "Times New Roman", serif;
-  --font-body: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* Same three faces as the app, loaded in index.html: an editorial reading
+     serif for display (the page is about a 1500-year-old game), a grotesque
+     for body copy, and mono for dates and data. Offline falls back locally. */
+  --font-display: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-body: "Archivo", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    monospace;
+  --track-label: 0.18em;
 
   --edge: clamp(1.25rem, 5vw, 5.5rem);
   --measure: 78rem;
@@ -53,6 +60,52 @@ html {
   font-size: clamp(15px, calc(11px + 0.35vw), 19px);
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  /* Reserve the scrollbar gutter so crossing between this page and the app
+     doesn't shift the layout sideways — the app does the same. It has to be
+     `overflow-y: scroll`, not `scrollbar-gutter: stable`: the root element's
+     overflow propagates to the viewport, so `html` isn't a scroll container
+     and the gutter property is a no-op there. Full reasoning in the scrollbar
+     block in src/styles.css. */
+  overflow-y: scroll;
+}
+
+/* Firefox only — setting scrollbar-width in Chromium switches it to the
+   native renderer and disables the ::-webkit- rules below (bringing back the
+   OS stepper arrows). See the scrollbar block in src/styles.css. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(168, 216, 185, 0.34) transparent;
+  }
+}
+
+/* Themed scrollbar, mirroring the app: transparent track, squared inset
+   accent thumb. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+/* Chrome renders default stepper arrows once ::-webkit-scrollbar is styled. */
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(168, 216, 185, 0.26);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 2px;
+  transition: background-color 140ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(168, 216, 185, 0.5);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--accent-strong);
 }
 
 body {
@@ -104,8 +157,9 @@ a {
 }
 .wordmark {
   font-family: var(--font-display);
-  font-size: 1.15rem;
-  letter-spacing: 0.14em;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
   color: var(--muted);
 }
 .wordmark-mark {
@@ -128,19 +182,24 @@ a {
 }
 
 .eyebrow {
-  margin: 0 0 1.1rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.28em;
+  margin: 0 0 1.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--accent);
 }
 
+/* Newsreader at display scale: sturdy strokes, so it carries real weight at
+   size. Only a light negative track — the tight -0.03em a didone wanted
+   closes this face's counters up too far. */
 .hero-title {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 400;
-  font-size: clamp(3rem, 8.5vw, 6.2rem);
-  line-height: 0.92;
+  font-weight: 600;
+  font-size: clamp(3rem, 8.5vw, 6.3rem);
+  line-height: 0.94;
   letter-spacing: -0.02em;
 }
 .hero-title em {
@@ -177,7 +236,7 @@ a {
   font: inherit;
   font-weight: 600;
   padding: 0.85rem 1.6rem;
-  border-radius: 10px;
+  border-radius: 3px;
   border: 1px solid transparent;
   white-space: nowrap;
   transition: transform 140ms ease, filter 140ms ease, background 160ms ease,
@@ -228,8 +287,8 @@ a {
 .board {
   position: absolute;
   inset: 0;
-  border-radius: 14px;
-  border: 1px solid var(--border);
+  border-radius: 4px;
+  border: 1px solid var(--rule-strong);
   /* 8×8 checker: one conic tile covers a 2×2 block of squares. */
   background-image: conic-gradient(
     from 90deg at 50% 50%,
@@ -294,34 +353,52 @@ a {
 .section-title {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 600;
   font-size: clamp(1.8rem, 4vw, 2.6rem);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
 }
 .section-sub {
   margin: 0;
-  font-size: 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-/* ── Announcements ────────────────────────────────────────────────────── */
+/* ── Announcements ──────────────────────────────────────────────────────
+   Plates, matching the app: hairline rule, 3px corner, letterpress lift. */
 .news {
-  padding: 1.4rem 1.5rem;
-  border: 1px solid var(--border);
-  border-radius: 13px;
+  padding: 1.35rem 1.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   background: var(--glass-soft);
+  box-shadow: var(--plate);
   transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
 }
 .news:hover {
   transform: translateY(-3px);
-  border-color: var(--border-strong);
+  border-color: var(--rule-strong);
   background: var(--glass);
 }
+/* The lead card gets an accent rule across its top edge — the front-page
+   story of the bulletin. */
 .news-latest {
+  position: relative;
   padding: 1.9rem 2rem;
-  background: linear-gradient(135deg, var(--glass), var(--glass-soft));
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow);
+  background: linear-gradient(160deg, var(--glass), var(--glass-soft));
+  border-color: var(--rule-strong);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 16px 44px -18px rgba(0, 0, 0, 0.7);
+}
+.news-latest::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-strong), transparent 70%);
 }
 .news-latest h3 {
   font-size: 1.7rem;
@@ -344,11 +421,11 @@ a {
   gap: 0.7rem;
 }
 .news h3 {
-  margin: 0.65rem 0 0.4rem;
+  margin: 0.7rem 0 0.45rem;
   font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 1.25rem;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  font-size: 1.3rem;
+  letter-spacing: -0.015em;
 }
 .news p {
   margin: 0;
@@ -359,18 +436,21 @@ a {
 }
 .news time {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--muted);
-  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  color: var(--brass);
+  letter-spacing: 0.08em;
+  opacity: 0.85;
 }
+/* Squared-off mono tags — a printed stamp, not a pill. */
 .tag {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  padding: 0.22rem 0.55rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+  padding: 0.22rem 0.5rem;
+  border-radius: 2px;
+  border: 1px solid var(--rule);
 }
 .tag-new {
   color: var(--accent-strong);
@@ -378,9 +458,9 @@ a {
   border-color: rgba(126, 195, 154, 0.45);
 }
 .tag-update {
-  color: var(--warn);
-  background: rgba(224, 192, 138, 0.12);
-  border-color: rgba(224, 192, 138, 0.4);
+  color: var(--brass);
+  background: rgba(220, 184, 126, 0.12);
+  border-color: rgba(220, 184, 126, 0.4);
 }
 
 /* ── Footer ───────────────────────────────────────────────────────────── */
@@ -393,11 +473,14 @@ a {
      enough off the announcements without extra top margin. */
   margin-top: clamp(3rem, 8vh, 5rem);
   padding: 1.4rem var(--edge) 2rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
   color: var(--muted);
-  font-size: 0.76rem;
-  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
   text-align: center;
+  opacity: 0.75;
 }
 
 /* ── Motion ───────────────────────────────────────────────────────────── */

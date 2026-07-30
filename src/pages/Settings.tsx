@@ -35,6 +35,10 @@ export function Settings() {
               value={volume}
               onChange={(e) => setVolume(parseFloat(e.target.value))}
               aria-label="Volume"
+              // --fill drives the accent-filled portion of the track: WebKit
+              // gives no ::-moz-range-progress equivalent, so the track paints
+              // a hard-stop gradient at this percentage instead.
+              style={{ ['--fill' as string]: `${Math.round(volume * 100)}%` }}
             />
             <span className="volume-readout">{Math.round(volume * 100)}%</span>
           </div>

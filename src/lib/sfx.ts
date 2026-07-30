@@ -1496,101 +1496,161 @@ export function playTwinJutsu() {
   buildTwinJutsuPoof(ensureChessBus(), getCtx().currentTime);
 }
 
-// Kamakaze arming (hero: kamakaze) — strapping a charge to one of your own
-// pieces and lighting it. Four layers: a match-strike scratch that lights
-// it, a crackling fuse underneath, an electrical charge whine winding up,
-// and a two-note "armed" confirm at the top of the wind-up. Deliberately
-// ends resolved rather than trailing off — the piece is now live, and the
-// payoff sound (playExplosion) comes later.
+// Kamakaze arming (hero: kamakaze) — a charge strapped to one of your own
+// pieces, winding itself up to a hair trigger. Six layers, all pointed at the
+// same idea (energy accumulating past the point where it's stable):
+//   1. an ignition crack that closes the contact,
+//   2. a capacitor whine that rises in two stages so the climb accelerates,
+//   3. one LFO driving both an amplitude tremolo and a filter growl, its rate
+//      and depth ramping up — the fuller the charge, the more it shudders,
+//   4. sparks whose crackle gets denser toward the end,
+//   5. a sub pressure swell that peaks right at the brink,
+//   6. a detonation timer whose beeps accelerate into a final contact snap.
+// Lands on a snap plus a dissonant, beating overtone rather than a settled
+// confirm — the piece is live and unhappy about it. The payoff sound
+// (playExplosion) comes later.
+const KAMAKAZE_CHARGE_SEC = 0.82;
 function buildKamakazeCharge(dest: AudioNode, t: number) {
   const ac: BaseAudioContext = dest.context;
+  const CHARGE = KAMAKAZE_CHARGE_SEC;
+  const brink = t + CHARGE;
 
-  // === STRIKE: match scratch across the striker ===
-  const strikeDur = 0.07;
-  const sLen = Math.max(1, Math.floor(strikeDur * ac.sampleRate));
-  const sBuf = ac.createBuffer(1, sLen, ac.sampleRate);
-  const sData = sBuf.getChannelData(0);
-  // Noise thinned by a fast linear decay so it reads as a scrape, not a hiss.
-  for (let i = 0; i < sLen; i++) sData[i] = (Math.random() * 2 - 1) * (1 - i / sLen);
-  const sSrc = ac.createBufferSource();
-  sSrc.buffer = sBuf;
-  const sBp = ac.createBiquadFilter();
-  sBp.type = 'bandpass';
-  sBp.Q.value = 0.9;
-  sBp.frequency.setValueAtTime(3200, t);
-  sBp.frequency.exponentialRampToValueAtTime(1300, t + strikeDur);
-  const sG = ac.createGain();
-  sG.gain.setValueAtTime(0, t);
-  sG.gain.linearRampToValueAtTime(0.34, t + 0.004);
-  sG.gain.exponentialRampToValueAtTime(0.0001, t + strikeDur);
-  sSrc.connect(sBp).connect(sG).connect(dest);
-  sSrc.start(t);
-  sSrc.stop(t + strikeDur + 0.02);
-
-  // === FUSE: crackling sizzle running under the whole wind-up ===
-  const fuseStart = t + 0.02;
-  const fuseDur = 0.6;
-  const fLen = Math.max(1, Math.floor(fuseDur * ac.sampleRate));
-  const fBuf = ac.createBuffer(1, fLen, ac.sampleRate);
-  const fData = fBuf.getChannelData(0);
-  // Sparse random spikes over a quiet noise floor — powder popping rather
-  // than a flat hiss. The spikes decay over a few ms each.
-  let spark = 0;
-  for (let i = 0; i < fLen; i++) {
-    if (Math.random() < 0.006) spark = 1;
-    spark *= 0.9992;
-    fData[i] = (Math.random() * 2 - 1) * (0.25 + 0.75 * spark);
+  // === IGNITION: contact spark that kicks the charge off. Has to be
+  // immediately audible — this is the click-feedback for the arm action, and
+  // the whine behind it is still nearly silent at this point.
+  const igDur = 0.07;
+  const igLen = Math.max(1, Math.floor(igDur * ac.sampleRate));
+  const igBuf = ac.createBuffer(1, igLen, ac.sampleRate);
+  const igData = igBuf.getChannelData(0);
+  // Steep-ish decay so it reads as a crack rather than a hiss.
+  for (let i = 0; i < igLen; i++) {
+    const d = 1 - i / igLen;
+    igData[i] = (Math.random() * 2 - 1) * d * Math.sqrt(d);
   }
-  const fSrc = ac.createBufferSource();
-  fSrc.buffer = fBuf;
-  const fHp = ac.createBiquadFilter();
-  fHp.type = 'highpass';
-  fHp.Q.value = 0.7;
-  fHp.frequency.value = 1500;
-  const fG = ac.createGain();
-  // Already audible under the strike (an exponential ramp up from silence
-  // leaves a hole while the match tails off), then holds — the sizzle is what
-  // bridges the strike to the wind-up.
-  fG.gain.setValueAtTime(0.05, fuseStart);
-  fG.gain.exponentialRampToValueAtTime(0.22, fuseStart + 0.05);
-  fG.gain.linearRampToValueAtTime(0.17, fuseStart + fuseDur * 0.8);
-  fG.gain.exponentialRampToValueAtTime(0.0001, fuseStart + fuseDur);
-  fSrc.connect(fHp).connect(fG).connect(dest);
-  fSrc.start(fuseStart);
-  fSrc.stop(fuseStart + fuseDur + 0.02);
+  const igSrc = ac.createBufferSource();
+  igSrc.buffer = igBuf;
+  const igBp = ac.createBiquadFilter();
+  igBp.type = 'bandpass';
+  igBp.Q.value = 0.8;
+  igBp.frequency.setValueAtTime(4200, t);
+  igBp.frequency.exponentialRampToValueAtTime(1500, t + igDur);
+  const igG = ac.createGain();
+  igG.gain.setValueAtTime(0, t);
+  igG.gain.linearRampToValueAtTime(0.42, t + 0.003);
+  igG.gain.exponentialRampToValueAtTime(0.0001, t + igDur);
+  igSrc.connect(igBp).connect(igG).connect(dest);
+  igSrc.start(t);
+  igSrc.stop(t + igDur + 0.02);
+  // Switch thrown — a little weight under the spark.
+  blip({ dest, startAt: t, freq: 190, freqEnd: 88, durMs: 80, type: 'triangle', peak: 0.22, attackMs: 2, lpHz: 900 });
 
-  // === CHARGE: the wind-up whine, rising and opening up ===
-  const chargeStart = t + 0.03;
-  const chargeDur = 0.46;
-  const chargeLp = ac.createBiquadFilter();
-  chargeLp.type = 'lowpass';
-  chargeLp.Q.value = 3.5;
-  chargeLp.frequency.setValueAtTime(500, chargeStart);
-  chargeLp.frequency.exponentialRampToValueAtTime(3000, chargeStart + chargeDur);
-  chargeLp.connect(dest);
-  const wind = (freqStart: number, freqEnd: number, peak: number, type: OscillatorType) => {
+  // === VOLATILITY: one shared LFO, accelerating 5 -> 22 Hz. It fans out to
+  // an amplitude tremolo and to the core filter cutoff, both with depths that
+  // grow over the wind-up, so a smooth early whine turns into a shudder.
+  // The 22Hz ceiling is deliberate: past ~25Hz amplitude modulation stops
+  // reading as a shudder you can count and turns into plain roughness, and the
+  // rate would collide with the sub swell's own 30-66Hz range.
+  const lfo = ac.createOscillator();
+  lfo.type = 'triangle';
+  lfo.frequency.setValueAtTime(5, t);
+  lfo.frequency.exponentialRampToValueAtTime(22, brink);
+  lfo.start(t);
+  lfo.stop(brink + 0.14);
+
+  const tremDepth = ac.createGain();  // into a gain param: 0..1
+  tremDepth.gain.setValueAtTime(0.05, t);
+  tremDepth.gain.linearRampToValueAtTime(0.4, brink);
+  lfo.connect(tremDepth);
+
+  const growlDepth = ac.createGain(); // into a filter frequency param: Hz
+  growlDepth.gain.setValueAtTime(50, t);
+  growlDepth.gain.linearRampToValueAtTime(1000, brink);
+  lfo.connect(growlDepth);
+
+  // === CORE: the capacitor whine. Resonant lowpass opening up under the
+  // growl, pitch climbing in two stages (slow, then steep).
+  const coreLp = ac.createBiquadFilter();
+  coreLp.type = 'lowpass';
+  coreLp.Q.value = 5;
+  coreLp.frequency.setValueAtTime(420, t);
+  coreLp.frequency.exponentialRampToValueAtTime(1500, t + CHARGE * 0.6);
+  coreLp.frequency.exponentialRampToValueAtTime(6000, brink);
+  coreLp.connect(dest);
+  growlDepth.connect(coreLp.frequency);
+
+  // Envelope for the whole whine — swells through the wind-up, spikes at the
+  // brink, then gets cut short (the charge is spent into the trigger).
+  const coreG = ac.createGain();
+  coreG.gain.setValueAtTime(0.0001, t);
+  coreG.gain.exponentialRampToValueAtTime(0.4, t + CHARGE * 0.15);
+  coreG.gain.linearRampToValueAtTime(0.78, t + CHARGE * 0.92);
+  coreG.gain.linearRampToValueAtTime(0.9, brink);
+  coreG.gain.linearRampToValueAtTime(0.18, brink + 0.05);
+  coreG.gain.exponentialRampToValueAtTime(0.0001, brink + 0.17);
+  coreG.connect(coreLp);
+
+  // Tremolo sits between the oscillators and the envelope. Its base tracks
+  // 1 - depth so the modulated peak stays at unity as the depth grows.
+  const trem = ac.createGain();
+  trem.gain.setValueAtTime(0.95, t);
+  trem.gain.linearRampToValueAtTime(0.6, brink);
+  tremDepth.connect(trem.gain);
+  trem.connect(coreG);
+
+  // Detuned saws beat against each other for grit; the octave triangle keeps
+  // some brightness once the filter opens.
+  const wind = (mult: number, peak: number, type: OscillatorType) => {
     const osc = ac.createOscillator();
     osc.type = type;
-    osc.frequency.setValueAtTime(freqStart, chargeStart);
-    osc.frequency.exponentialRampToValueAtTime(freqEnd, chargeStart + chargeDur);
+    osc.frequency.setValueAtTime(128 * mult, t);
+    osc.frequency.exponentialRampToValueAtTime(300 * mult, t + CHARGE * 0.6);
+    osc.frequency.exponentialRampToValueAtTime(920 * mult, brink);
     const g = ac.createGain();
-    // Audible early (an exponential ramp alone would leave the middle hollow),
-    // then swelling — the energy is still building when the confirm hits, and
-    // it ducks under the beeps rather than cutting out before them.
-    g.gain.setValueAtTime(0.0001, chargeStart);
-    g.gain.exponentialRampToValueAtTime(peak * 0.45, chargeStart + chargeDur * 0.3);
-    g.gain.linearRampToValueAtTime(peak, chargeStart + chargeDur * 0.9);
-    g.gain.linearRampToValueAtTime(peak * 0.3, chargeStart + chargeDur + 0.03);
-    g.gain.exponentialRampToValueAtTime(0.0001, chargeStart + chargeDur + 0.14);
-    osc.connect(g).connect(chargeLp);
-    osc.start(chargeStart);
-    osc.stop(chargeStart + chargeDur + 0.1);
+    g.gain.value = peak;
+    osc.connect(g).connect(trem);
+    osc.start(t);
+    osc.stop(brink + 0.2);
   };
-  wind(140, 660, 0.2,  'sawtooth');   // body — the buzzy capacitor whine
-  wind(280, 1320, 0.07, 'triangle');  // octave shimmer on top
+  wind(1,     0.082, 'sawtooth');  // body
+  wind(1.007, 0.048, 'sawtooth');  // beating twin — instability
+  wind(0.991, 0.034, 'sawtooth');  // second beat, slower
+  wind(2,     0.026, 'triangle');  // octave shimmer
 
-  // === ARMED: two-note confirm once the charge tops out ===
-  const armAt = chargeStart + chargeDur;
+  // === SPARKS: crackle that thickens as the charge fills ===
+  const spDur = CHARGE + 0.06;
+  const spLen = Math.max(1, Math.floor(spDur * ac.sampleRate));
+  const spBuf = ac.createBuffer(1, spLen, ac.sampleRate);
+  const spData = spBuf.getChannelData(0);
+  let spark = 0;
+  for (let i = 0; i < spLen; i++) {
+    const p = i / spLen;
+    // Spike probability climbing steeply — a few pops early, a shower by the
+    // end. Each spike decays over a couple of ms.
+    if (Math.random() < 0.0012 + 0.022 * p * p * Math.sqrt(p)) spark = 1;
+    spark *= 0.9988;
+    spData[i] = (Math.random() * 2 - 1) * (0.18 + 0.82 * spark);
+  }
+  const spSrc = ac.createBufferSource();
+  spSrc.buffer = spBuf;
+  const spHp = ac.createBiquadFilter();
+  spHp.type = 'highpass';
+  spHp.Q.value = 0.7;
+  spHp.frequency.value = 1400;
+  const spG = ac.createGain();
+  spG.gain.setValueAtTime(0.05, t);
+  spG.gain.linearRampToValueAtTime(0.2, brink);
+  spG.gain.exponentialRampToValueAtTime(0.0001, brink + 0.06);
+  spSrc.connect(spHp).connect(spG).connect(dest);
+  spSrc.start(t);
+  spSrc.stop(t + spDur + 0.02);
+
+  // === PRESSURE: sub swell peaking at the brink. blip's attack does the
+  // whole rise here, so the low end arrives with the charge rather than
+  // thumping at the front.
+  blip({ dest, startAt: t, freq: 30, freqEnd: 66, durMs: (CHARGE + 0.14) * 1000, type: 'sine', peak: 0.26, attackMs: CHARGE * 880 });
+  blip({ dest, startAt: t, freq: 58, freqEnd: 124, durMs: (CHARGE + 0.1) * 1000, type: 'triangle', peak: 0.11, attackMs: CHARGE * 900, lpHz: 400 });
+
+  // === TIMER: warning beeps accelerating toward the brink ===
   const beep = (start: number, freq: number, durMs: number, peak: number) => {
     const dur = durMs / 1000;
     const osc = ac.createOscillator();
@@ -1609,10 +1669,44 @@ function buildKamakazeCharge(dest: AudioNode, t: number) {
     osc.start(start);
     osc.stop(start + dur + 0.02);
   };
-  beep(armAt, 740, 55, 0.05);
-  beep(armAt + 0.075, 1110, 80, 0.055);
-  // Low thunk under the confirm so the arm lands with some weight.
-  blip({ dest, startAt: armAt, freq: 110, freqEnd: 70, durMs: 150, type: 'sine', peak: 0.24, attackMs: 3 });
+  // Gap shrinks geometrically but is floored, so the ticks bottom out into a
+  // machine-gun stutter instead of converging on a fixed point. Count is
+  // capped as a belt-and-braces guard on the loop.
+  let tick = t + 0.09;
+  let gap = 0.19;
+  let tickFreq = 620;
+  for (let n = 0; n < 16 && tick < brink - 0.03; n++) {
+    beep(tick, tickFreq, 32, 0.05);
+    tick += gap;
+    gap = Math.max(0.034, gap * 0.7);
+    tickFreq *= 1.075;
+  }
+
+  // === BRINK: contact snaps shut, weight lands, and the charge sits there
+  // ringing on a beating pair a few Hz apart — armed, not settled.
+  const snapDur = 0.03;
+  const snLen = Math.max(1, Math.floor(snapDur * ac.sampleRate));
+  const snBuf = ac.createBuffer(1, snLen, ac.sampleRate);
+  const snData = snBuf.getChannelData(0);
+  for (let i = 0; i < snLen; i++) snData[i] = (Math.random() * 2 - 1) * (1 - i / snLen);
+  const snSrc = ac.createBufferSource();
+  snSrc.buffer = snBuf;
+  const snBp = ac.createBiquadFilter();
+  snBp.type = 'bandpass';
+  snBp.Q.value = 1.1;
+  snBp.frequency.value = 2600;
+  const snG = ac.createGain();
+  snG.gain.setValueAtTime(0, brink);
+  snG.gain.linearRampToValueAtTime(0.26, brink + 0.002);
+  snG.gain.exponentialRampToValueAtTime(0.0001, brink + snapDur);
+  snSrc.connect(snBp).connect(snG).connect(dest);
+  snSrc.start(brink);
+  snSrc.stop(brink + snapDur + 0.02);
+
+  blip({ dest, startAt: brink, freq: 132, freqEnd: 60, durMs: 210, type: 'sine', peak: 0.3, attackMs: 3 });
+  blip({ dest, startAt: brink + 0.01, freq: 1460, freqEnd: 1440, durMs: 280, type: 'sine', peak: 0.045, attackMs: 6 });
+  blip({ dest, startAt: brink + 0.01, freq: 1472, freqEnd: 1452, durMs: 280, type: 'sine', peak: 0.045, attackMs: 6 });
+  blip({ dest, startAt: brink + 0.01, freq: 733, freqEnd: 726, durMs: 240, type: 'triangle', peak: 0.04, attackMs: 8 });
 }
 export function playKamakazeArm() {
   buildKamakazeCharge(ensureChessBus(), getCtx().currentTime);

@@ -103,3 +103,33 @@ a **relative** path because the project path contains a space.
 Use two browser contexts in one script (host + joiner) — see
 `scripts/verify-sweeper-online.mjs`. The dev matchmaker is in-memory inside
 `vite.config.ts`, so both tabs must hit the same dev server.
+
+## 7. SFX changes (you can't hear it — measure it)
+
+Every sound in `src/lib/sfx.ts` is procedural, so a change can be verified by
+capturing the PCM and asserting on its shape. Reference driver:
+`scripts/verify-kamakaze-sfx.mjs`. Recipe and the traps:
+
+- Launch with `args: ['--autoplay-policy=no-user-gesture-required']`.
+- **Import the module URL the app already loaded**, not `/src/lib/sfx.ts` —
+  Vite cache-busts edited files with `?t=`, and the bare path spins up a second
+  module instance with its own `AudioContext`, so the tap hears silence:
+  `performance.getEntriesByType('resource')` → find `/src/lib/sfx.ts`.
+- Tap with `sfx.connectCapture(node)` (the video exporter's hook) and
+  `sfx.setMasterVolume(1)` so levels aren't scaled by the user's slider.
+- For full PCM use `createScriptProcessor(4096, 1, 1)` and route it through a
+  **muted** gain to `destination` (it only pulls audio while connected).
+  rAF-sampled `AnalyserNode` RMS aliases anything above ~30Hz.
+- Wrap `createOscillator` / `createBufferSource` on the context prototype and
+  count them: the per-builder node count is a fingerprint proving the app ran
+  *that* builder and not a generic fallback. Update the expected counts when
+  you change a builder's layer count.
+- Envelope window length is the whole ballgame: too short (5ms) and the
+  bass layers' own waveform ripples through as "envelope"; ~12ms rejects them
+  and still resolves modulation to ~30Hz. To measure modulation, band-limit
+  first (a JS biquad over the PCM) — a wide band picks up whatever else is
+  pulsing (timer beeps, sparks) and reports nonsense.
+- Worth asserting: peak RMS, audible duration, **sample peak < 0.98** (the
+  master bus has no limiter, so hand-tuned stacks can clip — `playExplosion`
+  already peaks ~1.7), onset within the first ~80ms, where the loudest moment
+  falls, no near-silent gap mid-sound, and level relative to neighbouring cues.

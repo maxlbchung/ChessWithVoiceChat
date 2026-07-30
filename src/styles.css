@@ -1,24 +1,53 @@
 :root {
-  /* Deep ocean — cool dark blues with pale green highlight accents. */
-  --bg: #0c1e2c;            /* deep cool ocean base */
-  --bg-grad-1: #10283a;     /* lifted ocean band */
-  --bg-grad-2: #0a1f30;     /* mid ocean */
-  --bg-grad-3: #163245;     /* cool daylight on water */
-  --glass: rgba(255, 255, 255, 0.05);
-  --glass-strong: rgba(255, 255, 255, 0.10);
-  --glass-soft: rgba(255, 255, 255, 0.03);
-  --border: rgba(168, 216, 185, 0.20);
-  --border-strong: rgba(168, 216, 185, 0.38);
+  /* ── "Bulletin" ────────────────────────────────────────────────────────
+     Deep ocean, printed. The palette keeps the cool ocean bones (the board
+     and the brand are tuned to them) but drops a stop darker and inkier so
+     hairline rules and pale-green type read as ink on a plate rather than
+     frosted glass. Brass (--brass) is the warm counter-accent: it carries
+     dates, meta, secondary tags — anything that shouldn't compete with the
+     green primary. Mirrored in landing/landing.css. */
+  --bg: #08151f;            /* ink — deep cool ocean base */
+  --bg-grad-1: #0d2333;     /* lifted ocean band */
+  --bg-grad-2: #071823;     /* mid ocean */
+  --bg-grad-3: #122c3e;     /* cool daylight on water */
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-strong: rgba(255, 255, 255, 0.085);
+  --glass-soft: rgba(255, 255, 255, 0.025);
+  --border: rgba(168, 216, 185, 0.16);
+  --border-strong: rgba(168, 216, 185, 0.34);
+  /* Hairline: the structural rule of the whole UI. Thinner and cooler than
+     --border, for dividers that should read as printed rules, not edges. */
+  --rule: rgba(168, 216, 185, 0.13);
+  --rule-strong: rgba(168, 216, 185, 0.26);
   --text: #e6f0ea;          /* pale green-tinted off-white */
-  --muted: #88a8b3;         /* cool muted blue-green */
+  --muted: #85a3af;         /* cool muted blue-green */
   --accent: #a8d8b9;        /* pale green highlight */
   --accent-strong: #7ec39a; /* slightly deeper pale green */
   --accent-soft: rgba(168, 216, 185, 0.15);
+  --brass: #dcb87e;         /* warm counter-accent */
+  --brass-soft: rgba(220, 184, 126, 0.13);
   --good: #7ec39a;
   --bad: #d68b8b;           /* light muted red, visible on dark */
   --warn: #e0c08a;          /* warm sand on dark */
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.30);
+  /* Letterpress: the 1px top highlight + deep drop that makes a card read as
+     a physical plate lifted off the page. Used by every panel. */
+  --plate: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 1px 2px rgba(0, 0, 0, 0.3),
+    0 10px 30px -12px rgba(0, 0, 0, 0.55);
+
+  /* Type: editorial serif display / grotesque UI / mono for notation. Loaded
+     in app/index.html; the local stacks below are the offline fallback.
+     Newsreader is a *reading* serif — moderate stroke contrast, tall x-height.
+     A didone was tried here first and read as too thin at heading sizes. */
+  --font-display: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-body: "Archivo", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    monospace;
+  /* Tracked-out mono micro-caps: eyebrows, table headers, panel labels. */
+  --track-label: 0.18em;
 
   /* Custom cursors — chess-piece-styled (white fill, black outline) SVGs
      served from /cursors. The fallback system cursor follows the URL so we
@@ -75,13 +104,115 @@ input[type="number"], textarea, [contenteditable="true"] {
   box-sizing: border-box;
 }
 
+/* ── Scrollbars ─────────────────────────────────────────────────────────
+   Two separate jobs: stop the layout jumping, then make the bar fit.
+
+   THE JUMP. Chromium and Firefox on Windows/Linux use *classic* scrollbars
+   that consume real layout width. Without a reserved gutter the whole centred
+   page shifts ~10px sideways the moment you navigate from a short route to a
+   tall one, and a panel reflows its text the moment it outgrows its
+   max-height. (macOS overlay scrollbars take no width, so none of this costs
+   anything there.)
+
+   The document and inner panels need *different* fixes:
+
+   - Inner panels are genuine scroll containers (`overflow-y: auto`), so
+     `scrollbar-gutter: stable` works: space is reserved, and the bar only
+     paints once there's something to scroll.
+
+   - The document is NOT. The root element's `overflow` propagates to the
+     viewport, which leaves `html` itself computing `overflow: visible` — and
+     `scrollbar-gutter` only applies to scroll containers, so on `html` it is
+     silently a no-op (measured: still shifts 1280 -> 1270 in Chrome 148,
+     with or without it, and adding `overflow-y: auto` doesn't help because
+     that propagates too). `overflow-y: scroll` is what actually reserves the
+     viewport gutter. The track is styled transparent below, so the permanent
+     gutter reads as empty margin rather than a visible empty trough.
+
+   Gutters are set BY NAME, never via `*` — that would also reserve space
+   inside every `overflow: hidden` box (the board wrap, the time-mode plate,
+   avatars…). */
+html {
+  overflow-y: scroll;
+}
+.moves-panel,
+.chat-log,
+.custom-select-popover,
+.vid-timeline-scroll,
+textarea {
+  scrollbar-gutter: stable;
+}
+
+/* The standard `scrollbar-width` / `scrollbar-color` properties and the
+   `::-webkit-scrollbar` pseudo-elements are mutually exclusive in Chromium:
+   setting `scrollbar-width` switches it to the *native* scrollbar renderer and
+   the pseudo-element rules below are ignored entirely — which brought back
+   the OS stepper arrows and the default thumb. So the standard properties are
+   gated to engines that have no `::-webkit-scrollbar` (i.e. Firefox), and
+   Chromium/Safari get the fully custom pseudo-element treatment. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: thin;
+    /* scrollbar-color inherits in Firefox, so the root covers every panel. */
+    scrollbar-color: rgba(168, 216, 185, 0.34) transparent;
+  }
+}
+
+/* WebKit / Chromium. Transparent border + content-box clip insets the thumb,
+   so it reads as a mark in the margin rather than a filled gutter. Note
+   `background-color`, not the `background` shorthand — the shorthand would
+   reset background-clip on every hover/active state. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+/* Styling ::-webkit-scrollbar at all makes Chrome fall back to rendering its
+   default stepper arrows at each end. Suppress them — the bar is a thumb in a
+   margin, not a widget. */
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(168, 216, 185, 0.26);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 2px;
+  transition: background-color 140ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(168, 216, 185, 0.5);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--accent-strong);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Panel scrollbars get the hairline track rule — the marginal rule of a
+   printed column, delineating the panel's text from its gutter. The document
+   bar deliberately skips it: a permanent hairline down the window edge would
+   read as an artifact rather than structure. */
+.moves-panel::-webkit-scrollbar-track:vertical,
+.chat-log::-webkit-scrollbar-track:vertical,
+.custom-select-popover::-webkit-scrollbar-track:vertical,
+textarea::-webkit-scrollbar-track:vertical {
+  border-left: 1px solid var(--rule);
+}
+.vid-timeline-scroll::-webkit-scrollbar-track:horizontal {
+  border-top: 1px solid var(--rule);
+}
+
 html, body, #root {
   margin: 0;
   padding: 0;
   height: 100%;
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-body);
   /* Root font scales with viewport height so the whole UI grows and shrinks
      with the window — everything sized in rem/em follows. At ≥1080px tall it
      caps at 17px; at ≤720px it floors at ~11.5px (~68% of max). */
@@ -99,7 +230,26 @@ body {
     radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%),
     var(--bg);
   background-attachment: fixed;
+  /* Archivo's default figures are proportional; the app is full of numbers
+     that sit in columns (clocks, ratings, counts) so line them up globally. */
+  font-variant-numeric: tabular-nums;
 }
+
+/* Fine noise over the whole app so the large flat gradients don't band, and
+   so the app shares the landing page's paper texture. A ::before on <body>
+   rather than a DOM node — no markup change, and it can't catch pointers.
+   Fixed + inset -50% keeps it stable while the page scrolls. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -50%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+/* Everything real sits above the grain. */
+.app-shell { position: relative; z-index: 1; }
 
 a { color: inherit; text-decoration: none; }
 
@@ -110,15 +260,19 @@ a { color: inherit; text-decoration: none; }
   min-height: 100%;
 }
 
+/* Masthead. A broadsheet nameplate, not a chrome bar: near-black ground, a
+   double rule at the base (hairline + a brighter 1px via box-shadow) and type
+   that sits on the baseline instead of inside pills. */
 .topbar {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  padding: 0.85rem 1.7rem;
-  background: var(--glass-strong);
+  padding: 0.8rem 1.7rem;
+  background: linear-gradient(180deg, rgba(6, 16, 24, 0.92), rgba(8, 21, 31, 0.82));
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5), 0 12px 28px -20px rgba(0, 0, 0, 0.9);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -126,16 +280,24 @@ a { color: inherit; text-decoration: none; }
 
 .brand {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  font-weight: 700;
-  font-size: 1.2rem;
-  letter-spacing: -0.01em;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.3rem;
+  /* Tracked-out serif caps — a nameplate, not a logotype. */
+  letter-spacing: 0.14em;
 }
 .brand-mark {
-  font-size: 1.55rem;
+  font-family: var(--font-body);
+  font-size: 1.5rem;
+  line-height: 1;
   color: var(--accent);
+  align-self: center;
+  text-shadow: 0 0 18px rgba(168, 216, 185, 0.4);
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+.brand:hover .brand-mark { transform: translateY(-2px) rotate(-8deg); }
 .brand-text {
   background: linear-gradient(135deg, var(--accent), #5fa8c4);
   background-clip: text;
@@ -145,52 +307,83 @@ a { color: inherit; text-decoration: none; }
 
 .topnav {
   display: flex;
-  gap: 1.2rem;
-  margin-left: 0.85rem;
+  gap: 0.35rem;
+  margin-left: 1.1rem;
 }
+/* Nav items are mono micro-caps underlined from below on hover/active — the
+   rule grows out of the masthead's baseline rather than a filled pill. */
 .topnav a {
-  padding: 0.5rem 0.85rem;
-  border-radius: 7px;
+  position: relative;
+  padding: 0.5rem 0.7rem;
   color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  transition: color 160ms ease;
+}
+.topnav a::after {
+  content: "";
+  position: absolute;
+  left: 0.7rem;
+  right: 0.7rem;
+  bottom: 0.1rem;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .topnav a:hover { color: var(--text); }
-.topnav a.active {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
+.topnav a:hover::after { transform: scaleX(1); }
+.topnav a.active { color: var(--accent-strong); }
+.topnav a.active::after { transform: scaleX(1); }
 
 .user-chip {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  padding: 0.5rem 0.85rem;
-  border-radius: 999px;
-  background: var(--glass);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.42rem;
+  border-radius: 3px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  box-shadow: var(--plate);
 }
 .user-chip-avatar {
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: 50%;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 2px;
   object-fit: cover;
   flex-shrink: 0;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--rule-strong);
   background: var(--glass-strong);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
   color: var(--accent);
 }
-.user-chip .handle { font-weight: 600; }
-.user-chip .handle.muted { font-weight: 400; color: var(--muted); }
+.user-chip .handle { font-weight: 500; font-size: 0.9rem; }
+.user-chip .handle.muted {
+  font-weight: 400;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  padding: 0 0.3rem;
+}
+/* Rating is data — mono, and separated by a rule instead of just a gap. */
 .user-chip .rating {
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
   color: var(--accent);
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--rule);
 }
 
 .main {
@@ -202,39 +395,136 @@ a { color: inherit; text-decoration: none; }
   min-width: 0;
 }
 
+/* Colophon. Mono micro-caps, centred under a hairline — the line at the foot
+   of a printed page, not a nav. */
 .footer {
-  padding: 0.7rem 1.7rem;
+  padding: 0.85rem 1.7rem 1rem;
   color: var(--muted);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
   text-align: center;
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  opacity: 0.75;
 }
 
 .version-tag {
   position: fixed;
   left: 10px;
   bottom: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
   color: var(--muted);
-  opacity: 0.6;
+  opacity: 0.55;
   pointer-events: none;
   user-select: none;
   z-index: 50;
 }
 
-/* Pages */
-.page-narrow { max-width: 520px; margin: 3.8rem auto; }
-.page { display: flex; flex-direction: column; gap: 1.65rem; }
-.page-title {
-  font-size: 1.9rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin: 0;
+/* ── Pages ──────────────────────────────────────────────────────────────
+   Every route renders `.page > .page-title` (or `.page-narrow`), so the
+   editorial header below is the single lever that restyles all of them. */
+.page-narrow { max-width: 33rem; margin: clamp(2.5rem, 9vh, 5.5rem) auto; }
+/* Single-column pages (identity gate, Join, "returning to lobby") were pinned
+   to the top of a tall empty viewport. Centre them so the sheet reads as
+   deliberately small rather than as content that failed to fill the page. */
+.main:has(> .page-narrow) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.main:has(> .page-narrow) > .page-narrow { margin-block: 0; width: 100%; }
+
+.page { display: flex; flex-direction: column; gap: 1.65rem; }
+/* Reading-measure pages: the masthead rule under .page-title spans its
+   container, so capping the container is what keeps the rule tied to the
+   content below it instead of overshooting to the full 1320px shell.
+   Sandbox/Review/Home stay full width — their content genuinely fills it. */
+.page:has(> .settings-card) { max-width: 44rem; width: 100%; margin-inline: auto; }
+.page:has(> .profile-card) { max-width: 56rem; width: 100%; margin-inline: auto; }
+
+/* Masthead-scale editorial serif, dropped onto a hairline that runs the
+   measure. The ♦ after it is the bullet from a bulletin's section head. */
+.page-title {
+  position: relative;
+  margin: 0 0 0.15rem;
+  padding-bottom: 0.5rem;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 3.4vw, 2.85rem);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--rule);
+}
+.page-title::after {
+  content: "♦";
+  font-family: var(--font-body);
+  font-size: 0.34em;
+  color: var(--accent);
+  vertical-align: 0.34em;
+  margin-left: 0.5em;
+  opacity: 0.8;
+}
+/* The blurb under a page title: sits tight to the rule, in the muted body
+   face at a comfortable measure. Pages already emit `.muted` paragraphs
+   directly after the title, so target that adjacency rather than new markup. */
+.page > .page-title + p,
+.page-narrow > .page-title + p,
+.hero > .page-title + p {
+  margin: 0;
+  max-width: 46rem;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
 .muted { color: var(--muted); }
 .small { font-size: 0.78rem; }
-.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.mono { font-family: var(--font-mono); }
+/* Mono micro-caps label — the recurring "PIECES" / "TIPS" / column-head
+   treatment. Utility so panels across pages can opt in. */
+.label-caps {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Route reveal ───────────────────────────────────────────────────────
+   One orchestrated entrance per page instead of scattered micro-animations.
+   The router remounts the page component on navigation, so the stagger
+   replays on every route change without any JS. Depth is capped at 6 —
+   past that the delay would read as the page being slow rather than
+   composed. `both` holds the from-state during the delay so nothing
+   flashes at full opacity first.
+
+   Deliberately NOT applied to game routes' board column: mid-game remounts
+   (history scrub, rematch) would re-animate the board under the player. */
+@media (prefers-reduced-motion: no-preference) {
+  .page > *,
+  .page-narrow > * {
+    animation: page-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .page > :nth-child(1), .page-narrow > :nth-child(1) { animation-delay: 0ms; }
+  .page > :nth-child(2), .page-narrow > :nth-child(2) { animation-delay: 55ms; }
+  .page > :nth-child(3), .page-narrow > :nth-child(3) { animation-delay: 110ms; }
+  .page > :nth-child(4), .page-narrow > :nth-child(4) { animation-delay: 160ms; }
+  .page > :nth-child(5), .page-narrow > :nth-child(5) { animation-delay: 205ms; }
+  .page > :nth-child(n + 6), .page-narrow > :nth-child(n + 6) { animation-delay: 245ms; }
+  /* The masthead rule draws itself out from the left as the title lands. */
+  .page-title { animation: rule-draw 700ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+}
+@keyframes page-rise {
+  from { opacity: 0; transform: translateY(11px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes rule-draw {
+  from { border-bottom-color: transparent; clip-path: inset(0 100% 0 0); }
+  to   { border-bottom-color: var(--rule); clip-path: inset(0 0 0 0); }
+}
 .break { word-break: break-all; }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }
@@ -246,62 +536,89 @@ a { color: inherit; text-decoration: none; }
   min-width: 0;
 }
 
-/* Forms */
+/* ── Forms ──────────────────────────────────────────────────────────────
+   Inputs read as ruled fields: recessed ground, hairline box, and a bright
+   accent rule that lights along the bottom edge on focus. */
 .text-input {
-  background: var(--glass-strong);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--rule);
   color: var(--text);
-  padding: 0.7rem 0.95rem;
-  border-radius: 9px;
+  padding: 0.68rem 0.9rem;
+  border-radius: 3px;
+  font-family: inherit;
   font-size: 0.95rem;
   width: 100%;
   outline: none;
-  transition: border-color 120ms, box-shadow 120ms;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: border-color 140ms, box-shadow 140ms, background 140ms;
+}
+.text-input::placeholder {
+  color: var(--muted);
+  opacity: 0.65;
 }
 .text-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--rule-strong);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 -2px 0 var(--accent-strong);
 }
 
 .signup-form {
   display: flex;
   gap: 0.6rem;
-  margin-top: 0.95rem;
+  margin-top: 1.15rem;
 }
 
+/* Buttons. Tight radius, mono-ish tracking on the label, and a press that
+   actually depresses — the plate highlight inverts to an inset shadow. */
 .primary-btn, .secondary-btn {
-  font: inherit;
-  border-radius: 9px;
-  padding: 0.7rem 1.3rem;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: 3px;
+  padding: 0.68rem 1.3rem;
   cursor: var(--cursor-pointer);
   border: 1px solid transparent;
   white-space: nowrap;
-  transition: filter 120ms, background 120ms, border-color 120ms, transform 80ms;
+  transition: filter 140ms, background 140ms, border-color 140ms, transform 90ms,
+    box-shadow 140ms;
 }
 .primary-btn {
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: #0c1e2c;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(168, 216, 185, 0.25);
+  color: #06131c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(168, 216, 185, 0.2);
 }
-.primary-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
-.primary-btn:disabled { opacity: 0.5; cursor: var(--cursor-disabled); transform: none; }
+.primary-btn:hover:not(:disabled) {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 7px 20px rgba(168, 216, 185, 0.3);
+}
+.primary-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+.primary-btn:disabled { opacity: 0.4; cursor: var(--cursor-disabled); transform: none; }
 .secondary-btn {
   background: var(--glass);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   color: var(--text);
-  border-color: var(--border);
+  border-color: var(--rule);
+  box-shadow: var(--plate);
 }
-.secondary-btn:hover {
+.secondary-btn:hover:not(:disabled) {
   background: var(--glass-strong);
-  border-color: var(--border-strong);
+  border-color: var(--rule-strong);
+  transform: translateY(-1px);
 }
+.secondary-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+.secondary-btn:disabled { opacity: 0.4; cursor: var(--cursor-disabled); }
+/* The one place the UI shouts: primary CTAs get didone small-caps at scale. */
 .primary-btn.big, .secondary-btn.big {
-  padding: 0.95rem 1.9rem;
-  font-size: 1.12rem;
+  padding: 0.9rem 1.9rem;
+  font-size: 1.06rem;
+  letter-spacing: 0.02em;
 }
 
 .link-btn {
@@ -309,10 +626,12 @@ a { color: inherit; text-decoration: none; }
   border: none;
   color: var(--accent);
   cursor: var(--cursor-pointer);
-  padding: 0 0.35rem;
-  font: inherit;
+  padding: 0 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
 }
-.link-btn:hover { text-decoration: underline; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* Home page: chess board (free play) + controls box */
 .home-play-area {
@@ -379,7 +698,7 @@ a { color: inherit; text-decoration: none; }
      board's rounded edges. Box-shadow is here (not on the chessboard) because
      overflow:hidden would clip a child shadow. */
   aspect-ratio: 1 / 1;
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
@@ -397,13 +716,11 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   justify-content: space-between;
   gap: 0.85rem;
-  padding: 0.6rem 0.95rem;
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-soft);
+  padding: 0.55rem 0.85rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
 }
 /* In single-column mode (controls dropped below), center the board so dead
    space on both sides of the screen is symmetric and shrinks at the same
@@ -445,13 +762,13 @@ a { color: inherit; text-decoration: none; }
      Matches the native <select>'s value alignment. */
   text-align: left;
   padding: 0.4rem 1.65rem 0.4rem 0.7rem;
-  border-radius: 7px;
-  background-color: var(--glass-strong);
+  border-radius: 2px;
+  background-color: rgba(0, 0, 0, 0.2);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2388a8b3' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   background-size: 9px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--rule);
   color: var(--text);
   cursor: var(--cursor-pointer);
   appearance: none;
@@ -460,17 +777,17 @@ a { color: inherit; text-decoration: none; }
   transition: border-color 120ms, background-color 120ms, color 120ms, box-shadow 120ms;
 }
 .free-play-select:hover {
-  border-color: var(--accent);
+  border-color: var(--rule-strong);
   background-color: var(--glass);
-  color: var(--accent-strong);
+  color: var(--accent);
 }
 .free-play-select:focus-visible {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--rule-strong);
+  box-shadow: inset 0 -2px 0 var(--accent-strong);
 }
 .free-play-select option {
-  background-color: #10283a;
+  background-color: #0d2333;
   color: var(--text);
 }
 
@@ -488,34 +805,27 @@ a { color: inherit; text-decoration: none; }
      <body> to escape ancestor stacking contexts. */
   max-height: 18rem;
   overflow-y: auto;
-  background: #10283a;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  box-shadow: var(--shadow);
+  /* Near-opaque plate rather than the old lifted-ocean fill, so options stay
+     legible over a busy board. */
+  background: linear-gradient(180deg, #10222f, #0b1a26);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(0, 0, 0, 0.8);
   padding: 0.25rem;
   display: flex;
   flex-direction: column;
   gap: 1px;
   z-index: 9999;
-
-  /* Minimalist scrollbar — thin transparent track, accent-soft thumb.
-     Firefox uses `scrollbar-width: thin`; WebKit (Chromium / Safari)
-     reads the pseudo-element rules below. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--accent-soft) transparent;
 }
+/* Narrower variant of the shared scrollbar (see top of file): the popover is
+   only as wide as its trigger, so the full 11px bar would crowd the labels.
+   The gutter is reserved in the shared rule, so options don't reflow when the
+   list grows past max-height. */
 .custom-select-popover::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-select-popover::-webkit-scrollbar-track {
-  background: transparent;
+  width: 8px;
 }
 .custom-select-popover::-webkit-scrollbar-thumb {
-  background: var(--accent-soft);
-  border-radius: 4px;
-}
-.custom-select-popover::-webkit-scrollbar-thumb:hover {
-  background: var(--accent);
+  border-width: 2px;
 }
 .custom-select-option {
   appearance: none;
@@ -524,11 +834,11 @@ a { color: inherit; text-decoration: none; }
   border: none;
   color: var(--text);
   text-align: left;
-  font: inherit;
+  font-family: var(--font-body);
   font-size: 0.79rem;
   font-weight: 500;
-  padding: 0.35rem 0.7rem;
-  border-radius: 5px;
+  padding: 0.38rem 0.7rem;
+  border-radius: 2px;
   cursor: var(--cursor-default);
   /* Truncate long labels so the popover never has to widen past the
      trigger; the full label is exposed via the option's `title`. */
@@ -542,10 +852,12 @@ a { color: inherit; text-decoration: none; }
   background: var(--glass-strong);
   color: var(--accent-strong);
 }
+/* Selected option carries the same accent tab as the open lobby section. */
 .custom-select-option.selected {
   background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent-strong);
 }
 .free-play-placeholder {
   aspect-ratio: 1 / 1;
@@ -555,11 +867,13 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   text-align: center;
   padding: 24px;
-  border-radius: 8px;
-  background: var(--glass);
-  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  background: var(--glass-soft);
+  border: 1px dashed var(--rule-strong);
   color: var(--muted);
-  font-size: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
 }
 .turn-swatch {
   display: inline-block;
@@ -579,17 +893,21 @@ a { color: inherit; text-decoration: none; }
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+/* Small utility buttons (Undo/Redo/Flip/Reset, date nav). Mono micro-caps so
+   a row of them reads as a control strip rather than five word-shapes. */
 .free-play-btn {
-  font: inherit;
-  font-size: 0.79rem;
-  font-weight: 600;
-  padding: 0.4rem 0.85rem;
-  border-radius: 7px;
-  background: var(--glass-strong);
-  border: 1px solid var(--border);
-  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.42rem 0.7rem;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--rule);
+  color: var(--muted);
   cursor: var(--cursor-pointer);
-  transition: border-color 100ms, background 100ms, color 100ms;
+  transition: border-color 130ms, background 130ms, color 130ms;
 }
 .free-play-btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -614,51 +932,62 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* Time mode box (stacked, collapsible sections) */
+/* The variant list reads as a printed index: one plate, rows divided by
+   hairlines rather than each row being its own floating card. */
 .time-mode-box {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 0.6rem;
-  box-shadow: var(--shadow-soft);
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: var(--plate);
   /* Match the board's max width so the gamemode-selection panel never grows
      wider than the chessboard next to (or above) it. */
   width: 100%;
   max-width: var(--max-board);
 }
 .time-mode-section {
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--glass-soft);
+  border-top: 1px solid var(--rule);
+  background: transparent;
+}
+.time-mode-section:first-child { border-top: none; }
+/* The open section lifts off the plate and gets an accent tab down its left
+   edge — the one selected entry in the index. TimeModeSelector already emits
+   an .open / .closed class, so use that rather than :has() on the chevron. */
+.time-mode-section.open {
+  background: linear-gradient(180deg, rgba(168, 216, 185, 0.055), transparent 70%);
+  box-shadow: inset 2px 0 0 var(--accent-strong);
 }
 .time-mode-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 0.7rem 0.95rem;
+  padding: 0.72rem 1rem;
   background: transparent;
   border: none;
   cursor: var(--cursor-pointer);
   font: inherit;
   color: var(--text);
   text-align: left;
+  transition: background 140ms ease;
 }
 .time-mode-section-header:hover {
-  background: var(--glass-strong);
+  background: var(--glass);
 }
 .time-mode-section-title {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.15em;
   color: var(--muted);
+  transition: color 140ms ease;
 }
+.time-mode-section-header:hover .time-mode-section-title { color: var(--text); }
+.time-mode-section.open .time-mode-section-title { color: var(--accent); }
 .time-mode-section-chevron {
   color: var(--muted);
   font-size: 0.82rem;
@@ -684,37 +1013,41 @@ a { color: inherit; text-decoration: none; }
   flex: 1 1 0;
   min-width: 0;
 }
+/* Time controls are numbers — set them in mono so 5/10/+1 align as a row of
+   figures, and let the selected one carry the accent as a solid bottom rule. */
 .time-mode-btn {
-  background: var(--glass);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
+  position: relative;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--rule);
   color: var(--text);
-  padding: 0.8rem 0.3rem;
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-weight: 600;
+  padding: 0.72rem 0.3rem;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: var(--cursor-pointer);
-  transition: border-color 100ms, transform 100ms, background 100ms;
+  transition: border-color 140ms, transform 100ms, background 140ms, color 140ms,
+    box-shadow 140ms;
 }
-.time-mode-btn:hover {
-  border-color: var(--accent);
+.time-mode-btn:hover:not(:disabled) {
+  border-color: var(--rule-strong);
   transform: translateY(-1px);
-  background: var(--glass-strong);
+  background: var(--glass);
 }
 .time-mode-btn.selected {
-  border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(168, 216, 185, 0.16), rgba(168, 216, 185, 0.04));
-  box-shadow: 0 4px 16px rgba(168, 216, 185, 0.15);
+  border-color: var(--rule-strong);
+  color: var(--accent);
+  background: linear-gradient(180deg, rgba(168, 216, 185, 0.14), rgba(168, 216, 185, 0.03));
+  box-shadow: inset 0 -2px 0 var(--accent-strong), 0 4px 16px -6px rgba(168, 216, 185, 0.3);
 }
 .time-mode-btn:disabled {
   cursor: var(--cursor-disabled);
-  opacity: 0.5;
+  opacity: 0.45;
 }
 .time-mode-btn:disabled:hover {
-  border-color: var(--border);
+  border-color: var(--rule);
   transform: none;
-  background: var(--glass);
 }
 .time-mode-cell {
   display: flex;
@@ -726,7 +1059,12 @@ a { color: inherit; text-decoration: none; }
 }
 .time-mode-count {
   text-align: center;
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.8;
 }
 
 .play-row {
@@ -749,18 +1087,18 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 1.05rem 1.2rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--plate);
 }
 .lobby-label {
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-label);
   color: var(--muted);
 }
 .share-row {
@@ -770,8 +1108,8 @@ a { color: inherit; text-decoration: none; }
 }
 .share-row .text-input {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
 }
 
 /* Game layout */
@@ -798,7 +1136,7 @@ a { color: inherit; text-decoration: none; }
 .disconnect-banner {
   grid-column: 1 / -1;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: linear-gradient(180deg, rgba(214, 139, 139, 0.18), rgba(214, 139, 139, 0.08));
   border: 1px solid rgba(214, 139, 139, 0.32);
   color: var(--bad);
@@ -826,9 +1164,13 @@ a { color: inherit; text-decoration: none; }
      so the finish overlay (inset: 0) lines up exactly with the rounded board
      corners instead of bleeding past them. */
   aspect-ratio: 1 / 1;
-  border-radius: 8px;
+  /* 4px, not the plates' 3px: the board is a bigger object, and the finish
+     overlay's inset: 0 has to line up with these corners exactly. */
+  border-radius: 4px;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Seated in the page rather than floating: a hairline frame plus a deeper,
+     tighter drop than the old soft 24px blur. */
+  box-shadow: 0 0 0 1px var(--rule-strong), 0 14px 36px -10px rgba(0, 0, 0, 0.6);
   transition: box-shadow 220ms;
 }
 @keyframes board-finish-fade {
@@ -854,7 +1196,7 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   background: rgba(8, 12, 24, 0.78);
   color: #f5f7ff;
-  border-radius: 8px;
+  border-radius: 4px;
   text-align: center;
   pointer-events: none;
   opacity: 0;
@@ -876,34 +1218,42 @@ a { color: inherit; text-decoration: none; }
   gap: 0.45rem;
   min-width: 0;
 }
+/* The pre-game card: an italic didone "vs" between two names, the way a
+   fight bill or a tournament pairing sheet sets it. */
 .start-divider {
-  font-size: clamp(1.1rem, 2.6vw, 1.9rem);
-  font-weight: 800;
-  opacity: 0.55;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: clamp(1.2rem, 2.8vw, 2.1rem);
+  font-weight: 400;
+  opacity: 0.6;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
 }
 .start-handle {
-  font-size: clamp(0.95rem, 2vw, 1.35rem);
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: clamp(1.05rem, 2.3vw, 1.6rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
   max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .start-rating {
-  font-size: clamp(0.7rem, 1.4vw, 0.95rem);
-  opacity: 0.75;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: clamp(0.66rem, 1.3vw, 0.86rem);
+  letter-spacing: 0.08em;
+  opacity: 0.7;
 }
 .start-color-banner {
   margin-top: 0.35rem;
-  font-size: clamp(0.65rem, 1.3vw, 0.85rem);
-  letter-spacing: 0.18em;
+  font-family: var(--font-mono);
+  font-size: clamp(0.6rem, 1.2vw, 0.76rem);
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
-  font-weight: 700;
-  padding: 0.3rem 0.85rem;
-  border-radius: 999px;
+  font-weight: 500;
+  padding: 0.28rem 0.8rem;
+  border-radius: 2px;
   border: 1px solid rgba(255, 255, 255, 0.22);
 }
 .start-color-banner.white-banner {
@@ -926,7 +1276,7 @@ a { color: inherit; text-decoration: none; }
   gap: 8px;
   background: rgba(8, 12, 24, 0.62);
   color: #f5f7ff;
-  border-radius: 8px;
+  border-radius: 4px;
   text-align: center;
   pointer-events: none;
   opacity: 0;
@@ -934,19 +1284,26 @@ a { color: inherit; text-decoration: none; }
   text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
   z-index: 5;
 }
+/* The result announcement — the single most dramatic moment in the app, so it
+   gets the display face at full scale. Didone wants far less weight and
+   negative tracking where the old 800-weight sans needed positive. */
 .board-finish-overlay .victor {
-  font-size: clamp(28px, 5.5vw, 56px);
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  line-height: 1.1;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 6vw, 62px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
   padding: 0 16px;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
 }
 .board-finish-overlay .reason {
-  font-size: clamp(14px, 1.8vw, 18px);
-  opacity: 0.85;
+  font-family: var(--font-mono);
+  font-size: clamp(11px, 1.4vw, 14px);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  opacity: 0.8;
 }
 .board-finish-overlay .finish-avatars {
   display: flex;
@@ -965,23 +1322,25 @@ a { color: inherit; text-decoration: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(22px, 3.5vw, 36px);
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3.8vw, 40px);
+  font-weight: 600;
   color: #f5f7ff;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 .result-avatar {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 2px;
   object-fit: cover;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--rule-strong);
   background: var(--glass-strong);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
   color: var(--accent);
   flex-shrink: 0;
 }
@@ -999,9 +1358,10 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 0.95rem;
   padding: 0.95rem 1.05rem;
-  background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
 }
 .game-result-info {
   flex: 1;
@@ -1028,12 +1388,18 @@ a { color: inherit; text-decoration: none; }
   gap: 0.85rem;
 }
 .game-result-strip .result-line .title {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
 }
 .game-result-strip .result-line .reason {
-  font-size: 14px;
-  opacity: 0.75;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
 }
 .game-result-strip .rating-delta {
   margin: 0;
@@ -1050,19 +1416,20 @@ a { color: inherit; text-decoration: none; }
 .player-card {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 14px 18px;
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  gap: 14px;
+  padding: 13px 16px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   transition: background 200ms, border-color 200ms, box-shadow 200ms;
 }
+/* Side to move gets an accent tab on its leading edge — unmistakable at a
+   glance without recolouring the whole card. */
 .player-card.active {
-  border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(168, 216, 185, 0.14), rgba(168, 216, 185, 0.04));
-  box-shadow: 0 4px 16px rgba(168, 216, 185, 0.15);
+  border-color: var(--rule-strong);
+  background: linear-gradient(180deg, rgba(168, 216, 185, 0.13), rgba(168, 216, 185, 0.03));
+  box-shadow: inset 3px 0 0 var(--accent-strong), 0 4px 16px -6px rgba(168, 216, 185, 0.25);
 }
 .player-card.low.active {
   border-color: var(--bad);
@@ -1088,7 +1455,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: 50%;
   overflow: hidden;
   background: var(--accent-soft);
-  border: 1px solid var(--border);
+  border: 1px solid var(--rule);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1104,12 +1471,13 @@ a { color: inherit; text-decoration: none; }
   height: 108px;
 }
 .player-avatar-initial {
-  font-size: 25px;
+  font-family: var(--font-display);
+  font-size: 26px;
   font-weight: 600;
   color: var(--accent-strong);
 }
 .player-avatar.large .player-avatar-initial {
-  font-size: 44px;
+  font-size: 48px;
 }
 .player-meta {
   display: flex;
@@ -1119,19 +1487,25 @@ a { color: inherit; text-decoration: none; }
 }
 .player-handle {
   font-weight: 600;
-  font-size: 17px;
+  font-size: 16px;
+  letter-spacing: -0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .player-rating {
   color: var(--muted);
-  font-size: 13.5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
 }
+/* The clock is the most-read number in the app: mono, tight, and tracked in
+   slightly so four digits sit compactly against the avatar. */
 .player-clock-time {
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 32px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 31px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1140,7 +1514,7 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 0.6rem;
   padding: 0.3rem 0.7rem 0.3rem 0.4rem;
-  border-radius: 24px;
+  border-radius: 2px;
   background: var(--accent-soft);
   flex-shrink: 0;
   transition: background 150ms, color 150ms, opacity 150ms;
@@ -1235,15 +1609,23 @@ a { color: inherit; text-decoration: none; }
   gap: 0.85rem;
 }
 .game-meta {
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 0.82rem 1.05rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--plate);
 }
-.game-meta-title { font-weight: 600; font-size: 0.95rem; }
+/* Time control + peer status is match metadata — mono throughout, with the
+   control itself promoted to a tracked micro-cap heading. */
+.game-meta-title {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.7rem;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.game-meta .muted.small { font-family: var(--font-mono); font-size: 0.7rem; }
 
 .voice-controls {
   display: flex;
@@ -1252,8 +1634,8 @@ a { color: inherit; text-decoration: none; }
   background: var(--glass);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 0.7rem;
 }
 .voice-controls.inline {
@@ -1273,10 +1655,10 @@ a { color: inherit; text-decoration: none; }
 .voice-btn {
   font: inherit;
   background: var(--glass-strong);
-  border: 1px solid var(--border);
+  border: 1px solid var(--rule);
   color: var(--text);
   padding: 0.6rem 0.82rem;
-  border-radius: 8px;
+  border-radius: 2px;
   cursor: var(--cursor-pointer);
   font-size: 0.82rem;
 }
@@ -1292,28 +1674,27 @@ a { color: inherit; text-decoration: none; }
 .voice-btn.off { border-color: var(--bad); color: var(--muted); }
 
 .moves-panel {
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   padding: 0.82rem 1.05rem;
   /* Shrink with viewport so the side-panel column never overflows the
      window. Offset bumped because the panel now also holds two player cards
      (~10rem of extra static content). */
   max-height: min(11rem, max(6rem, calc(100dvh - 50rem)));
   overflow-y: auto;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.85rem;
+  /* Move list is notation — the reason the mono face is in the type system. */
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
 }
 .moves-line { padding: 2px 0; }
 
 .chat-panel {
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   padding: 0.82rem;
   display: flex;
   flex-direction: column;
@@ -1362,7 +1743,7 @@ a { color: inherit; text-decoration: none; }
   padding: 0;
   transform: translateY(-50%);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 2px;
   background: transparent;
   color: var(--muted);
   font-size: 1rem;
@@ -1383,7 +1764,7 @@ a { color: inherit; text-decoration: none; }
 }
 .chat-emoji-btn:hover,
 .chat-emoji-btn[aria-expanded="true"] {
-  border-color: var(--border);
+  border-color: var(--rule);
   background: rgba(255, 255, 255, 0.58);
   color: var(--accent-strong);
 }
@@ -1396,19 +1777,17 @@ a { color: inherit; text-decoration: none; }
   grid-template-columns: repeat(5, 2rem);
   gap: 0.28rem;
   padding: 0.42rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--glass-strong);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: linear-gradient(180deg, #10222f, #0b1a26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(0, 0, 0, 0.8);
 }
 .chat-emoji-option {
   width: 2rem;
   height: 2rem;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 2px;
   background: rgba(255, 255, 255, 0.5);
   display: grid;
   place-items: center;
@@ -1509,7 +1888,7 @@ a { color: inherit; text-decoration: none; }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(12, 30, 44, 0.55);
+  background: rgba(4, 11, 17, 0.68);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
@@ -1517,111 +1896,231 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   z-index: 100;
 }
+/* The result plate. Lifted off a near-opaque ground with a brighter top
+   hairline, and a thin accent rule across the very top edge. */
 .modal {
-  background: var(--glass-strong);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--border-strong);
-  border-radius: 16px;
-  padding: 1.9rem 2.12rem;
+  position: relative;
+  background: linear-gradient(180deg, #10222f, #0a1a25);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 2rem 2.2rem 1.9rem;
   min-width: 21rem;
   text-align: center;
-  box-shadow: var(--shadow);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 60px -12px rgba(0, 0, 0, 0.8);
 }
-.modal h2 { margin-top: 0; font-size: 1.41rem; }
+.modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-strong), transparent);
+}
+/* Outcome headline — didone, the same voice as the page mastheads. */
+.modal h2 {
+  margin-top: 0;
+  font-family: var(--font-display);
+  font-size: 1.85rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
 .rating-delta {
   margin: 1.2rem 0;
-  font-size: 1.88rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
+  font-weight: 500;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.95rem;
 }
-.rating-delta .delta { font-size: 1.18rem; }
+.rating-delta .delta { font-size: 1.05rem; }
 
 /* Settings */
+/* Settings is a specification sheet: one plate, rows ruled off, labels left,
+   controls hard right. Capped at a reading measure so it doesn't sprawl. */
 .settings-card {
-  background: var(--glass);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 0.6rem 1.55rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.3rem 1.5rem;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-soft);
-  max-width: 720px;
+  box-shadow: var(--plate);
+  max-width: 44rem;
 }
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1.65rem;
-  padding: 1.05rem 0;
-  border-bottom: 1px solid var(--border);
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--rule);
+  transition: background 140ms ease;
 }
 .settings-row:last-child { border-bottom: none; }
-.settings-label { display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; }
-.settings-title { font-weight: 600; font-size: 0.97rem; }
+/* A hover tint that bleeds into the plate's padding, so the whole row reads
+   as the hit target it is. */
+.settings-row:hover {
+  background: linear-gradient(90deg, var(--glass) , transparent);
+  box-shadow: -1.5rem 0 0 var(--glass), 1.5rem 0 0 var(--glass);
+}
+.settings-label { display: flex; flex-direction: column; gap: 0.22rem; min-width: 0; }
+.settings-title { font-weight: 600; font-size: 0.95rem; letter-spacing: -0.005em; }
 .settings-control { display: flex; align-items: center; gap: 0.82rem; flex-shrink: 0; }
+/* The one native control left in the app. Styled explicitly (rather than via
+   accent-color) so the track reads as a recessed groove with a square handle,
+   matching the toggles beside it. Needs the two vendor sets — WebKit and
+   Firefox share no pseudo-elements here. */
 .volume-control input[type='range'] {
   width: 11.8rem;
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: var(--cursor-pointer);
+}
+/* Filled portion: WebKit has no ::-moz-range-progress equivalent, so the
+   track paints a hard-stop gradient at --fill — an inline CSS var Settings.tsx
+   sets from the same state that drives `value`. */
+.volume-control input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--accent-strong) 0 var(--fill, 0%),
+    rgba(0, 0, 0, 0.4) var(--fill, 0%) 100%
+  );
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.volume-control input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.volume-control input[type='range']::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent-strong);
+}
+.volume-control input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.6rem;
+  height: 1.15rem;
+  margin-top: calc((4px - 1.15rem) / 2);
+  border-radius: 1px;
+  border: 1px solid var(--accent-strong);
+  background: linear-gradient(180deg, #f6fbf8, #cfe2d7);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 120ms ease;
+}
+.volume-control input[type='range']::-moz-range-thumb {
+  width: 0.6rem;
+  height: 1.15rem;
+  border-radius: 1px;
+  border: 1px solid var(--accent-strong);
+  background: linear-gradient(180deg, #f6fbf8, #cfe2d7);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.volume-control input[type='range']:hover::-webkit-slider-thumb { transform: scaleY(1.1); }
+.volume-control input[type='range']:focus-visible { outline: none; }
+.volume-control input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .volume-readout {
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  font-size: 0.82rem;
-  min-width: 2.5rem;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-size: 0.78rem;
+  min-width: 2.8rem;
   text-align: right;
 }
+/* Squared-off switch — a mechanical toggle on a panel, not an iOS pill. */
 .settings-toggle {
   position: relative;
-  width: 2.95rem;
-  height: 1.65rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--glass-strong);
+  width: 2.85rem;
+  height: 1.5rem;
+  border-radius: 2px;
+  border: 1px solid var(--rule-strong);
+  background: rgba(0, 0, 0, 0.3);
   cursor: var(--cursor-pointer);
   padding: 0;
-  transition: background 150ms, border-color 150ms;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: background 180ms, border-color 180ms, box-shadow 180ms;
 }
 .settings-toggle.on {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  border-color: var(--accent-strong);
+  background: linear-gradient(180deg, var(--accent-strong), #5fa480);
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 14px -2px rgba(168, 216, 185, 0.45);
 }
+/* top/bottom rather than a fixed height so the knob stays optically centred
+   in the track at every root font size. */
 .settings-toggle-knob {
   position: absolute;
   top: 2px;
+  bottom: 2px;
   left: 2px;
-  width: 1.3rem;
-  height: 1.3rem;
-  border-radius: 50%;
-  background: #f3faf5;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-  transition: transform 150ms;
+  width: 1.15rem;
+  border-radius: 1px;
+  background: linear-gradient(180deg, #f6fbf8, #d3e3da);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.settings-toggle.on .settings-toggle-knob { transform: translateX(1.3rem); }
+/* Track 2.85rem − knob 1.15rem − 2×2px border/inset ≈ 1.5rem of travel. */
+.settings-toggle.on .settings-toggle-knob { transform: translateX(1.5rem); }
 
-/* Profile */
+/* ── Profile ────────────────────────────────────────────────────────────
+   A player's record card. Field labels are mono micro-caps, values sit under
+   them, and the stat fields divide with vertical rules like a results table. */
 .profile-card {
-  background: var(--glass);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 1.55rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1.5rem 1.6rem;
   display: flex;
   flex-direction: column;
-  gap: 1.3rem;
-  box-shadow: var(--shadow-soft);
+  gap: 1.4rem;
+  box-shadow: var(--plate);
+  max-width: 56rem;
 }
-.profile-row { display: flex; gap: 2.12rem; flex-wrap: wrap; }
-.profile-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.profile-row { display: flex; gap: 1.9rem; flex-wrap: wrap; align-items: flex-start; }
+.profile-field { display: flex; flex-direction: column; gap: 0.34rem; }
 .profile-field.grow { flex: 1; min-width: 0; }
-.profile-value { font-size: 1.03rem; font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
-.profile-value.big { font-size: 1.76rem; color: var(--accent); }
+/* Every field's caption (the plain-text label element authored in Profile.tsx
+   sits first inside .profile-field) becomes a mono micro-cap. */
+.profile-field > .muted:first-child,
+.profile-field > .small:first-child {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.profile-value {
+  font-size: 1.02rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+/* The rating: the single biggest number on the page, in didone. */
+.profile-value.big {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+}
+/* Stat fields after the first get a hairline gutter — reads as a record row. */
+.profile-row .profile-field + .profile-field:not(.grow) {
+  padding-left: 1.9rem;
+  border-left: 1px solid var(--rule);
+}
 
 .identity-actions { gap: 0.82rem; align-items: flex-end; }
 
@@ -1630,36 +2129,64 @@ a { color: inherit; text-decoration: none; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   padding: 0.82rem 1.05rem;
-  border-radius: 10px;
-  border: 1px solid var(--border);
+  border-radius: 3px;
+  border: 1px solid var(--rule);
 }
 .import-block summary { cursor: var(--cursor-pointer); user-select: none; }
 .import-block textarea { margin: 0.5rem 0; }
 
+/* Section heads inside a page: didone, smaller than the page masthead, with a
+   short accent rule above instead of a full-width divider. */
 .history-section h2 {
-  margin: 1.65rem 0 0.82rem;
-  font-size: 1.3rem;
+  position: relative;
+  margin: 1.5rem 0 0.9rem;
+  padding-top: 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.history-section h2::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2.2rem;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+/* Empty states were bare muted text floating in a void. Give them a ruled
+   plate so an empty Profile still reads as a designed page. */
+.history-section > .muted {
+  padding: 1.5rem 1.6rem;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 3px;
+  background: var(--glass-soft);
+  font-size: 0.92rem;
+  max-width: 56rem;
 }
 .history-table {
   width: 100%;
   border-collapse: collapse;
-  background: var(--glass);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   overflow: hidden;
+  box-shadow: var(--plate);
 }
 .history-table th, .history-table td {
   padding: 0.7rem 0.95rem;
   text-align: left;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--rule);
 }
 .history-table th {
-  background: var(--accent-soft);
-  font-weight: 600;
-  font-size: 0.79rem;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.64rem;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -1782,9 +2309,9 @@ a { color: inherit; text-decoration: none; }
   gap: 0.7rem;
   padding: 0.7rem;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   min-width: 0;
 }
 .cash-shop.compact {
@@ -1814,8 +2341,8 @@ a { color: inherit; text-decoration: none; }
   gap: 0.12rem;
   padding: 0.35rem 0.6rem;
   background: var(--glass-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
   flex: 1 1 0;
 }
 /* Free-play compact shop: king icon sits inline with the gold counter
@@ -1879,8 +2406,8 @@ a { color: inherit; text-decoration: none; }
   gap: 0.25rem;
   padding: 0.5rem 0.25rem 0.35rem;
   background: var(--glass-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
   color: var(--text);
   cursor: var(--cursor-pointer);
   transition: background 100ms, border-color 100ms, transform 80ms;
@@ -1945,8 +2472,8 @@ a { color: inherit; text-decoration: none; }
 .hero-side-placeholder {
   padding: 12px;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   text-align: center;
 }
 
@@ -1955,7 +2482,7 @@ a { color: inherit; text-decoration: none; }
   position: absolute;
   inset: 0;
   background: rgba(8, 12, 24, 0.86);
-  border-radius: 8px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1971,8 +2498,8 @@ a { color: inherit; text-decoration: none; }
 }
 .hero-picker.inline {
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 10px;
 }
 .hero-picker-title {
@@ -1994,8 +2521,8 @@ a { color: inherit; text-decoration: none; }
   gap: 4px;
   padding: 12px 10px;
   background: var(--glass-soft);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   color: var(--text);
   cursor: var(--cursor-pointer);
   transition: background 100ms, border-color 100ms, transform 80ms;
@@ -2038,8 +2565,8 @@ a { color: inherit; text-decoration: none; }
   gap: 10px;
   padding: 12px;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
 }
 .hero-panel.compact { padding: 10px; gap: 8px; }
 .hero-panel-title {
@@ -2056,8 +2583,8 @@ a { color: inherit; text-decoration: none; }
   gap: 10px;
   padding: 8px;
   background: var(--glass-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
 }
 .hero-card-row.highlight {
   background: color-mix(in srgb, var(--hero-color) 15%, transparent);
@@ -2118,8 +2645,8 @@ a { color: inherit; text-decoration: none; }
      sit flush against the box border. */
   padding: 0.7rem 0.95rem 0.7rem 0.85rem;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
 }
 .hero-side-picker {
   display: flex;
@@ -3156,9 +3683,9 @@ a { color: inherit; text-decoration: none; }
   gap: 0.7rem;
   padding: 0.7rem;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   min-width: 0;
 }
 .mine-panel-title {
@@ -3174,8 +3701,8 @@ a { color: inherit; text-decoration: none; }
   gap: 0.45rem;
   padding: 0.45rem 0.35rem;
   background: var(--glass-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
 }
 .mine-panel-hint {
   line-height: 1.35;
@@ -3321,9 +3848,9 @@ a { color: inherit; text-decoration: none; }
   gap: 0.5rem;
   padding: 0.55rem 0.7rem;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
 }
 .sandbox-variant-select {
   /* Sized to its content (variant labels), with a sensible floor. */
@@ -3339,10 +3866,10 @@ a { color: inherit; text-decoration: none; }
      widest palette row (Merge has 9 piece slots; the others have 6). */
   align-self: flex-start;
   max-width: 100%;
-  background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-soft);
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
   padding: 0.7rem 0.8rem 0.8rem;
 }
 .sandbox-palette-row-buttons {
@@ -3367,10 +3894,10 @@ a { color: inherit; text-decoration: none; }
   flex: 0 1 auto;
   max-width: 100%;
   padding: 0.7rem 0.8rem 0.8rem;
-  background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-soft);
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
 }
 .sandbox-tip-list {
   list-style: none;
@@ -3388,13 +3915,18 @@ a { color: inherit; text-decoration: none; }
   color: var(--text);
   font-weight: 600;
 }
+/* Panel captions ("PIECES", "TIPS") — the mono micro-cap treatment, set on a
+   hairline so each right-column card reads as a titled section of the sheet. */
 .sandbox-palette-title {
-  font-weight: 700;
-  font-size: 0.82rem;
-  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.64rem;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--accent);
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--rule);
 }
 .sandbox-palette-grid {
   display: flex;
@@ -3420,15 +3952,15 @@ a { color: inherit; text-decoration: none; }
      the merge row (9 pieces) wraps to a second line. */
   flex: 0 0 2.4rem;
   height: 2.4rem;
-  background: var(--glass-strong);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
   cursor: var(--cursor-grab);
   user-select: none;
   transition: border-color 100ms, background 100ms, transform 100ms;
 }
 .sandbox-palette-btn:hover {
-  border-color: var(--accent);
+  border-color: var(--rule-strong);
   background: var(--glass);
 }
 .sandbox-palette-btn:active {
@@ -3527,7 +4059,7 @@ a { color: inherit; text-decoration: none; }
   height: min(calc(100vw - 2.4rem), calc(100vh - 2.4rem)) !important;
   max-width: none;
   aspect-ratio: 1 / 1;
-  border-radius: 8px;
+  border-radius: 4px;
 }
 .fullscreen-exit-btn {
   position: absolute;
@@ -3572,8 +4104,8 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   justify-content: center;
   background: var(--glass-strong, rgba(255, 255, 255, 0.92));
-  border: 1px solid var(--border);
-  border-radius: 0;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
   cursor: var(--cursor-pointer);
   padding: 0;
   transition: background 120ms, transform 100ms;
@@ -3593,16 +4125,26 @@ a { color: inherit; text-decoration: none; }
 /* ============================================================
    Review page — game import + replay
    ============================================================ */
+/* Import panels: plates, not tinted green boxes. Captions get the mono
+   micro-cap treatment on a hairline, matching the sandbox's PIECES/TIPS. */
 .review-import-card {
-  margin: 1.4rem 0;
-  padding: 1rem 1.2rem;
-  background: var(--accent-soft, rgba(126, 200, 130, 0.1));
-  border: 1px solid var(--accent-soft, rgba(126, 200, 130, 0.18));
-  border-radius: 10px;
+  margin: 0;
+  padding: 1.1rem 1.25rem 1.2rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
 }
 .review-import-card h2 {
-  margin: 0 0 0.6rem;
-  font-size: 1.1rem;
+  margin: 0 0 0.8rem;
+  padding-bottom: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--accent);
+  border-bottom: 1px solid var(--rule);
 }
 .review-import-row {
   display: flex;
@@ -3614,31 +4156,34 @@ a { color: inherit; text-decoration: none; }
 .review-paste {
   width: 100%;
   min-height: 100px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
 }
 .review-error {
   margin: 0.8rem 0;
   padding: 0.7rem 1rem;
-  border-radius: 8px;
-  background: rgba(220, 60, 60, 0.12);
-  border: 1px solid rgba(220, 60, 60, 0.32);
+  border-radius: 3px;
+  background: rgba(214, 139, 139, 0.1);
+  border: 1px solid rgba(214, 139, 139, 0.34);
+  border-left: 2px solid var(--bad);
 }
 .review-dropzone {
   flex: 1;
   min-width: 200px;
   padding: 0.9rem 1rem;
-  border: 1.5px dashed rgba(150, 150, 150, 0.55);
-  border-radius: 8px;
-  color: var(--muted, #888);
+  border: 1px dashed var(--rule-strong);
+  border-radius: 3px;
+  color: var(--muted);
   text-align: center;
-  font-size: 0.9rem;
-  transition: background 120ms ease, border-color 120ms ease;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .review-dropzone.hover {
-  background: rgba(126, 200, 130, 0.16);
-  border-color: rgba(126, 200, 130, 0.6);
-  color: inherit;
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  color: var(--accent);
 }
 .review-move {
   display: inline-block;
@@ -4421,7 +4966,7 @@ a { color: inherit; text-decoration: none; }
   width: 100%;
   height: 100%;
   display: block;
-  border-radius: 8px;
+  border-radius: 4px;
   cursor: crosshair;
   touch-action: none;
 }
@@ -4437,8 +4982,8 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   gap: 0.3rem;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 0.25rem;
 }
 .vid-tab {
@@ -4467,10 +5012,10 @@ a { color: inherit; text-decoration: none; }
   background: var(--glass);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 0.8rem 1rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--plate);
 }
 .vid-panel h3 {
   margin: 0 0 0.6rem;
@@ -4500,7 +5045,7 @@ a { color: inherit; text-decoration: none; }
 .vid-field select {
   font: inherit;
   background: var(--glass-strong);
-  border: 1px solid var(--border);
+  border: 1px solid var(--rule);
   color: var(--text);
   border-radius: 7px;
   padding: 0.35rem 0.5rem;
@@ -4556,13 +5101,13 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.82rem;
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 0.4rem 0.6rem;
 }
 .vid-shortcuts { line-height: 1.6; }
 .vid-shortcuts b { color: var(--text); font-weight: 600; }
 .vid-effect-edit {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
   margin-top: 0.6rem;
   padding-top: 0.6rem;
   display: flex;
@@ -4580,10 +5125,10 @@ a { color: inherit; text-decoration: none; }
   gap: 0.6rem;
   align-items: stretch;
   background: var(--glass);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 0.6rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--plate);
 }
 /* Left control column: transport + zoom, all equal-size buttons. */
 .vid-tl-controls {
@@ -4600,8 +5145,8 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   font: inherit;
   font-size: 0.95rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
   background: var(--glass-strong);
   color: var(--text);
   cursor: pointer;
@@ -4615,10 +5160,10 @@ a { color: inherit; text-decoration: none; }
 .vid-ruler {
   position: relative;
   height: 20px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--rule);
   cursor: pointer;
 }
-.vid-tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--border); }
+.vid-tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--rule); }
 .vid-tick-label { font-size: 0.65rem; color: var(--muted); padding-left: 3px; user-select: none; }
 
 .vid-lane {

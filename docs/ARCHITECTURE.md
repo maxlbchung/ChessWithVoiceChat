@@ -167,7 +167,46 @@ record → export → replay → snapshot → scene → canvas → WebM:
      (see the `release` skill).
 - **CSS**: one monolithic `src/styles.css`. No modules/Tailwind. `:root` design tokens,
   BEM-ish kebab-case classes, per-instance color via inline CSS vars
-  (`['--hero-color' as any]`). Landing page has its own `landing/landing.css`.
+  (`['--hero-color' as any]`). Landing page has its own `landing/landing.css`, which
+  **mirrors the app's tokens** — change one, change both.
+- **Design system ("Bulletin")** — a dark chess-broadsheet look. Three faces, loaded via
+  Google Fonts `<link>` in *both* HTML entries (`app/index.html`, `index.html`), each
+  with a local fallback stack baked into the token:
+  - `--font-display` (Newsreader) — page titles, section heads, outcome
+    announcements, avatar initials, big stats. An editorial *reading* serif: weight
+    600 at heading sizes, light negative tracking (~-0.01em). A didone (Bodoni Moda)
+    was tried first and rejected — its hairlines went thin and hard to read.
+  - `--font-body` (Archivo) — all UI and prose. The app default on `html, body`.
+  - `--font-mono` (IBM Plex Mono) — **anything read as data**: clocks, ratings, board
+    coordinates, move lists, dates, counts, peer ids, version tag. Also the
+    tracked micro-caps idiom (`--track-label`, `.label-caps`) used for nav, panel
+    captions, table headers and small control strips.
+
+- **Scrollbars** (block at the top of `src/styles.css`, mirrored in `landing.css`).
+  Three things that are easy to get wrong:
+  1. *Document gutter* uses `html { overflow-y: scroll }`, **not**
+     `scrollbar-gutter: stable`. The root element's `overflow` propagates to the
+     viewport, so `html` computes `overflow: visible`, isn't a scroll container, and
+     the gutter property is silently a no-op there (measured in Chrome 148).
+  2. *Panel gutters* use `scrollbar-gutter: stable`, which does work — those are real
+     `overflow-y: auto` containers. Set by name, never via `*`, or every
+     `overflow: hidden` box gets a phantom gutter.
+  3. *Styling*: `scrollbar-width`/`scrollbar-color` and `::-webkit-scrollbar` are
+     **mutually exclusive in Chromium** — setting `scrollbar-width` switches it to the
+     native renderer and the pseudo-element rules are ignored (OS stepper arrows come
+     back). The standard properties are therefore gated behind
+     `@supports not selector(::-webkit-scrollbar)` so only Firefox takes them.
+
+  Scroll containers today: the document (app + landing), `.moves-panel`, `.chat-log`,
+  `.custom-select-popover`, `.vid-timeline-scroll`, and `textarea`. A new one needs
+  adding to the gutter list and, if vertical, the hairline-track-rule list.
+- Surface tokens: `--rule` / `--rule-strong` are the hairline dividers that structure
+  every panel (prefer them over `--border`); `--plate` is the letterpress shadow that
+  makes a card read as a physical plate. Panels are 3px radius, the board 4px.
+  `--brass` is the warm counter-accent (dates, secondary tags) against the green
+  primary. `body::before` paints the app-wide grain; `.app-shell` sits above it.
+  `.page`/`.page-narrow` children get a staggered route-reveal animation, so page
+  content is expected to be a handful of direct-child blocks.
 - **SFX**: `src/lib/sfx.ts` — fully procedural Web Audio, no audio files, one master
   gain. `Layout.tsx` plays a click for every `button, a` via a capture-phase listener;
   opt out with `data-no-sfx`.

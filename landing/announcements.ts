@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-07-29',
+    kind: 'update',
+    title: 'A new look, everywhere',
+    body: 'The whole app has been redrawn as a chess bulletin: an editorial serif for headings, a proper monospace for everything you read as a number — clocks, ratings, board coordinates, move lists — and panels that sit on the page like printed plates instead of frosted glass. Same board, same rules, considerably better dressed.',
+  },
+  {
     date: '2026-07-27',
     kind: 'new',
     title: 'Chesssweeper: there are mines on the board',
