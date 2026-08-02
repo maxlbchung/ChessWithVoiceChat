@@ -2304,6 +2304,7 @@ export function Home() {
               </div>
               <HeroAbilities
                 perspective={heroViewState.turn === 'w' ? 'white' : 'black'}
+                orientation={freeOrientation}
                 myHero={heroViewState.heroes[heroViewState.turn].hero}
                 oppHero={heroViewState.heroes[heroViewState.turn === 'w' ? 'b' : 'w'].hero}
                 myCooldownTurns={heroTurnsUntilReady(heroViewState, heroViewState.turn)}

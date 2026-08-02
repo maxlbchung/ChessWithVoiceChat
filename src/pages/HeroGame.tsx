@@ -1790,6 +1790,7 @@ export function HeroGame() {
         {bothPicked && myHero && oppHero ? (
           <HeroAbilities
             perspective={handoff.iAmWhite ? 'white' : 'black'}
+            orientation={handoff.iAmWhite ? 'white' : 'black'}
             myHero={myHero}
             oppHero={oppHero}
             myCooldownTurns={myCooldownTurns}

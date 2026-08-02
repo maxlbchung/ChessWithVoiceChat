@@ -5,6 +5,12 @@ import { renderNeutralKing, renderPiece } from '../lib/pieceSvgs';
 type Props = {
   // Whose side this panel shows. The displayed king + ability is for this side.
   perspective: 'white' | 'black';
+  // Which colour sits at the BOTTOM of the board — same meaning as MergeBoard's
+  // `orientation` prop, and pass the same value. It only decides which side of
+  // the Use-ability row each hero card lands on, so the panel reads like the
+  // board: the colour at the top of the board is the top card. Flipping the
+  // board flips the cards with it.
+  orientation: 'white' | 'black';
   myHero: HeroKind;
   oppHero: HeroKind;
   // Cooldown turns remaining for the local player (0 = ready, Infinity = used-and-one-shot).
@@ -39,6 +45,7 @@ type Props = {
 
 export function HeroAbilities({
   perspective,
+  orientation,
   myHero,
   oppHero,
   myCooldownTurns,
@@ -61,17 +68,36 @@ export function HeroAbilities({
   const myColorLetter: 'w' | 'b' = perspective === 'white' ? 'w' : 'b';
   const oppColorLetter: 'w' | 'b' = perspective === 'white' ? 'b' : 'w';
 
+  const myCard = (
+    <HeroCard
+      info={myInfo}
+      colorLetter={myColorLetter}
+      cooldownTurns={myCooldownTurns}
+      jugTier={myJugTier}
+      highlight
+    />
+  );
+  const oppCard = (
+    <HeroCard
+      info={oppInfo}
+      colorLetter={oppColorLetter}
+      cooldownTurns={oppCooldownTurns}
+      jugTier={oppJugTier}
+    />
+  );
+  // Each card sits on the side of the Use-ability row matching where its pieces
+  // are on the board. `orientation` names the colour at the bottom, so the local
+  // side is the bottom card exactly when the two agree. In free play the
+  // perspective follows whose turn it is, so this is what keeps a colour's card
+  // parked at one end instead of hopping across the button every move — only the
+  // highlight moves.
+  const myAtBottom = perspective === orientation;
+
   return (
     <div className={`hero-panel${compact ? ' compact' : ''}`}>
       <div className="hero-panel-title">Heroes</div>
 
-      <HeroCard
-        info={myInfo}
-        colorLetter={myColorLetter}
-        cooldownTurns={myCooldownTurns}
-        jugTier={myJugTier}
-        highlight
-      />
+      {myAtBottom ? oppCard : myCard}
 
       <div className="hero-action-row">
         {armed ? (
@@ -108,12 +134,7 @@ export function HeroAbilities({
         )}
       </div>
 
-      <HeroCard
-        info={oppInfo}
-        colorLetter={oppColorLetter}
-        cooldownTurns={oppCooldownTurns}
-        jugTier={oppJugTier}
-      />
+      {myAtBottom ? myCard : oppCard}
 
       <div className="hero-panel-hint muted small">
         {hintOverride
