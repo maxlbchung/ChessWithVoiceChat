@@ -5855,3 +5855,25 @@ a { color: inherit; text-decoration: none; }
 
 /* HP drains smoothly instead of snapping. */
 .civ-hp-fill { transition: width 260ms ease; }
+
+/* ── Chess Civilization: unit property chips ── */
+.civ-props {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.civ-prop {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.16rem 0.45rem;
+  border-radius: 2px;
+  border: 1px solid var(--rule-strong);
+  color: var(--muted);
+  cursor: help;
+}
+.civ-prop-momentum { color: var(--accent); border-color: rgba(168, 216, 185, 0.4); }
+.civ-prop-ranged { color: var(--brass); border-color: rgba(220, 184, 126, 0.45); }
+.civ-prop-anchor { color: #9ec1d8; border-color: rgba(158, 193, 216, 0.4); }
+.civ-momentum-note { color: var(--accent); }

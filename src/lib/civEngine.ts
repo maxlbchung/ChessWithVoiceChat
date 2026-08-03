@@ -31,9 +31,35 @@ export type Unit = {
   hp: number;
   maxHp: number;
   atk: number;
-  /** One action per turn: move, attack, shoot, settle, or (for a base) spawn. */
+  /** Turn fully spent: attacked, settled, spawned — or moved without momentum. */
   acted: boolean;
+  /** Used its movement this turn. Momentum units can still attack after. */
+  moved: boolean;
 };
+
+// ── Unit properties ──────────────────────────────────────────────────────
+// Named traits the UI can surface and the rules key off:
+//   momentum — may move and then attack in the same turn (attacking ends it)
+//   ranged   — attacks at a distance instead of walking into the target
+//   anchor   — takes half damage on strong ground (forest, mountain, or a
+//              "city": being a base or standing beside a friendly one), and
+//              is the only kind of unit that can climb mountains
+
+export type UnitProperty = 'momentum' | 'ranged' | 'anchor';
+
+export const UNIT_PROPS: Record<UnitKind, UnitProperty[]> = {
+  pawn: ['momentum'],
+  knight: ['momentum'],
+  bishop: ['ranged'],
+  king: ['anchor'],
+  base: ['anchor'],
+  zombie: [],
+  brute: ['momentum'],
+};
+
+export function hasProp(kind: UnitKind, p: UnitProperty): boolean {
+  return UNIT_PROPS[kind].includes(p);
+}
 
 export type CivResult = { winner: Faction; reason: string };
 
@@ -89,10 +115,30 @@ export const UNIT_STATS: Record<
   BuyableKind,
   { cost: number; hp: number; atk: number; blurb: string }
 > = {
-  pawn: { cost: 10, hp: 6, atk: 2, blurb: 'Steps one hex. Cheap, expendable, holds the line.' },
-  knight: { cost: 24, hp: 10, atk: 3, blurb: 'Leaps up to 3 hexes, jumping clean over units.' },
-  bishop: { cost: 28, hp: 7, atk: 3, blurb: 'Fires a bullet at anything within 3 hexes.' },
-  king: { cost: 50, hp: 12, atk: 2, blurb: 'Steps one hex. Can settle a new rook base.' },
+  pawn: {
+    cost: 1,
+    hp: 6,
+    atk: 2,
+    blurb: 'Steps one hex, then can still strike. Momentum.',
+  },
+  knight: {
+    cost: 3,
+    hp: 10,
+    atk: 3,
+    blurb: 'Leaps up to 2 hexes over anything, then strikes. Momentum.',
+  },
+  bishop: {
+    cost: 3,
+    hp: 7,
+    atk: 3,
+    blurb: 'Steps one hex, or fires a bullet up to 3 hexes. Ranged.',
+  },
+  king: {
+    cost: 50,
+    hp: 12,
+    atk: 2,
+    blurb: 'Steps one hex; settles new bases. Anchor: half damage on strong ground.',
+  },
 };
 
 export const BASE_HP = 30;
@@ -331,6 +377,7 @@ function makeUnit(
     maxHp: stats.hp,
     atk: stats.atk,
     acted,
+    moved: acted,
   };
 }
 
@@ -395,10 +442,11 @@ export function newGame(mode: CivMode, seed: number, radius = MAP_RADIUS): CivSt
 /** How far a unit sees — the same reach it moves or attacks with. */
 export function viewRange(u: Unit): number {
   switch (u.kind) {
-    case 'knight':
     case 'bishop':
-      return 3;
+      return 3; // fire range
+    case 'knight':
     case 'brute':
+      return 2; // leap range
     case 'base':
       return 2; // a base watches its territory
     default:
@@ -468,6 +516,14 @@ function isFreePassable(state: CivState, h: Axial): boolean {
   return isPassable(state, h) && !unitAt(state, h.q, h.r);
 }
 
+/** Where can this unit stand? Anchors alone can climb mountains. */
+function canStand(state: CivState, u: Unit, h: Axial): boolean {
+  const t = terrainAt(state, h);
+  if (t === undefined) return false;
+  if (PASSABLE[t]) return true;
+  return t === 'mountain' && hasProp(u.kind, 'anchor');
+}
+
 /** Knight reach: BFS up to `depth` over passable terrain, ignoring units. */
 function jumpReach(state: CivState, from: Axial, depth: number): Axial[] {
   const seen = new Set<string>([axialKey(from.q, from.r)]);
@@ -491,7 +547,7 @@ function jumpReach(state: CivState, from: Axial, depth: number): Axial[] {
 }
 
 const BISHOP_RANGE = 3;
-const KNIGHT_REACH = 3;
+const KNIGHT_REACH = 2;
 
 export function unitActions(state: CivState, unitId: number): UnitActions {
   const empty: UnitActions = { moves: [], attacks: [], canSettle: false };
@@ -501,27 +557,36 @@ export function unitActions(state: CivState, unitId: number): UnitActions {
 
   if (u.kind === 'base') return empty;
 
+  // A momentum unit that already moved keeps its attacks (from the new
+  // position) but not its movement; everyone else spends the turn on the
+  // first action, so `moved && !acted` never happens for them.
+  const canMove = !u.moved;
+
+  let moves: Axial[] = [];
+  let attacks: Axial[];
+
   if (u.kind === 'knight' || u.kind === 'brute') {
-    const reach = jumpReach(state, here, u.kind === 'knight' ? KNIGHT_REACH : 2);
-    const moves: Axial[] = [];
-    const attacks: Axial[] = [];
+    const reach = jumpReach(state, here, KNIGHT_REACH);
+    attacks = [];
     for (const h of reach) {
       const occ = unitAt(state, h.q, h.r);
-      if (!occ) moves.push(h);
-      else if (occ.faction !== u.faction) attacks.push(h);
+      if (!occ) {
+        if (canMove) moves.push(h);
+      } else if (occ.faction !== u.faction) attacks.push(h);
     }
-    return { moves, attacks, canSettle: false };
-  }
-
-  // pawn / king / bishop / zombie: step one hex.
-  const moves = hexNeighbors(here).filter((h) => isFreePassable(state, h));
-  let attacks: Axial[];
-  if (u.kind === 'bishop') {
-    // Shoot anything within radius — no need to walk there.
+  } else if (u.kind === 'bishop') {
+    // Ranged: shoot anything within radius — no need to walk there.
+    if (canMove) moves = hexNeighbors(here).filter((h) => isFreePassable(state, h));
     attacks = state.units
       .filter((e) => e.faction !== u.faction && hexDistance(here, e) <= BISHOP_RANGE)
       .map((e) => ({ q: e.q, r: e.r }));
   } else {
+    // pawn / king / zombie: step one hex (anchors may step onto mountains).
+    if (canMove) {
+      moves = hexNeighbors(here).filter(
+        (h) => canStand(state, u, h) && !unitAt(state, h.q, h.r),
+      );
+    }
     attacks = hexNeighbors(here)
       .map((h) => unitAt(state, h.q, h.r))
       .filter((e): e is Unit => !!e && e.faction !== u.faction)
@@ -529,7 +594,7 @@ export function unitActions(state: CivState, unitId: number): UnitActions {
   }
 
   let canSettle = false;
-  if (u.kind === 'king') {
+  if (u.kind === 'king' && !u.moved) {
     const t = terrainAt(state, here);
     const nearBase = state.units.some(
       (b) => b.kind === 'base' && hexDistance(b, here) < SETTLE_MIN_DIST,
@@ -542,11 +607,27 @@ export function unitActions(state: CivState, unitId: number): UnitActions {
 
 // ── Combat ───────────────────────────────────────────────────────────────
 
-/** Forest shelters defenders: −1 damage, never below 1. Bases get no cover. */
+/** Anchor ground: forest, mountain, or a "city" — being a base, or standing
+    beside a friendly one. */
+function onAnchorGround(state: CivState, u: Unit): boolean {
+  const t = terrainAt(state, u);
+  if (t === 'forest' || t === 'mountain') return true;
+  if (u.kind === 'base') return true;
+  return state.units.some(
+    (b) => b.kind === 'base' && b.faction === u.faction && hexDistance(b, u) <= 1,
+  );
+}
+
+/** Forest shelters defenders (−1, bases excluded); anchors then halve what's
+    left while on strong ground. Never below 1. */
 function damageAgainst(state: CivState, attacker: Unit, defender: Unit): number {
   let dmg = attacker.atk;
   if (defender.kind !== 'base' && terrainAt(state, defender) === 'forest') dmg -= 1;
-  return Math.max(1, dmg);
+  dmg = Math.max(1, dmg);
+  if (hasProp(defender.kind, 'anchor') && onAnchorGround(state, defender)) {
+    dmg = Math.max(1, Math.ceil(dmg / 2));
+  }
+  return dmg;
 }
 
 const KIND_NAMES: Record<UnitKind, string> = {
@@ -614,15 +695,21 @@ export function moveOrAttack(
   const next = clone(state);
   const u = next.units.find((x) => x.id === unitId)!;
   const from = { q: u.q, r: u.r };
-  u.acted = true;
 
   if (isMove) {
     u.q = to.q;
     u.r = to.r;
+    u.moved = true;
+    // Momentum: the turn stays open if there's something to hit from here.
+    if (!hasProp(u.kind, 'momentum') || unitActions(next, unitId).attacks.length === 0) {
+      u.acted = true;
+    }
     updateExplored(next);
     return { state: next, event: { type: 'move', from, to, unitKind: u.kind } };
   }
 
+  // Attacking always ends the turn.
+  u.acted = true;
   const defender = unitAt(next, to.q, to.r)!;
   const hit = {
     unitKind: u.kind,
@@ -726,6 +813,7 @@ function beginPlayerTurn(state: CivState, f: 'p1' | 'p2') {
   for (const u of state.units) {
     if (u.faction !== f) continue;
     u.acted = false;
+    u.moved = false;
     // Field hospital: units next to a friendly base patch up.
     if (u.kind !== 'base' && u.hp < u.maxHp && bases.some((b) => hexDistance(b, u) <= 1)) {
       u.hp = Math.min(u.maxHp, u.hp + 1);
@@ -807,7 +895,12 @@ export function endPlayerTurn(state: CivState): CivState {
 
   // zombie mode: hand to the horde.
   next.current = 'zombie';
-  for (const u of next.units) if (u.faction === 'zombie') u.acted = false;
+  for (const u of next.units) {
+    if (u.faction === 'zombie') {
+      u.acted = false;
+      u.moved = false;
+    }
+  }
   if (next.turn % WAVE_EVERY === 0) spawnWave(next);
   return next;
 }
@@ -929,6 +1022,13 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
       const from = { q: u.q, r: u.r };
       u.q = best.q;
       u.r = best.r;
+      u.moved = true;
+      // Momentum enemies keep the turn open if the step brought a target
+      // into reach — the next enemyStep will pick them again and strike.
+      if (hasProp(u.kind, 'momentum')) {
+        u.acted = false;
+        if (unitActions(next, u.id).attacks.length === 0) u.acted = true;
+      }
       updateExplored(next);
       return {
         state: next,

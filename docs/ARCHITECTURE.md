@@ -31,7 +31,9 @@ A standalone hex-grid strategy game at `/app/#/civilization`, reached from the
 landing page — deliberately outside the base game: no `GameVariant` id, no lobby,
 no recordings/replays/ratings, and it renders outside `Layout` (own topbar) via a
 lazy top-level route in `router.tsx`. Engine: `src/lib/civEngine.ts` (axial hex
-math, seeded procedural terrain, one-action-per-unit turns, zombie-horde and
+math, seeded procedural terrain, per-unit turns with a named property system
+(`UNIT_PROPS`: momentum = move-then-attack, ranged, anchor = half damage on
+forest/mountain/city and mountain-climbing), zombie-horde and
 rival-AI brains, and fog of war — per-faction `explored` sets plus computed
 `visibleTiles`, view range = each piece's move/attack reach); page:
 `src/pages/Civilization.tsx` (menu + SVG board + HUD; tiles carry

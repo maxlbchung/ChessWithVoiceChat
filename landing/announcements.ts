@@ -35,6 +35,12 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     date: '2026-08-03',
     kind: 'update',
+    title: 'Chess Civilization: momentum, anchors, and pocket-change armies',
+    body: 'Units now carry properties. Pawns and knights have momentum — move, then still strike the same turn. Bishops are ranged: step one hex or fire across three. Kings and bases are anchors, taking half damage in forest, mountains, or a city — and kings alone can climb the peaks. Basic units now cost pocket change: pawns 1g, knights and bishops 3g.',
+  },
+  {
+    date: '2026-08-03',
+    kind: 'update',
     title: 'Chess Civilization: fog of war on a massive map',
     body: "The map is now four times the land, and almost all of it starts dark. Each piece clears fog exactly as far as it can move or shoot, ground you've scouted stays mapped but goes dim, and the horde comes out of the black with a groan. Drag to pan, scroll to zoom, and click anything you can see — including the enemy — for its details.",
   },

@@ -26,8 +26,10 @@ import {
   visibleTiles,
   unitAt,
   UNIT_STATS,
+  UNIT_PROPS,
   BUYABLE_KINDS,
   WAVE_EVERY,
+  type UnitProperty,
   type CivState,
   type CivMode,
   type CivEvent,
@@ -87,20 +89,29 @@ const KIND_LABEL: Record<Unit['kind'], string> = {
 };
 
 const KIND_BLURB: Record<Unit['kind'], string> = {
-  pawn: 'Steps one hex. Cheap, expendable, holds the line.',
-  knight: 'Leaps up to 3 hexes, jumping clean over units.',
-  bishop: 'Fires a bullet at anything within 3 hexes.',
-  king: 'Steps one hex. Can settle a new rook base.',
+  pawn: 'Steps one hex, then can still strike the same turn.',
+  knight: 'Leaps up to 2 hexes over anything, then strikes.',
+  bishop: 'Steps one hex, or fires a bullet at anything within 3 hexes.',
+  king: 'Steps one hex — even up mountains — and settles new bases.',
   base: 'Prints gold, recruits one unit a turn, heals its neighbors.',
   zombie: 'Shambles one hex a turn. It only wants your base.',
-  brute: 'A hulk that lopes two hexes at a time.',
+  brute: 'A hulk that lopes two hexes and swings in the same breath.',
+};
+
+const PROP_INFO: Record<UnitProperty, { label: string; desc: string }> = {
+  momentum: { label: 'Momentum', desc: 'Can move and then attack in the same turn.' },
+  ranged: { label: 'Ranged', desc: 'Attacks at a distance instead of walking in.' },
+  anchor: {
+    label: 'Anchor',
+    desc: 'Half damage in forest, mountains, or a city (a base, or beside a friendly one). Can climb mountains.',
+  },
 };
 
 const TERRAIN_NOTE: Record<Terrain, string> = {
   plains: 'Plains — open ground.',
   forest: 'Forest — sheltered (−1 damage taken).',
   gold: 'Gold field — pays out when worked or held in territory.',
-  mountain: 'Mountains — impassable.',
+  mountain: 'Mountains — impassable, except to anchor units holding the high ground.',
   water: 'Water — impassable.',
 };
 
@@ -506,7 +517,10 @@ export function Civilization() {
         if (res) {
           playEvent(state, res.event);
           setState(res.state);
-          deselect();
+          // Momentum: a move that leaves targets in reach keeps the piece
+          // selected so the follow-up strike is one click away.
+          const still = res.state.units.find((x) => x.id === selected);
+          if (!(res.event.type === 'move' && still && !still.acted)) deselect();
           return;
         }
       }
@@ -604,10 +618,16 @@ export function Civilization() {
                 a neighboring hex, heals adjacent units. Lose every base and you lose.
               </li>
               <li>
-                <strong>Pawn · 10g</strong> — steps one hex. <strong>Knight · 24g</strong> —
-                leaps up to three hexes, over anything. <strong>Bishop · 28g</strong> — fires a
-                bullet at any enemy within three hexes. <strong>King · 50g</strong> — steps one
-                hex and can found a new base, three hexes clear of any other.
+                <strong>Pawn · 1g</strong> — steps one hex. <strong>Knight · 3g</strong> —
+                leaps up to two hexes, over anything. <strong>Bishop · 3g</strong> — steps one
+                hex, or fires a bullet at any enemy within three hexes. <strong>King · 50g</strong>{' '}
+                — steps one hex and can found a new base, three hexes clear of any other.
+              </li>
+              <li>
+                <strong>Properties</strong> — pawns and knights have <em>momentum</em>: move,
+                then still attack the same turn. Bishops are <em>ranged</em>. Kings and bases
+                are <em>anchors</em>: half damage in forest, mountains, or a city — and kings
+                alone can climb mountains.
               </li>
               <li>
                 <strong>Fog</strong> — the map starts dark. Each piece clears fog exactly as
@@ -963,9 +983,23 @@ export function Civilization() {
                 </div>
 
                 <p className="civ-hint-text">{KIND_BLURB[selectedUnit.kind]}</p>
+                {UNIT_PROPS[selectedUnit.kind].length > 0 && (
+                  <div className="civ-props">
+                    {UNIT_PROPS[selectedUnit.kind].map((p) => (
+                      <span key={p} className={`civ-prop civ-prop-${p}`} title={PROP_INFO[p].desc}>
+                        {PROP_INFO[p].label}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <p className="civ-hint-text civ-terrain-note">
                   {TERRAIN_NOTE[state.tiles[axialKey(selectedUnit.q, selectedUnit.r)]]}
                 </p>
+                {selectedIsMine && selectedUnit.moved && !selectedUnit.acted && (
+                  <p className="civ-hint-text civ-momentum-note">
+                    Momentum — it moved, and can still strike this turn.
+                  </p>
+                )}
 
                 {selectedUnit.kind === 'base' && selectedUnit.faction === me && selectedIsMine ? (
                   <div className="civ-recruit">
