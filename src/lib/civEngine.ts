@@ -54,12 +54,21 @@ export type CivState = {
   result: CivResult | null;
   /** PRNG state for in-game randomness (wave spawns, AI tie-breaks). */
   rng: number;
+  /** Fog of war: every tile a faction has ever seen. Visibility is computed
+      fresh from unit positions (visibleTiles); this only ever grows. */
+  explored: { p1: Set<string>; p2: Set<string> };
 };
 
 export type CivEvent = {
   type: 'move' | 'melee' | 'shot' | 'spawn' | 'settle' | 'wave' | 'death';
   from?: Axial;
   to?: Axial;
+  /** The acting unit, for animation/sfx flavor (knight leap vs pawn step). */
+  unitKind?: UnitKind;
+  /** For melee/shot: what got hit, and whether it died. */
+  targetKind?: UnitKind;
+  targetFaction?: Faction;
+  died?: boolean;
 };
 
 export type UnitActions = {
@@ -93,7 +102,12 @@ export const GOLD_WORKED_INCOME = 2; // per gold tile a unit stands on, outside 
 export const STARTING_GOLD = 25;
 export const WAVE_EVERY = 3; // a new horde every N rounds
 export const SETTLE_MIN_DIST = 3; // min distance between bases
+export const MAP_RADIUS = 14; // massive: 631 tiles, most of it under fog
 const AI_UNIT_CAP = 12;
+// The horde materializes this far from the nearest player base — close enough
+// to arrive within a few turns of its wave, far enough to stay out of sight.
+const WAVE_SPAWN_NEAR = 7;
+const WAVE_SPAWN_FAR = 10;
 
 const PASSABLE: Record<Terrain, boolean> = {
   plains: true,
@@ -320,13 +334,14 @@ function makeUnit(
   };
 }
 
-export function newGame(mode: CivMode, seed: number, radius = 7): CivState {
+export function newGame(mode: CivMode, seed: number, radius = MAP_RADIUS): CivState {
+  const spread = Math.max(2, radius - 4);
   const starts: Axial[] =
     mode === 'zombie'
       ? [{ q: 0, r: 0 }]
       : [
-          { q: -(radius - 2), r: 0 },
-          { q: radius - 2, r: 0 },
+          { q: -spread, r: 0 },
+          { q: spread, r: 0 },
         ];
   const tiles = generateTiles(seed, radius, starts);
 
@@ -344,6 +359,7 @@ export function newGame(mode: CivMode, seed: number, radius = 7): CivState {
     log: [],
     result: null,
     rng: (seed ^ 0xc0ffee) >>> 0 || 1,
+    explored: { p1: new Set(), p2: new Set() },
   };
 
   const factions: Faction[] = mode === 'zombie' ? ['p1'] : ['p1', 'p2'];
@@ -367,10 +383,55 @@ export function newGame(mode: CivMode, seed: number, radius = 7): CivState {
     mode === 'zombie'
       ? `The horde stirs. First wave at the end of turn ${WAVE_EVERY}.`
       : mode === 'ai'
-        ? 'A rival civilization rises across the map.'
+        ? 'A rival civilization rises somewhere across the map.'
         : 'Two civilizations. One map. Good luck.',
   );
+  updateExplored(state);
   return state;
+}
+
+// ── Fog of war ───────────────────────────────────────────────────────────
+
+/** How far a unit sees — the same reach it moves or attacks with. */
+export function viewRange(u: Unit): number {
+  switch (u.kind) {
+    case 'knight':
+    case 'bishop':
+      return 3;
+    case 'brute':
+    case 'base':
+      return 2; // a base watches its territory
+    default:
+      return 1;
+  }
+}
+
+/** Tiles faction `f` can see right now: union of every unit's view range. */
+export function visibleTiles(state: CivState, f: Faction): Set<string> {
+  const out = new Set<string>();
+  for (const u of state.units) {
+    if (u.faction !== f) continue;
+    const range = viewRange(u);
+    for (let dq = -range; dq <= range; dq++) {
+      for (
+        let dr = Math.max(-range, -dq - range);
+        dr <= Math.min(range, -dq + range);
+        dr++
+      ) {
+        const k = axialKey(u.q + dq, u.r + dr);
+        if (state.tiles[k] !== undefined) out.add(k);
+      }
+    }
+  }
+  return out;
+}
+
+/** Fold current visibility into both players' explored maps. Mutates. */
+function updateExplored(state: CivState) {
+  for (const f of ['p1', 'p2'] as const) {
+    if (f === 'p2' && state.mode === 'zombie') continue;
+    for (const k of visibleTiles(state, f)) state.explored[f].add(k);
+  }
 }
 
 // ── State helpers ────────────────────────────────────────────────────────
@@ -381,6 +442,7 @@ function clone(state: CivState): CivState {
     units: state.units.map((u) => ({ ...u })),
     gold: { ...state.gold },
     log: [...state.log],
+    explored: { p1: new Set(state.explored.p1), p2: new Set(state.explored.p2) },
     // tiles is immutable after generation — safe to share.
   };
 }
@@ -557,20 +619,27 @@ export function moveOrAttack(
   if (isMove) {
     u.q = to.q;
     u.r = to.r;
-    return { state: next, event: { type: 'move', from, to } };
+    updateExplored(next);
+    return { state: next, event: { type: 'move', from, to, unitKind: u.kind } };
   }
 
   const defender = unitAt(next, to.q, to.r)!;
+  const hit = {
+    unitKind: u.kind,
+    targetKind: defender.kind,
+    targetFaction: defender.faction,
+  };
   const died = resolveHit(next, u, defender);
   if (u.kind === 'bishop') {
-    return { state: next, event: { type: 'shot', from, to } };
+    return { state: next, event: { type: 'shot', from, to, ...hit, died } };
   }
   // Melee: if the tile is now clear, the attacker takes it.
   if (died) {
     u.q = to.q;
     u.r = to.r;
+    updateExplored(next);
   }
-  return { state: next, event: { type: 'melee', from, to } };
+  return { state: next, event: { type: 'melee', from, to, ...hit, died } };
 }
 
 export function spawnTargets(state: CivState, baseId: number): Axial[] {
@@ -596,7 +665,8 @@ export function buyUnit(
   next.gold[next.current as 'p1' | 'p2'] -= stats.cost;
   next.units.push(makeUnit(next, kind, next.current, to, stats, true));
   pushLog(next, `${KIND_NAMES[kind]} recruited for ${stats.cost}g.`);
-  return { state: next, event: { type: 'spawn', to } };
+  updateExplored(next);
+  return { state: next, event: { type: 'spawn', to, unitKind: kind } };
 }
 
 /** A king founds a new rook base where it stands, consuming the king. */
@@ -612,7 +682,8 @@ export function settleKing(
   const base = makeUnit(next, 'base', u.faction, at, { hp: BASE_HP, atk: 0 }, true);
   next.units.push(base);
   pushLog(next, `${factionName(next, u.faction)} founded a new base.`);
-  return { state: next, event: { type: 'settle', to: at } };
+  updateExplored(next);
+  return { state: next, event: { type: 'settle', to: at, unitKind: 'base' } };
 }
 
 // ── Turn flow ────────────────────────────────────────────────────────────
@@ -660,6 +731,7 @@ function beginPlayerTurn(state: CivState, f: 'p1' | 'p2') {
       u.hp = Math.min(u.maxHp, u.hp + 1);
     }
   }
+  updateExplored(state);
 }
 
 function spawnWave(state: CivState) {
@@ -667,14 +739,27 @@ function spawnWave(state: CivState) {
   const count = 2 + state.wave;
   const hp = 3 + state.wave;
   const atk = 1 + Math.floor(state.wave / 3);
-  // Spawn on passable rim tiles, preferring free ones.
-  const rim = allHexes(state.radius)
-    .filter((h) => hexDistance(h, { q: 0, r: 0 }) >= state.radius - 1)
-    .filter((h) => isFreePassable(state, h));
+  // Materialize a few hexes out from the nearest player base — outside
+  // anyone's sight if possible, so the fog is what warns you. Falls back to
+  // wider rings if the neighborhood is cramped.
+  const bases = state.units.filter((u) => u.faction === 'p1' && u.kind === 'base');
+  const seen = visibleTiles(state, 'p1');
+  const distToBase = (h: Axial) =>
+    bases.length ? Math.min(...bases.map((b) => hexDistance(b, h))) : hexDistance(h, { q: 0, r: 0 });
+  const candidates = (near: number, far: number, dodgeSight: boolean) =>
+    allHexes(state.radius).filter((h) => {
+      const d = distToBase(h);
+      if (d < near || d > far) return false;
+      if (dodgeSight && seen.has(axialKey(h.q, h.r))) return false;
+      return isFreePassable(state, h);
+    });
+  let pool = candidates(WAVE_SPAWN_NEAR, WAVE_SPAWN_FAR, true);
+  if (pool.length < count) pool = candidates(WAVE_SPAWN_NEAR - 2, WAVE_SPAWN_FAR + 4, true);
+  if (pool.length < count) pool = candidates(2, state.radius * 2, false);
   let spawned = 0;
-  for (let i = 0; i < count && rim.length; i++) {
-    const idx = Math.floor(roll(state) * rim.length);
-    const [spot] = rim.splice(idx, 1);
+  for (let i = 0; i < count && pool.length; i++) {
+    const idx = Math.floor(roll(state) * pool.length);
+    const [spot] = pool.splice(idx, 1);
     const brute = state.wave % 3 === 0 && i === 0;
     state.units.push(
       makeUnit(
@@ -800,7 +885,8 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
           const spot = spots[Math.floor(roll(next) * spots.length)];
           next.gold.p2 -= UNIT_STATS[kind].cost;
           next.units.push(makeUnit(next, kind, 'p2', spot, UNIT_STATS[kind], true));
-          return { state: next, event: { type: 'spawn', to: spot }, done: false };
+          updateExplored(next);
+          return { state: next, event: { type: 'spawn', to: spot, unitKind: kind }, done: false };
         }
       }
       return { state: next, done: false };
@@ -843,7 +929,12 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
       const from = { q: u.q, r: u.r };
       u.q = best.q;
       u.r = best.r;
-      return { state: next, event: { type: 'move', from, to: best }, done: false };
+      updateExplored(next);
+      return {
+        state: next,
+        event: { type: 'move', from, to: best, unitKind: u.kind },
+        done: false,
+      };
     }
   }
   return { state: next, done: false };

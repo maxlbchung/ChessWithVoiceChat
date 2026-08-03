@@ -2,7 +2,12 @@
 // app's Layout chrome on its own route (/app/#/civilization) and outside the
 // base game: no lobby, no recordings, no replays, no ratings. Reached from the
 // landing page. Engine: src/lib/civEngine.ts.
-import { useEffect, useMemo, useState } from 'react';
+//
+// The board is a camera over a massive fogged map: drag to pan, wheel to zoom
+// (viewBox is mutated directly during gestures so 60fps pans don't re-render
+// 600 tiles), fog clears to each piece's own move/attack range. Enemy turns
+// play back step-by-step, but steps nobody can see apply instantly.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   newGame,
   allHexes,
@@ -18,6 +23,7 @@ import {
   enemyStep,
   isEnemyTurn,
   incomePreview,
+  visibleTiles,
   unitAt,
   UNIT_STATS,
   BUYABLE_KINDS,
@@ -27,13 +33,17 @@ import {
   type CivEvent,
   type Unit,
   type Axial,
+  type Terrain,
   type BuyableKind,
+  type Faction,
 } from '../lib/civEngine';
 import { renderPiece, type PieceKey } from '../lib/pieceSvgs';
 import * as sfx from '../lib/sfx';
 
 const HEX = 30; // hex size in viewBox units
-const ENEMY_STEP_MS = 170;
+const STEP_VISIBLE_MS = 210; // enemy step pacing when the player can see it
+const CAM_START_W = 640;
+const CAM_MIN_W = 300;
 
 const MODE_INFO: Record<CivMode, { name: string; tag: string; blurb: string }> = {
   zombie: {
@@ -46,7 +56,7 @@ const MODE_INFO: Record<CivMode, { name: string; tag: string; blurb: string }> =
     name: 'AI Civilizations',
     tag: 'Conquest',
     blurb:
-      'A rival civilization expands from the far side of the map. Out-grow it, then raze its base.',
+      'A rival civilization expands from somewhere across the map. Out-grow it, then raze its base.',
   },
   vs: {
     name: 'Versus',
@@ -74,6 +84,24 @@ const KIND_LABEL: Record<Unit['kind'], string> = {
   base: 'Rook Base',
   zombie: 'Zombie',
   brute: 'Brute',
+};
+
+const KIND_BLURB: Record<Unit['kind'], string> = {
+  pawn: 'Steps one hex. Cheap, expendable, holds the line.',
+  knight: 'Leaps up to 3 hexes, jumping clean over units.',
+  bishop: 'Fires a bullet at anything within 3 hexes.',
+  king: 'Steps one hex. Can settle a new rook base.',
+  base: 'Prints gold, recruits one unit a turn, heals its neighbors.',
+  zombie: 'Shambles one hex a turn. It only wants your base.',
+  brute: 'A hulk that lopes two hexes at a time.',
+};
+
+const TERRAIN_NOTE: Record<Terrain, string> = {
+  plains: 'Plains — open ground.',
+  forest: 'Forest — sheltered (−1 damage taken).',
+  gold: 'Gold field — pays out when worked or held in territory.',
+  mountain: 'Mountains — impassable.',
+  water: 'Water — impassable.',
 };
 
 function pieceKeyFor(u: Unit): PieceKey {
@@ -119,135 +147,22 @@ function TerrainDecor({ terrain }: { terrain: string }) {
   }
 }
 
-// ── Board ────────────────────────────────────────────────────────────────
+// ── Transient board effects ──────────────────────────────────────────────
 
-type Fx = { id: number; kind: 'shot' | 'hit'; x1: number; y1: number; x2: number; y2: number };
+type FxInput =
+  | { kind: 'bullet'; x1: number; y1: number; x2: number; y2: number }
+  | { kind: 'impact'; x2: number; y2: number }
+  | { kind: 'hit'; x2: number; y2: number };
+type Fx = FxInput & { id: number };
 
-function Board({
-  state,
-  selected,
-  moves,
-  attacks,
-  spawns,
-  fx,
-  onTile,
-}: {
-  state: CivState;
-  selected: number | null;
-  moves: Axial[];
-  attacks: Axial[];
-  spawns: Axial[];
-  fx: Fx[];
-  onTile: (h: Axial) => void;
-}) {
-  const hexes = useMemo(() => allHexes(state.radius), [state.radius]);
-  const corners = useMemo(() => hexCornerPoints(HEX), []);
-  const cornersInner = useMemo(() => hexCornerPoints(HEX - 2.2), []);
-
-  const w = Math.sqrt(3) * HEX * state.radius + HEX + 4;
-  const h = 1.5 * HEX * state.radius + HEX + 4;
-
-  const key = (a: Axial) => axialKey(a.q, a.r);
-  const moveSet = useMemo(() => new Set(moves.map(key)), [moves]);
-  const attackSet = useMemo(() => new Set(attacks.map(key)), [attacks]);
-  const spawnSet = useMemo(() => new Set(spawns.map(key)), [spawns]);
-  const selectedUnit = state.units.find((u) => u.id === selected);
-
-  return (
-    <svg
-      className="civ-board"
-      viewBox={`${-w} ${-h} ${w * 2} ${h * 2}`}
-      role="img"
-      aria-label="Chess Civilization map"
-    >
-      {hexes.map((hx) => {
-        const k = key(hx);
-        const t = state.tiles[k];
-        const { x, y } = hexToPixel(hx, HEX);
-        const interactive = moveSet.has(k) || attackSet.has(k) || spawnSet.has(k);
-        return (
-          <g
-            key={k}
-            transform={`translate(${x} ${y})`}
-            data-hex={k}
-            className={
-              `civ-tile civ-tile-${t}` +
-              (interactive ? ' civ-tile-hot' : '')
-            }
-            onClick={() => onTile(hx)}
-          >
-            <polygon className="civ-hex" points={corners} />
-            <TerrainDecor terrain={t} />
-            {moveSet.has(k) && <polygon className="civ-hint civ-hint-move" points={cornersInner} />}
-            {spawnSet.has(k) && (
-              <polygon className="civ-hint civ-hint-spawn" points={cornersInner} />
-            )}
-            {attackSet.has(k) && (
-              <polygon className="civ-hint civ-hint-attack" points={cornersInner} />
-            )}
-          </g>
-        );
-      })}
-
-      {/* Units above tiles so they never get clipped by neighbor hexes. */}
-      {state.units.map((u) => {
-        const { x, y } = hexToPixel(u, HEX);
-        const size = u.kind === 'base' ? 44 : 36;
-        const spent = u.faction === state.current && u.acted && state.result === null;
-        return (
-          <g
-            key={u.id}
-            transform={`translate(${x - size / 2} ${y - size / 2 - 3})`}
-            className={
-              `civ-unit civ-unit-${u.faction}` +
-              (u.id === selected ? ' civ-unit-selected' : '') +
-              (spent ? ' civ-unit-spent' : '')
-            }
-            pointerEvents="none"
-          >
-            {renderPiece(pieceKeyFor(u), size)}
-            {u.hp < u.maxHp && (
-              <g transform={`translate(${size / 2 - 14} ${size + 1})`}>
-                <rect className="civ-hp-bg" width="28" height="4" rx="2" />
-                <rect
-                  className={
-                    'civ-hp-fill ' +
-                    (u.hp / u.maxHp > 0.55 ? 'ok' : u.hp / u.maxHp > 0.28 ? 'low' : 'crit')
-                  }
-                  width={Math.max(2, (28 * u.hp) / u.maxHp)}
-                  height="4"
-                  rx="2"
-                />
-              </g>
-            )}
-          </g>
-        );
-      })}
-
-      {/* Selection ring on top of the unit sprite. */}
-      {selectedUnit &&
-        (() => {
-          const { x, y } = hexToPixel(selectedUnit, HEX);
-          return (
-            <g transform={`translate(${x} ${y})`} pointerEvents="none">
-              <polygon className="civ-selection" points={corners} />
-            </g>
-          );
-        })()}
-
-      {fx.map((f) =>
-        f.kind === 'shot' ? (
-          <g key={f.id} className="civ-fx-shot" pointerEvents="none">
-            <line x1={f.x1} y1={f.y1} x2={f.x2} y2={f.y2} />
-            <circle cx={f.x2} cy={f.y2} r="7" />
-          </g>
-        ) : (
-          <circle key={f.id} className="civ-fx-hit" cx={f.x2} cy={f.y2} r="10" pointerEvents="none" />
-        ),
-      )}
-    </svg>
-  );
-}
+type Ghost = {
+  id: number;
+  x: number;
+  y: number;
+  piece: PieceKey;
+  faction: Faction;
+  size: number;
+};
 
 // ── Page ─────────────────────────────────────────────────────────────────
 
@@ -258,6 +173,20 @@ export function Civilization() {
   const [seedText, setSeedText] = useState('');
   const [handoff, setHandoff] = useState(false);
   const [fx, setFx] = useState<Fx[]>([]);
+  const [ghosts, setGhosts] = useState<Ghost[]>([]);
+  const [hitStamp, setHitStamp] = useState<Record<string, number>>({});
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
+  const [resultPlayed, setResultPlayed] = useState(false);
+
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const camRef = useRef({ x: -CAM_START_W / 2, y: -CAM_START_W / 2, w: CAM_START_W, h: CAM_START_W * 0.85 });
+  const dragRef = useRef({ active: false, px: 0, py: 0, moved: false });
+  const waveRef = useRef(0);
+  const fxId = useRef(1);
+
+  // Whose fog do we render? p1 owns the screen except in hotseat.
+  const viewer: 'p1' | 'p2' =
+    state && state.mode === 'vs' && state.current !== 'zombie' ? state.current : 'p1';
 
   const acts = useMemo(
     () =>
@@ -271,42 +200,245 @@ export function Civilization() {
     [state, selected, spawnKind],
   );
   const selectedUnit = state?.units.find((u) => u.id === selected) ?? null;
+  const visible = useMemo(
+    () => (state ? visibleTiles(state, viewer) : new Set<string>()),
+    [state, viewer],
+  );
 
-  const addFx = (kind: Fx['kind'], from: Axial | undefined, to: Axial) => {
-    const a = from ? hexToPixel(from, HEX) : hexToPixel(to, HEX);
-    const b = hexToPixel(to, HEX);
-    const id = Date.now() + Math.random();
-    setFx((cur) => [...cur, { id, kind, x1: a.x, y1: a.y, x2: b.x, y2: b.y }]);
-    window.setTimeout(() => setFx((cur) => cur.filter((f) => f.id !== id)), 500);
+  // ── Camera ─────────────────────────────────────────────────────────────
+
+  const mapExtent = state ? Math.sqrt(3) * HEX * state.radius + HEX * 2 : 800;
+
+  const applyCam = () => {
+    const c = camRef.current;
+    const pad = 60;
+    const maxW = mapExtent * 2 + pad;
+    c.w = Math.min(Math.max(c.w, CAM_MIN_W), maxW);
+    c.h = c.w * 0.85;
+    c.x = Math.min(Math.max(c.x, -mapExtent - pad), mapExtent + pad - c.w);
+    c.y = Math.min(Math.max(c.y, -mapExtent - pad), mapExtent + pad - c.h);
+    svgRef.current?.setAttribute('viewBox', `${c.x} ${c.y} ${c.w} ${c.h}`);
   };
 
-  const playEvent = (ev: CivEvent | undefined) => {
+  const centerOn = (h: Axial, w?: number) => {
+    const c = camRef.current;
+    if (w !== undefined) c.w = w;
+    c.h = c.w * 0.85;
+    const p = hexToPixel(h, HEX);
+    c.x = p.x - c.w / 2;
+    c.y = p.y - c.h / 2;
+    applyCam();
+  };
+
+  const zoomBy = (factor: number) => {
+    const c = camRef.current;
+    const cx = c.x + c.w / 2;
+    const cy = c.y + c.h / 2;
+    c.w *= factor;
+    c.h = c.w * 0.85;
+    c.x = cx - c.w / 2;
+    c.y = cy - c.h / 2;
+    applyCam();
+  };
+
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    dragRef.current = { active: true, px: e.clientX, py: e.clientY, moved: false };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const d = dragRef.current;
+    if (!d.active || !svgRef.current) return;
+    const dx = e.clientX - d.px;
+    const dy = e.clientY - d.py;
+    if (!d.moved && Math.hypot(dx, dy) < 5) return;
+    d.moved = true;
+    const scale = camRef.current.w / svgRef.current.clientWidth;
+    camRef.current.x -= dx * scale;
+    camRef.current.y -= dy * scale;
+    d.px = e.clientX;
+    d.py = e.clientY;
+    applyCam();
+  };
+  const onPointerUp = () => {
+    dragRef.current.active = false;
+  };
+
+  // Wheel zoom must be a manual non-passive listener — React's synthetic
+  // onWheel can't preventDefault the page scroll.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !state) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const c = camRef.current;
+      const rect = el.getBoundingClientRect();
+      const mx = c.x + ((e.clientX - rect.left) / rect.width) * c.w;
+      const my = c.y + ((e.clientY - rect.top) / rect.height) * c.h;
+      const factor = e.deltaY > 0 ? 1.13 : 1 / 1.13;
+      const oldW = c.w;
+      c.w *= factor;
+      c.h = c.w * 0.85;
+      // Keep the point under the cursor fixed.
+      const applied = c.w / oldW;
+      c.x = mx - (mx - c.x) * applied;
+      c.y = my - (my - c.y) * applied;
+      applyCam();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state === null]);
+
+  const homeBaseOf = (s: CivState, f: 'p1' | 'p2'): Axial => {
+    const b = s.units.find((u) => u.faction === f && u.kind === 'base');
+    return b ? { q: b.q, r: b.r } : { q: 0, r: 0 };
+  };
+
+  // ── Effects & sounds ───────────────────────────────────────────────────
+
+  const pushFx = (f: FxInput, ttl = 550) => {
+    const id = fxId.current++;
+    setFx((cur) => [...cur, { ...f, id }]);
+    window.setTimeout(() => setFx((cur) => cur.filter((x) => x.id !== id)), ttl);
+  };
+
+  const markHit = (to: Axial) => {
+    const k = axialKey(to.q, to.r);
+    setHitStamp((cur) => ({ ...cur, [k]: Date.now() }));
+    window.setTimeout(
+      () =>
+        setHitStamp((cur) => {
+          const next = { ...cur };
+          delete next[k];
+          return next;
+        }),
+      450,
+    );
+  };
+
+  const spawnGhost = (prev: CivState, ev: CivEvent) => {
+    if (!ev.died || !ev.to || !ev.targetKind || !ev.targetFaction) return;
+    const { x, y } = hexToPixel(ev.to, HEX);
+    const size = ev.targetKind === 'base' ? 44 : 36;
+    const id = fxId.current++;
+    void prev;
+    setGhosts((cur) => [
+      ...cur,
+      {
+        id,
+        x,
+        y,
+        size,
+        faction: ev.targetFaction!,
+        piece: `${ev.targetFaction === 'p1' ? 'w' : 'b'}${KIND_LETTER[ev.targetKind!]}` as PieceKey,
+      },
+    ]);
+    window.setTimeout(() => setGhosts((cur) => cur.filter((g) => g.id !== id)), 700);
+  };
+
+  const stepSfxFor = (terrain: Terrain | undefined, kind: CivEvent['unitKind']) => {
+    if (kind === 'knight' || kind === 'brute') return sfx.playLeap();
+    if (kind === 'zombie') {
+      // Groan sometimes, shuffle otherwise — a whole horde groaning every
+      // step would be a wall of noise.
+      return Math.random() < 0.35 ? sfx.playZombieGroan() : sfx.playStepPlains();
+    }
+    if (terrain === 'forest') return sfx.playStepForest();
+    if (terrain === 'gold') return sfx.playStepGold();
+    return sfx.playStepPlains();
+  };
+
+  /** Play sound + spawn board fx for an engine event. prev = state before it. */
+  const playEvent = (prev: CivState, ev: CivEvent | undefined) => {
     if (!ev) return;
-    if (ev.type === 'move') sfx.playMove();
-    else if (ev.type === 'melee') {
-      sfx.playCapture();
-      if (ev.to) addFx('hit', ev.from, ev.to);
-    } else if (ev.type === 'shot') {
-      sfx.playSlice();
-      if (ev.from && ev.to) addFx('shot', ev.from, ev.to);
-    } else if (ev.type === 'spawn') sfx.playSpawn();
-    else if (ev.type === 'settle') sfx.playPlace();
+    const terrainAtTo = ev.to ? prev.tiles[axialKey(ev.to.q, ev.to.r)] : undefined;
+    switch (ev.type) {
+      case 'move':
+        stepSfxFor(terrainAtTo, ev.unitKind);
+        break;
+      case 'melee': {
+        if (ev.targetKind === 'base') sfx.playBaseHit();
+        else sfx.playCapture();
+        if (ev.to) {
+          markHit(ev.to);
+          const p = hexToPixel(ev.to, HEX);
+          pushFx({ kind: 'hit', x2: p.x, y2: p.y });
+        }
+        spawnGhost(prev, ev);
+        break;
+      }
+      case 'shot': {
+        sfx.playSlice();
+        if (ev.from && ev.to) {
+          const a = hexToPixel(ev.from, HEX);
+          const b = hexToPixel(ev.to, HEX);
+          pushFx({ kind: 'bullet', x1: a.x, y1: a.y, x2: b.x, y2: b.y }, 260);
+          const to = ev.to;
+          window.setTimeout(() => {
+            sfx.playBulletImpact();
+            if (ev.targetKind === 'base') sfx.playBaseHit();
+            markHit(to);
+            const p = hexToPixel(to, HEX);
+            pushFx({ kind: 'impact', x2: p.x, y2: p.y });
+          }, 190);
+        }
+        spawnGhost(prev, ev);
+        break;
+      }
+      case 'spawn':
+        sfx.playSpawn();
+        break;
+      case 'settle':
+        sfx.playPlace();
+        break;
+    }
   };
 
-  // Enemy turn playback: one engine step per tick until control returns.
+  const eventIsVisible = (s: CivState, ev: CivEvent | undefined): boolean => {
+    if (!ev) return false;
+    const seen = visibleTiles(s, viewer);
+    const at = (h?: Axial) => !!h && seen.has(axialKey(h.q, h.r));
+    return at(ev.from) || at(ev.to);
+  };
+
+  // ── Enemy turn playback ────────────────────────────────────────────────
+  // One visible step per tick; invisible steps (deep in the fog) apply
+  // instantly in a synchronous batch so massive-map turns stay snappy.
   useEffect(() => {
     if (!state || !isEnemyTurn(state)) return;
     const t = window.setTimeout(() => {
-      const res = enemyStep(state);
-      playEvent(res.event);
-      setState(res.state);
-    }, ENEMY_STEP_MS);
+      let cur = state;
+      for (let guard = 0; guard < 400; guard++) {
+        const res = enemyStep(cur);
+        if (res.event && eventIsVisible(res.state, res.event)) {
+          playEvent(cur, res.event);
+          setState(res.state);
+          return; // effect re-fires for the next step
+        }
+        cur = res.state;
+        if (res.done) break;
+      }
+      setState(cur);
+    }, STEP_VISIBLE_MS);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
+  // Wave arrival: toast + horde choir, once per wave.
+  useEffect(() => {
+    if (!state) return;
+    if (state.wave > waveRef.current) {
+      waveRef.current = state.wave;
+      if (state.wave > 0) {
+        sfx.playHordeArrive();
+        const id = fxId.current++;
+        setToast({ id, text: `Wave ${state.wave} — the horde shambles in` });
+        window.setTimeout(() => setToast((cur) => (cur?.id === id ? null : cur)), 2600);
+      }
+    }
+  }, [state]);
+
   // Win/lose jingle, once.
-  const [resultPlayed, setResultPlayed] = useState(false);
   useEffect(() => {
     if (!state?.result || resultPlayed) return;
     setResultPlayed(true);
@@ -314,17 +446,25 @@ export function Civilization() {
     else sfx.playCheck();
   }, [state, resultPlayed]);
 
+  // ── Flow ───────────────────────────────────────────────────────────────
+
   const start = (mode: CivMode) => {
     const seed = seedText.trim()
       ? Math.abs(
           [...seedText.trim()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7),
         ) || 7
       : Math.floor(Math.random() * 1e9);
-    setState(newGame(mode, seed));
+    const s = newGame(mode, seed);
+    setState(s);
     setSelected(null);
     setSpawnKind(null);
     setHandoff(false);
     setResultPlayed(false);
+    setGhosts([]);
+    setFx([]);
+    waveRef.current = 0;
+    // Land the camera on your base; the rest of the map is out there, dark.
+    window.setTimeout(() => centerOn(homeBaseOf(s, 'p1'), CAM_START_W), 0);
   };
 
   const backToMenu = () => {
@@ -341,6 +481,7 @@ export function Civilization() {
 
   const onTile = (h: Axial) => {
     if (!state || state.result || isEnemyTurn(state) || handoff) return;
+    if (dragRef.current.moved) return; // that was a pan, not a click
 
     // Spawn placement takes priority while a recruit card is armed.
     if (selected !== null && spawnKind) {
@@ -348,6 +489,7 @@ export function Civilization() {
         const res = buyUnit(state, selected, spawnKind, h);
         if (res) {
           sfx.playBuy();
+          playEvent(state, res.event);
           setState(res.state);
           setSpawnKind(null);
           return;
@@ -362,7 +504,7 @@ export function Civilization() {
       if (inMoves || inAttacks) {
         const res = moveOrAttack(state, selected, h);
         if (res) {
-          playEvent(res.event);
+          playEvent(state, res.event);
           setState(res.state);
           deselect();
           return;
@@ -370,8 +512,10 @@ export function Civilization() {
       }
     }
 
+    // Select anything you can see — your own pieces to command, enemy pieces
+    // and towers to inspect.
     const u = unitAt(state, h.q, h.r);
-    if (u && u.faction === state.current) {
+    if (u && (u.faction === viewer || visible.has(axialKey(h.q, h.r)))) {
       sfx.playSelect();
       setSelected(u.id);
       setSpawnKind(null);
@@ -385,14 +529,22 @@ export function Civilization() {
     deselect();
     const next = endPlayerTurn(state);
     setState(next);
-    if (next.mode === 'vs' && !next.result) setHandoff(true);
+    if (next.mode === 'vs' && !next.result) {
+      sfx.playFlip();
+      setHandoff(true);
+    }
+  };
+
+  const onHandoffReady = () => {
+    setHandoff(false);
+    if (state) centerOn(homeBaseOf(state, viewer), camRef.current.w);
   };
 
   const onSettle = () => {
     if (!state || selected === null) return;
     const res = settleKing(state, selected);
     if (res) {
-      playEvent(res.event);
+      playEvent(state, res.event);
       setState(res.state);
       deselect();
     }
@@ -415,9 +567,9 @@ export function Civilization() {
           <p className="label-caps civ-eyebrow">A separate expedition · not the base game</p>
           <h1 className="civ-title">Chess Civilization</h1>
           <p className="civ-tagline">
-            A turn-based civilization game on a procedurally generated hex map. Your home base
-            is a rook. Pawns and kings step, knights leap over anything, bishops fire across
-            three hexes — and kings can settle new bases.
+            A turn-based civilization game on a massive, procedurally generated hex map. Your
+            home base is a rook. Pawns and kings step, knights leap over anything, bishops
+            fire across three hexes — and the world past your sight line is fog.
           </p>
 
           <div className="civ-mode-grid">
@@ -458,13 +610,19 @@ export function Civilization() {
                 hex and can found a new base, three hexes clear of any other.
               </li>
               <li>
+                <strong>Fog</strong> — the map starts dark. Each piece clears fog exactly as
+                far as it moves or attacks; ground you've seen stays mapped but goes dim when
+                nobody's watching it. Drag to pan, scroll to zoom.
+              </li>
+              <li>
                 <strong>Terrain</strong> — mountains and water are impassable. Forests shelter
                 defenders (−1 damage). Gold tiles pay out when worked by a unit, more inside a
                 base's territory.
               </li>
               <li>
                 <strong>Turns</strong> — every unit gets one action: move, strike, shoot, or
-                settle. Walking into an enemy strikes it; clear the hex and you take it.
+                settle. Walking into an enemy strikes it; clear the hex and you take it. Click
+                any enemy you can see for its details.
               </li>
             </ul>
           </div>
@@ -478,12 +636,27 @@ export function Civilization() {
 
   // ── Game screen ────────────────────────────────────────────────────────
   const mode = MODE_INFO[state.mode];
-  const me = state.mode === 'vs' ? (state.current === 'zombie' ? 'p1' : state.current) : 'p1';
+  const me = viewer;
   const enemyBusy = isEnemyTurn(state);
   const untilWave =
     state.mode === 'zombie' ? (WAVE_EVERY - (state.turn % WAVE_EVERY)) % WAVE_EVERY : 0;
   const playerLabel =
     state.mode === 'vs' ? (state.current === 'p1' ? 'Blue (White)' : 'Red (Black)') : null;
+
+  const hexes = allHexes(state.radius);
+  const corners = hexCornerPoints(HEX);
+  const cornersInner = hexCornerPoints(HEX - 2.2);
+  const key = (a: Axial) => axialKey(a.q, a.r);
+  const moveSet = new Set((selected !== null && !spawnKind ? acts.moves : []).map(key));
+  const attackSet = new Set((selected !== null && !spawnKind ? acts.attacks : []).map(key));
+  const spawnSet = new Set(spawns.map(key));
+  const explored = state.explored[me];
+  const cam = camRef.current;
+
+  const selectedIsMine = selectedUnit?.faction === state.current && !enemyBusy;
+  const selectedVisible =
+    selectedUnit &&
+    (selectedUnit.faction === me || visible.has(axialKey(selectedUnit.q, selectedUnit.r)));
 
   return (
     <div className="civ-shell">
@@ -502,22 +675,193 @@ export function Civilization() {
 
       <main className="civ-game">
         <div className="civ-board-wrap">
-          <Board
-            state={state}
-            selected={selected}
-            moves={selected !== null && !spawnKind ? acts.moves : []}
-            attacks={selected !== null && !spawnKind ? acts.attacks : []}
-            spawns={spawns}
-            fx={fx}
-            onTile={onTile}
-          />
+          <svg
+            ref={svgRef}
+            className="civ-board"
+            viewBox={`${cam.x} ${cam.y} ${cam.w} ${cam.h}`}
+            preserveAspectRatio="xMidYMid slice"
+            role="img"
+            aria-label="Chess Civilization map"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+            {hexes.map((hx) => {
+              const k = key(hx);
+              const t = state.tiles[k];
+              const { x, y } = hexToPixel(hx, HEX);
+              const isExplored = explored.has(k);
+              const isVisible = visible.has(k);
+              if (!isExplored) {
+                return (
+                  <g key={k} transform={`translate(${x} ${y})`} data-hex={k} className="civ-tile civ-tile-unseen">
+                    <polygon className="civ-hex" points={corners} onClick={() => onTile(hx)} />
+                  </g>
+                );
+              }
+              const interactive = moveSet.has(k) || attackSet.has(k) || spawnSet.has(k);
+              return (
+                <g
+                  key={k}
+                  transform={`translate(${x} ${y})`}
+                  data-hex={k}
+                  className={
+                    `civ-tile civ-tile-${t}` +
+                    (interactive ? ' civ-tile-hot' : '') +
+                    (isVisible ? '' : ' civ-tile-dim')
+                  }
+                  onClick={() => onTile(hx)}
+                >
+                  <polygon className="civ-hex" points={corners} />
+                  <TerrainDecor terrain={t} />
+                  {!isVisible && <polygon className="civ-fog-veil" points={corners} />}
+                  {moveSet.has(k) && (
+                    <polygon className="civ-hint civ-hint-move" points={cornersInner} />
+                  )}
+                  {spawnSet.has(k) && (
+                    <polygon className="civ-hint civ-hint-spawn" points={cornersInner} />
+                  )}
+                  {attackSet.has(k) && (
+                    <polygon className="civ-hint civ-hint-attack" points={cornersInner} />
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Units — outer <g> carries the (transitioned) position, inner
+                <g> carries enter/hit animations so the transforms compose. */}
+            {state.units.map((u) => {
+              const k = axialKey(u.q, u.r);
+              if (u.faction !== me && !visible.has(k)) return null;
+              const { x, y } = hexToPixel(u, HEX);
+              const size = u.kind === 'base' ? 44 : 36;
+              const spent = u.faction === state.current && u.acted && state.result === null;
+              const hit = hitStamp[k] !== undefined;
+              return (
+                <g
+                  key={u.id}
+                  className={
+                    `civ-unit civ-unit-${u.faction}` +
+                    (u.id === selected ? ' civ-unit-selected' : '') +
+                    (spent ? ' civ-unit-spent' : '')
+                  }
+                  style={{ transform: `translate(${x - size / 2}px, ${y - size / 2 - 3}px)` }}
+                  pointerEvents="none"
+                >
+                  <g className={'civ-unit-body' + (hit ? ' civ-unit-hit' : '')}>
+                    {renderPiece(pieceKeyFor(u), size)}
+                    {u.hp < u.maxHp && (
+                      <g transform={`translate(${size / 2 - 14} ${size + 1})`}>
+                        <rect className="civ-hp-bg" width="28" height="4" rx="2" />
+                        <rect
+                          className={
+                            'civ-hp-fill ' +
+                            (u.hp / u.maxHp > 0.55 ? 'ok' : u.hp / u.maxHp > 0.28 ? 'low' : 'crit')
+                          }
+                          width={Math.max(2, (28 * u.hp) / u.maxHp)}
+                          height="4"
+                          rx="2"
+                        />
+                      </g>
+                    )}
+                  </g>
+                </g>
+              );
+            })}
+
+            {/* Fallen units linger for a beat, fading out. */}
+            {ghosts.map((g) => (
+              <g
+                key={`ghost-${g.id}`}
+                className={`civ-unit civ-unit-${g.faction} civ-ghost`}
+                style={{
+                  transform: `translate(${g.x - g.size / 2}px, ${g.y - g.size / 2 - 3}px)`,
+                }}
+                pointerEvents="none"
+              >
+                <g className="civ-ghost-body">{renderPiece(g.piece, g.size)}</g>
+              </g>
+            ))}
+
+            {/* Selection ring on top of the unit sprite. */}
+            {selectedUnit &&
+              selectedVisible &&
+              (() => {
+                const { x, y } = hexToPixel(selectedUnit, HEX);
+                return (
+                  <g transform={`translate(${x} ${y})`} pointerEvents="none">
+                    <polygon
+                      className={
+                        'civ-selection' + (selectedIsMine ? '' : ' civ-selection-enemy')
+                      }
+                      points={corners}
+                    />
+                  </g>
+                );
+              })()}
+
+            {fx.map((f) => {
+              if (f.kind === 'bullet') {
+                return (
+                  <circle
+                    key={f.id}
+                    className="civ-fx-bullet"
+                    cx={f.x1}
+                    cy={f.y1}
+                    r="4"
+                    style={
+                      {
+                        '--tx': `${f.x2 - f.x1}px`,
+                        '--ty': `${f.y2 - f.y1}px`,
+                      } as React.CSSProperties
+                    }
+                    pointerEvents="none"
+                  />
+                );
+              }
+              return (
+                <circle
+                  key={f.id}
+                  className={f.kind === 'impact' ? 'civ-fx-impact' : 'civ-fx-hit'}
+                  cx={f.x2}
+                  cy={f.y2}
+                  r="10"
+                  pointerEvents="none"
+                />
+              );
+            })}
+          </svg>
+
+          <div className="civ-cam-controls" aria-hidden>
+            <button className="civ-cam-btn" data-no-sfx onClick={() => zoomBy(1 / 1.35)} title="Zoom in">
+              +
+            </button>
+            <button className="civ-cam-btn" data-no-sfx onClick={() => zoomBy(1.35)} title="Zoom out">
+              −
+            </button>
+            <button
+              className="civ-cam-btn"
+              data-no-sfx
+              onClick={() => centerOn(homeBaseOf(state, me), CAM_START_W)}
+              title="Back to base"
+            >
+              ⌂
+            </button>
+          </div>
+
+          {toast && (
+            <div key={toast.id} className="civ-toast">
+              {toast.text}
+            </div>
+          )}
 
           {handoff && (
             <div className="civ-overlay">
               <div className="civ-overlay-card">
                 <p className="label-caps">Pass the device</p>
                 <h2>{playerLabel} to move</h2>
-                <button className="primary-btn" onClick={() => setHandoff(false)}>
+                <button className="primary-btn" onClick={onHandoffReady}>
                   Ready
                 </button>
               </div>
@@ -528,9 +872,7 @@ export function Civilization() {
             <div className="civ-overlay">
               <div className="civ-overlay-card">
                 <p className="label-caps">
-                  {state.mode === 'zombie'
-                    ? `Wave ${state.wave}`
-                    : `Turn ${state.turn}`}
+                  {state.mode === 'zombie' ? `Wave ${state.wave}` : `Turn ${state.turn}`}
                 </p>
                 <h2>
                   {state.mode === 'vs'
@@ -556,7 +898,9 @@ export function Civilization() {
         <aside className="civ-side">
           <section className="civ-panel civ-status">
             <div className="civ-stat">
-              <span className="label-caps">{state.mode === 'vs' ? `${playerLabel} gold` : 'Gold'}</span>
+              <span className="label-caps">
+                {state.mode === 'vs' ? `${playerLabel} gold` : 'Gold'}
+              </span>
               <span className="civ-stat-value">
                 {state.gold[me]}g
                 <em> +{incomePreview(state, me)}/turn</em>
@@ -568,7 +912,9 @@ export function Civilization() {
                 <span className="civ-stat-value">
                   wave {state.wave}
                   <em>
-                    {untilWave === 0 ? ' next: this turn' : ` next in ${untilWave} turn${untilWave > 1 ? 's' : ''}`}
+                    {untilWave === 0
+                      ? ' next: this turn'
+                      : ` next in ${untilWave} turn${untilWave > 1 ? 's' : ''}`}
                   </em>
                 </span>
               </div>
@@ -581,7 +927,7 @@ export function Civilization() {
           </section>
 
           <section className="civ-panel civ-selected">
-            {selectedUnit ? (
+            {selectedUnit && selectedVisible ? (
               <>
                 <div className="civ-selected-head">
                   <span className="civ-selected-icon">
@@ -594,9 +940,34 @@ export function Civilization() {
                       {selectedUnit.atk > 0 ? ` · ${selectedUnit.atk} atk` : ''}
                     </span>
                   </div>
+                  <span
+                    className={
+                      'civ-faction-tag ' +
+                      (selectedUnit.faction === me
+                        ? 'mine'
+                        : selectedUnit.faction === 'zombie'
+                          ? 'horde'
+                          : 'enemy')
+                    }
+                  >
+                    {selectedUnit.faction === me
+                      ? 'Yours'
+                      : selectedUnit.faction === 'zombie'
+                        ? 'Horde'
+                        : state.mode === 'vs'
+                          ? selectedUnit.faction === 'p1'
+                            ? 'Blue'
+                            : 'Red'
+                          : 'Enemy'}
+                  </span>
                 </div>
 
-                {selectedUnit.kind === 'base' ? (
+                <p className="civ-hint-text">{KIND_BLURB[selectedUnit.kind]}</p>
+                <p className="civ-hint-text civ-terrain-note">
+                  {TERRAIN_NOTE[state.tiles[axialKey(selectedUnit.q, selectedUnit.r)]]}
+                </p>
+
+                {selectedUnit.kind === 'base' && selectedUnit.faction === me && selectedIsMine ? (
                   <div className="civ-recruit">
                     <span className="label-caps">Recruit — pick, then place</span>
                     <div className="civ-recruit-grid">
@@ -609,15 +980,16 @@ export function Civilization() {
                         return (
                           <button
                             key={k}
-                            className={
-                              'civ-recruit-btn' + (spawnKind === k ? ' armed' : '')
-                            }
+                            className={'civ-recruit-btn' + (spawnKind === k ? ' armed' : '')}
                             disabled={disabled}
                             data-recruit={k}
                             onClick={() => setSpawnKind(spawnKind === k ? null : k)}
                           >
                             <span className="civ-recruit-icon">
-                              {renderPiece(`${me === 'p2' ? 'b' : 'w'}${KIND_LETTER[k]}` as PieceKey, 26)}
+                              {renderPiece(
+                                `${me === 'p2' ? 'b' : 'w'}${KIND_LETTER[k]}` as PieceKey,
+                                26,
+                              )}
                             </span>
                             <span className="civ-recruit-name">{KIND_LABEL[k]}</span>
                             <span className="civ-recruit-cost">{stats.cost}g</span>
@@ -628,16 +1000,15 @@ export function Civilization() {
                     {selectedUnit.acted && (
                       <p className="civ-hint-text">This base already recruited this turn.</p>
                     )}
-                    {spawnKind && <p className="civ-hint-text">Click a highlighted hex to place.</p>}
+                    {spawnKind && (
+                      <p className="civ-hint-text">Click a highlighted hex to place.</p>
+                    )}
                   </div>
-                ) : (
-                  <p className="civ-hint-text">
-                    {UNIT_STATS[selectedUnit.kind as BuyableKind]?.blurb ?? ''}
-                    {selectedUnit.acted ? ' Already acted this turn.' : ''}
-                  </p>
-                )}
+                ) : selectedIsMine && selectedUnit.acted ? (
+                  <p className="civ-hint-text">Already acted this turn.</p>
+                ) : null}
 
-                {selectedUnit.kind === 'king' && (
+                {selectedUnit.kind === 'king' && selectedIsMine && (
                   <button
                     className="secondary-btn"
                     disabled={!acts.canSettle}
@@ -654,8 +1025,9 @@ export function Civilization() {
               </>
             ) : (
               <p className="civ-hint-text">
-                Select one of your pieces. Your rook base recruits; everything else moves once
-                a turn.
+                Select one of your pieces — or any enemy you can see — for details. Drag the
+                map to pan; scroll to zoom. The fog clears as far as each piece can move or
+                shoot.
               </p>
             )}
           </section>

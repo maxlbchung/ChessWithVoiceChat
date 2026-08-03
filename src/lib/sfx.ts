@@ -2130,3 +2130,158 @@ export function playMoveQuality(kind: string) {
   }
 }
 
+
+// ══ Chess Civilization ═══════════════════════════════════════════════════
+// Terrain-aware footsteps and horde noises for the standalone civ mode.
+// Same procedural recipes as the chess cues: blip() stacks + shaped noise,
+// all on the chess bus so a mode switch can cut them off cleanly.
+
+/** Shared helper: a burst of filtered noise with a linear-attack envelope. */
+function civNoise(opts: {
+  dest: AudioNode;
+  startAt: number;
+  durSec: number;
+  filter: 'lowpass' | 'bandpass' | 'highpass';
+  freq: number;
+  freqEnd?: number;
+  q?: number;
+  peak: number;
+  attackSec?: number;
+}) {
+  const ac: BaseAudioContext = opts.dest.context;
+  const t = opts.startAt;
+  const length = Math.max(1, Math.floor(opts.durSec * ac.sampleRate));
+  const buf = ac.createBuffer(1, length, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const f = ac.createBiquadFilter();
+  f.type = opts.filter;
+  f.frequency.setValueAtTime(opts.freq, t);
+  if (opts.freqEnd != null) f.frequency.exponentialRampToValueAtTime(opts.freqEnd, t + opts.durSec);
+  if (opts.q != null) f.Q.value = opts.q;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(opts.peak, t + (opts.attackSec ?? 0.004));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + opts.durSec);
+  src.connect(f).connect(g).connect(opts.dest);
+  src.start(t);
+  src.stop(t + opts.durSec + 0.02);
+}
+
+// Step on plains — a dry earthen footfall. Duller and lower than the chess
+// move tap: one dark thud plus a whisper of gritty noise.
+export function playStepPlains() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  const k = Math.pow(2, (Math.random() * 3 - 1.5) / 12);
+  blip({ dest, startAt: t, freq: 190 * k, freqEnd: 120 * k, durMs: 90, type: 'triangle', peak: 0.26, lpHz: 1200 });
+  civNoise({ dest, startAt: t, durSec: 0.05, filter: 'lowpass', freq: 700, peak: 0.1 });
+}
+
+// Step into forest — the footfall buried in a leafy rustle: two short
+// band-passed noise swishes offset in time, barely any pitch.
+export function playStepForest() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  const k = Math.pow(2, (Math.random() * 3 - 1.5) / 12);
+  blip({ dest, startAt: t, freq: 170 * k, freqEnd: 115 * k, durMs: 80, type: 'triangle', peak: 0.18, lpHz: 1000 });
+  civNoise({ dest, startAt: t, durSec: 0.11, filter: 'bandpass', freq: 2600, freqEnd: 1600, q: 0.9, peak: 0.16, attackSec: 0.01 });
+  civNoise({ dest, startAt: t + 0.06, durSec: 0.09, filter: 'bandpass', freq: 3400, freqEnd: 2000, q: 0.9, peak: 0.1, attackSec: 0.012 });
+}
+
+// Step onto a gold tile — the plains footfall capped with a tiny two-note
+// coin chime. High, quiet, unmistakably money.
+export function playStepGold() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  const k = Math.pow(2, (Math.random() * 2 - 1) / 12);
+  blip({ dest, startAt: t, freq: 190 * k, freqEnd: 125 * k, durMs: 85, type: 'triangle', peak: 0.22, lpHz: 1200 });
+  blip({ dest, startAt: t + 0.03, freq: 1810 * k, durMs: 130, type: 'sine', peak: 0.09, attackMs: 1 });
+  blip({ dest, startAt: t + 0.085, freq: 2420 * k, durMs: 160, type: 'sine', peak: 0.07, attackMs: 1 });
+}
+
+// Knight leap — a short rising whoosh and a firm two-part landing. Compact
+// (~0.3s) so three-hex hops during the enemy sweep don't smear together.
+export function playLeap() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  civNoise({ dest, startAt: t, durSec: 0.16, filter: 'bandpass', freq: 500, freqEnd: 2600, q: 1.6, peak: 0.16, attackSec: 0.015 });
+  blip({ dest, startAt: t + 0.15, freq: 240, freqEnd: 130, durMs: 100, type: 'triangle', peak: 0.3, lpHz: 1400 });
+  civNoise({ dest, startAt: t + 0.15, durSec: 0.05, filter: 'lowpass', freq: 800, peak: 0.12 });
+}
+
+// Zombie shuffle — a wet, tired groan. Two detuned low saws bending slowly
+// downward through a dark lowpass, with a raspy breath of noise.
+export function playZombieGroan() {
+  const dest = ensureChessBus();
+  const ac = getCtx();
+  const t = ac.currentTime;
+  const k = Math.pow(2, (Math.random() * 5 - 2.5) / 12);
+  for (const [f0, f1, peak] of [
+    [96 * k, 74 * k, 0.14],
+    [122 * k, 90 * k, 0.09],
+  ] as const) {
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f1, t + 0.34);
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 420;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    osc.connect(lp).connect(g).connect(dest);
+    osc.start(t);
+    osc.stop(t + 0.42);
+  }
+  civNoise({ dest, startAt: t + 0.02, durSec: 0.3, filter: 'bandpass', freq: 340, freqEnd: 220, q: 1.1, peak: 0.05, attackSec: 0.05 });
+}
+
+// Wave arrival — a distant, wrong choir. A deep rumble swells under three
+// staggered groan partials rising a semitone, like the treeline exhaling.
+export function playHordeArrive() {
+  const dest = ensureChessBus();
+  const ac = getCtx();
+  const t = ac.currentTime;
+  civNoise({ dest, startAt: t, durSec: 0.9, filter: 'lowpass', freq: 160, peak: 0.22, attackSec: 0.2 });
+  for (const [i, f] of [58, 87, 116].entries()) {
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(f, t);
+    osc.frequency.linearRampToValueAtTime(f * 1.06, t + 0.8);
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 500;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t + i * 0.09);
+    g.gain.linearRampToValueAtTime(0.075, t + i * 0.09 + 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.0);
+    osc.connect(lp).connect(g).connect(dest);
+    osc.start(t + i * 0.09);
+    osc.stop(t + 1.05);
+  }
+}
+
+// Bishop bullet impact — a small dry crack where the shot lands, separate
+// from the firing swish (playSlice) so the two ends of the shot read apart.
+export function playBulletImpact() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  civNoise({ dest, startAt: t, durSec: 0.045, filter: 'highpass', freq: 1400, peak: 0.3 });
+  blip({ dest, startAt: t, freq: 520, freqEnd: 210, durMs: 90, type: 'triangle', peak: 0.24, lpHz: 2400 });
+}
+
+// Base under fire — masonry taking a hit. A deep structural thump with a
+// short rubble rattle; noticeably heavier than a unit taking damage.
+export function playBaseHit() {
+  const dest = ensureChessBus();
+  const t = getCtx().currentTime;
+  blip({ dest, startAt: t, freq: 80, freqEnd: 34, durMs: 380, type: 'sine', peak: 0.5 });
+  blip({ dest, startAt: t, freq: 150, freqEnd: 66, durMs: 220, type: 'triangle', peak: 0.3, lpHz: 900 });
+  civNoise({ dest, startAt: t, durSec: 0.07, filter: 'lowpass', freq: 1100, peak: 0.34 });
+  civNoise({ dest, startAt: t + 0.09, durSec: 0.16, filter: 'lowpass', freq: 600, freqEnd: 300, peak: 0.12, attackSec: 0.02 });
+}

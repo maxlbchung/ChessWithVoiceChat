@@ -34,6 +34,12 @@ export const GRID_COUNT = 5;
 export const ANNOUNCEMENTS: Announcement[] = [
   {
     date: '2026-08-03',
+    kind: 'update',
+    title: 'Chess Civilization: fog of war on a massive map',
+    body: "The map is now four times the land, and almost all of it starts dark. Each piece clears fog exactly as far as it can move or shoot, ground you've scouted stays mapped but goes dim, and the horde comes out of the black with a groan. Drag to pan, scroll to zoom, and click anything you can see — including the enemy — for its details.",
+  },
+  {
+    date: '2026-08-03',
     kind: 'new',
     title: 'Chess Civilization: a whole new game',
     body: 'Not a variant — a small civilization game wearing the pieces, on its own page. A procedurally generated hex map, a rook for a home base, knights that leap over anything, bishops that fire across three hexes, kings that settle new bases. Survive the zombie horde, out-expand an AI rival, or fight it out hotseat.',
