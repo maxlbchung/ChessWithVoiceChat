@@ -366,7 +366,7 @@ a {
   color: var(--muted);
 }
 
-/* ── Announcements ──────────────────────────────────────────────────────
+/* ── Changelog ──────────────────────────────────────────────────────────
    Plates, matching the app: hairline rule, 3px corner, letterpress lift. */
 .news {
   padding: 1.35rem 1.5rem;
@@ -440,6 +440,15 @@ a {
   color: var(--brass);
   letter-spacing: 0.08em;
   opacity: 0.85;
+}
+/* The version stamp — the changelog's anchor, so it reads a notch stronger
+   than the date beside it. */
+.news-version {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.08em;
 }
 /* Squared-off mono tags — a printed stamp, not a pill. */
 .tag {
