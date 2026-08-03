@@ -19,6 +19,7 @@ import {
   spawnTargets,
   buyUnit,
   settleKing,
+  boostKing,
   endPlayerTurn,
   enemyStep,
   isEnemyTurn,
@@ -92,7 +93,7 @@ const KIND_BLURB: Record<Unit['kind'], string> = {
   pawn: 'Steps one hex, then can still strike the same turn.',
   knight: 'Leaps up to 2 hexes over anything, then strikes.',
   bishop: 'Steps one hex, or fires a bullet at anything within 3 hexes.',
-  king: 'Steps one hex — even up mountains — and settles new bases.',
+  king: 'Your one king. Moves and strikes like a pawn, rallies its neighbors, settles cities. If it falls, so do you.',
   base: 'Prints gold, recruits one unit a turn, heals its neighbors.',
   zombie: 'Shambles one hex a turn. It only wants your base.',
   brute: 'A hulk that lopes two hexes and swings in the same breath.',
@@ -158,12 +159,54 @@ function TerrainDecor({ terrain }: { terrain: string }) {
   }
 }
 
+// ── HP bar: one pip per hit point, so "3 hp" reads as three rectangles.
+// Bases (30 hp) fall back to a continuous bar — 30 pips is static noise.
+
+const HP_BAR_W = 28;
+const HP_PIP_MAX = 12;
+
+function HpBar({ hp, maxHp, size }: { hp: number; maxHp: number; size: number }) {
+  const ratio = hp / maxHp;
+  const tone = ratio > 0.55 ? 'ok' : ratio > 0.28 ? 'low' : 'crit';
+  return (
+    <g transform={`translate(${size / 2 - HP_BAR_W / 2} ${size + 1})`}>
+      {maxHp <= HP_PIP_MAX ? (
+        (() => {
+          const gap = 1;
+          const pipW = (HP_BAR_W - gap * (maxHp - 1)) / maxHp;
+          return Array.from({ length: maxHp }, (_, i) => (
+            <rect
+              key={i}
+              className={i < hp ? `civ-hp-pip ${tone}` : 'civ-hp-pip empty'}
+              x={i * (pipW + gap)}
+              width={pipW}
+              height="4"
+              rx="1"
+            />
+          ));
+        })()
+      ) : (
+        <>
+          <rect className="civ-hp-bg" width={HP_BAR_W} height="4" rx="2" />
+          <rect
+            className={`civ-hp-fill ${tone}`}
+            width={Math.max(2, HP_BAR_W * ratio)}
+            height="4"
+            rx="2"
+          />
+        </>
+      )}
+    </g>
+  );
+}
+
 // ── Transient board effects ──────────────────────────────────────────────
 
 type FxInput =
   | { kind: 'bullet'; x1: number; y1: number; x2: number; y2: number }
   | { kind: 'impact'; x2: number; y2: number }
-  | { kind: 'hit'; x2: number; y2: number };
+  | { kind: 'hit'; x2: number; y2: number }
+  | { kind: 'boost'; x2: number; y2: number };
 type Fx = FxInput & { id: number };
 
 type Ghost = {
@@ -203,7 +246,7 @@ export function Civilization() {
     () =>
       state && selected !== null
         ? unitActions(state, selected)
-        : { moves: [], attacks: [], canSettle: false },
+        : { moves: [], attacks: [], canSettle: false, canBoost: false },
     [state, selected],
   );
   const spawns = useMemo(
@@ -402,6 +445,14 @@ export function Civilization() {
       case 'settle':
         sfx.playPlace();
         break;
+      case 'boost': {
+        sfx.playMerge();
+        if (ev.to) {
+          const p = hexToPixel(ev.to, HEX);
+          pushFx({ kind: 'boost', x2: p.x, y2: p.y }, 700);
+        }
+        break;
+      }
     }
   };
 
@@ -564,6 +615,16 @@ export function Civilization() {
     }
   };
 
+  const onBoost = () => {
+    if (!state || selected === null) return;
+    const res = boostKing(state, selected);
+    if (res) {
+      playEvent(state, res.event);
+      setState(res.state);
+      deselect();
+    }
+  };
+
   // ── Menu screen ────────────────────────────────────────────────────────
   if (!state) {
     return (
@@ -614,18 +675,23 @@ export function Civilization() {
             <h2 className="label-caps">How it plays</h2>
             <ul>
               <li>
-                <strong>Rook base</strong> — prints {8}g a turn, recruits one unit a turn onto
-                a neighboring hex, heals adjacent units. Lose every base and you lose.
+                <strong>Your king</strong> — you start with exactly one. It moves and strikes
+                like a pawn, can <em>boost</em> its neighbors (+1 hp and a fresh turn, using
+                its own), and founds new cities. If it dies — or you lose every city — the
+                game is over.
               </li>
               <li>
-                <strong>Pawn · 1g</strong> — steps one hex. <strong>Knight · 3g</strong> —
-                leaps up to two hexes, over anything. <strong>Bishop · 3g</strong> — steps one
-                hex, or fires a bullet at any enemy within three hexes. <strong>King · 50g</strong>{' '}
-                — steps one hex and can found a new base, three hexes clear of any other.
+                <strong>Rook city</strong> — prints {8}g a turn, recruits one unit a turn onto
+                a neighboring hex, heals adjacent units.
+              </li>
+              <li>
+                <strong>Pawn · 1g · 2hp</strong> — steps one hex. <strong>Knight · 3g · 5hp</strong>{' '}
+                — leaps up to two hexes, over anything. <strong>Bishop · 3g · 3hp</strong> —
+                steps one hex, or fires a bullet at any enemy within three hexes.
               </li>
               <li>
                 <strong>Properties</strong> — pawns and knights have <em>momentum</em>: move,
-                then still attack the same turn. Bishops are <em>ranged</em>. Kings and bases
+                then still attack the same turn. Bishops are <em>ranged</em>. Kings and cities
                 are <em>anchors</em>: half damage in forest, mountains, or a city — and kings
                 alone can climb mountains.
               </li>
@@ -771,20 +837,7 @@ export function Civilization() {
                 >
                   <g className={'civ-unit-body' + (hit ? ' civ-unit-hit' : '')}>
                     {renderPiece(pieceKeyFor(u), size)}
-                    {u.hp < u.maxHp && (
-                      <g transform={`translate(${size / 2 - 14} ${size + 1})`}>
-                        <rect className="civ-hp-bg" width="28" height="4" rx="2" />
-                        <rect
-                          className={
-                            'civ-hp-fill ' +
-                            (u.hp / u.maxHp > 0.55 ? 'ok' : u.hp / u.maxHp > 0.28 ? 'low' : 'crit')
-                          }
-                          width={Math.max(2, (28 * u.hp) / u.maxHp)}
-                          height="4"
-                          rx="2"
-                        />
-                      </g>
-                    )}
+                    {u.hp < u.maxHp && <HpBar hp={u.hp} maxHp={u.maxHp} size={size} />}
                   </g>
                 </g>
               );
@@ -843,10 +896,16 @@ export function Civilization() {
               return (
                 <circle
                   key={f.id}
-                  className={f.kind === 'impact' ? 'civ-fx-impact' : 'civ-fx-hit'}
+                  className={
+                    f.kind === 'impact'
+                      ? 'civ-fx-impact'
+                      : f.kind === 'boost'
+                        ? 'civ-fx-boost'
+                        : 'civ-fx-hit'
+                  }
                   cx={f.x2}
                   cy={f.y2}
-                  r="10"
+                  r={f.kind === 'boost' ? 26 : 10}
                   pointerEvents="none"
                 />
               );
@@ -1043,18 +1102,32 @@ export function Civilization() {
                 ) : null}
 
                 {selectedUnit.kind === 'king' && selectedIsMine && (
-                  <button
-                    className="secondary-btn"
-                    disabled={!acts.canSettle}
-                    onClick={onSettle}
-                    title={
-                      acts.canSettle
-                        ? 'Found a new base here'
-                        : 'Needs passable ground, 3 hexes from any base'
-                    }
-                  >
-                    Settle new base
-                  </button>
+                  <div className="civ-king-actions">
+                    <button
+                      className="secondary-btn"
+                      disabled={!acts.canBoost || selectedUnit.acted}
+                      onClick={onBoost}
+                      title={
+                        acts.canBoost
+                          ? 'Rally adjacent allies: +1 hp and a fresh turn. Uses the king’s turn.'
+                          : 'Needs an ally on a neighboring hex'
+                      }
+                    >
+                      Boost allies
+                    </button>
+                    <button
+                      className="secondary-btn"
+                      disabled={!acts.canSettle}
+                      onClick={onSettle}
+                      title={
+                        acts.canSettle
+                          ? 'Found a city here — the king steps aside'
+                          : 'Needs passable ground, 3 hexes clear of any city, and room to step aside'
+                      }
+                    >
+                      Settle city
+                    </button>
+                  </div>
                 )}
               </>
             ) : (

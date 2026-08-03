@@ -86,7 +86,7 @@ export type CivState = {
 };
 
 export type CivEvent = {
-  type: 'move' | 'melee' | 'shot' | 'spawn' | 'settle' | 'wave' | 'death';
+  type: 'move' | 'melee' | 'shot' | 'spawn' | 'settle' | 'boost' | 'wave' | 'death';
   from?: Axial;
   to?: Axial;
   /** The acting unit, for animation/sfx flavor (knight leap vs pawn step). */
@@ -102,42 +102,46 @@ export type UnitActions = {
   moves: Axial[];
   /** Enemy-occupied tiles this unit can strike (bishop: shoot from afar). */
   attacks: Axial[];
-  /** King only: may found a new base on its current tile. */
+  /** King only: may found a city here (needs somewhere to step aside to). */
   canSettle: boolean;
+  /** King only: may rally adjacent allies (+1 hp, fresh turn). */
+  canBoost: boolean;
 };
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-export const BUYABLE_KINDS = ['pawn', 'knight', 'bishop', 'king'] as const;
+// The king is not buyable: each civilization gets exactly one, at game
+// start, and losing it loses the game.
+export const BUYABLE_KINDS = ['pawn', 'knight', 'bishop'] as const;
 export type BuyableKind = (typeof BUYABLE_KINDS)[number];
 
 export const UNIT_STATS: Record<
-  BuyableKind,
+  BuyableKind | 'king',
   { cost: number; hp: number; atk: number; blurb: string }
 > = {
   pawn: {
     cost: 1,
-    hp: 6,
+    hp: 2,
     atk: 2,
     blurb: 'Steps one hex, then can still strike. Momentum.',
   },
   knight: {
     cost: 3,
-    hp: 10,
+    hp: 5,
     atk: 3,
     blurb: 'Leaps up to 2 hexes over anything, then strikes. Momentum.',
   },
   bishop: {
     cost: 3,
-    hp: 7,
+    hp: 3,
     atk: 3,
     blurb: 'Steps one hex, or fires a bullet up to 3 hexes. Ranged.',
   },
   king: {
-    cost: 50,
-    hp: 12,
+    cost: 0,
+    hp: 10,
     atk: 2,
-    blurb: 'Steps one hex; settles new bases. Anchor: half damage on strong ground.',
+    blurb: 'Your one king. Boosts allies, settles cities. Lose it and all is lost.',
   },
 };
 
@@ -413,13 +417,15 @@ export function newGame(mode: CivMode, seed: number, radius = MAP_RADIUS): CivSt
   factions.forEach((f, i) => {
     const s = starts[i];
     state.units.push(makeUnit(state, 'base', f, s, { hp: BASE_HP, atk: 0 }));
-    // Two starting pawns on the first free neighbors.
+    // The one king plus two pawns, on the first free neighbors.
+    const startKinds: ('king' | 'pawn')[] = ['king', 'pawn', 'pawn'];
     let placed = 0;
     for (const nb of hexNeighbors(s)) {
-      if (placed >= 2) break;
+      if (placed >= startKinds.length) break;
       const k = axialKey(nb.q, nb.r);
       if (tiles[k] !== undefined && PASSABLE[tiles[k]]) {
-        state.units.push(makeUnit(state, 'pawn', f, nb, UNIT_STATS.pawn));
+        const kind = startKinds[placed];
+        state.units.push(makeUnit(state, kind, f, nb, UNIT_STATS[kind]));
         placed++;
       }
     }
@@ -550,7 +556,7 @@ const BISHOP_RANGE = 3;
 const KNIGHT_REACH = 2;
 
 export function unitActions(state: CivState, unitId: number): UnitActions {
-  const empty: UnitActions = { moves: [], attacks: [], canSettle: false };
+  const empty: UnitActions = { moves: [], attacks: [], canSettle: false, canBoost: false };
   const u = state.units.find((x) => x.id === unitId);
   if (!u || u.acted || u.faction !== state.current || state.result) return empty;
   const here = { q: u.q, r: u.r };
@@ -594,15 +600,25 @@ export function unitActions(state: CivState, unitId: number): UnitActions {
   }
 
   let canSettle = false;
-  if (u.kind === 'king' && !u.moved) {
-    const t = terrainAt(state, here);
-    const nearBase = state.units.some(
-      (b) => b.kind === 'base' && hexDistance(b, here) < SETTLE_MIN_DIST,
+  let canBoost = false;
+  if (u.kind === 'king') {
+    if (!u.moved) {
+      const t = terrainAt(state, here);
+      const nearBase = state.units.some(
+        (b) => b.kind === 'base' && hexDistance(b, here) < SETTLE_MIN_DIST,
+      );
+      // Founding a city needs somewhere for the king to step aside to.
+      const sideStep = hexNeighbors(here).some(
+        (h) => canStand(state, u, h) && !unitAt(state, h.q, h.r),
+      );
+      canSettle = t !== undefined && PASSABLE[t] && !nearBase && sideStep;
+    }
+    canBoost = state.units.some(
+      (a) => a.faction === u.faction && a.id !== u.id && hexDistance(a, here) <= 1,
     );
-    canSettle = t !== undefined && PASSABLE[t] && !nearBase;
   }
 
-  return { moves, attacks, canSettle };
+  return { moves, attacks, canSettle, canBoost };
 }
 
 // ── Combat ───────────────────────────────────────────────────────────────
@@ -665,17 +681,32 @@ function resolveHit(state: CivState, attacker: Unit, defender: Unit): boolean {
   return true;
 }
 
+/** A civilization dies with its king — or with its last city. */
 function checkElimination(state: CivState) {
   if (state.result) return;
   const hasBase = (f: Faction) =>
     state.units.some((u) => u.faction === f && u.kind === 'base');
-  if (!hasBase('p1')) {
+  const hasKing = (f: Faction) =>
+    state.units.some((u) => u.faction === f && u.kind === 'king');
+
+  if (!hasKing('p1') || !hasBase('p1')) {
+    const why = !hasKing('p1') ? 'Your king has fallen' : 'Your last city fell';
     state.result =
       state.mode === 'zombie'
-        ? { winner: 'zombie', reason: `Your last base fell. Survived ${state.wave} waves.` }
-        : { winner: 'p2', reason: `${factionName(state, 'p2')} razed the last base.` };
-  } else if (state.mode !== 'zombie' && !hasBase('p2')) {
-    state.result = { winner: 'p1', reason: `${factionName(state, 'p1')} razed the last enemy base.` };
+        ? { winner: 'zombie', reason: `${why}. Survived ${state.wave} waves.` }
+        : {
+            winner: 'p2',
+            reason: !hasKing('p1')
+              ? `The ${factionName(state, 'p1')} king has fallen.`
+              : `${factionName(state, 'p2')} razed the last city.`,
+          };
+  } else if (state.mode !== 'zombie' && (!hasKing('p2') || !hasBase('p2'))) {
+    state.result = {
+      winner: 'p1',
+      reason: !hasKing('p2')
+        ? `The ${state.mode === 'vs' ? 'Red' : 'enemy'} king has fallen.`
+        : `${factionName(state, 'p1')} razed the last enemy city.`,
+    };
   }
 }
 
@@ -742,6 +773,7 @@ export function buyUnit(
   to: Axial,
 ): { state: CivState; event: CivEvent } | null {
   if (state.current === 'zombie') return null;
+  if (!(BUYABLE_KINDS as readonly string[]).includes(kind)) return null;
   const stats = UNIT_STATS[kind];
   if (state.gold[state.current] < stats.cost) return null;
   if (!spawnTargets(state, baseId).some((h) => h.q === to.q && h.r === to.r)) return null;
@@ -756,7 +788,8 @@ export function buyUnit(
   return { state: next, event: { type: 'spawn', to, unitKind: kind } };
 }
 
-/** A king founds a new rook base where it stands, consuming the king. */
+/** The king founds a city underfoot and steps aside — kings are too
+    precious to brick into masonry now that losing yours loses the game. */
 export function settleKing(
   state: CivState,
   unitId: number,
@@ -765,12 +798,45 @@ export function settleKing(
   const next = clone(state);
   const u = next.units.find((x) => x.id === unitId)!;
   const at = { q: u.q, r: u.r };
-  next.units = next.units.filter((x) => x.id !== unitId);
-  const base = makeUnit(next, 'base', u.faction, at, { hp: BASE_HP, atk: 0 }, true);
-  next.units.push(base);
-  pushLog(next, `${factionName(next, u.faction)} founded a new base.`);
+  const aside = hexNeighbors(at).find(
+    (h) => canStand(next, u, h) && !unitAt(next, h.q, h.r),
+  )!;
+  u.q = aside.q;
+  u.r = aside.r;
+  u.acted = true;
+  u.moved = true;
+  next.units.push(makeUnit(next, 'base', u.faction, at, { hp: BASE_HP, atk: 0 }, true));
+  pushLog(next, `${factionName(next, u.faction)} founded a new city.`);
   updateExplored(next);
   return { state: next, event: { type: 'settle', to: at, unitKind: 'base' } };
+}
+
+/** The king rallies everyone beside it: +1 hp, and spent units get their
+    turn back. Costs the king its whole turn. */
+export function boostKing(
+  state: CivState,
+  unitId: number,
+): { state: CivState; event: CivEvent } | null {
+  if (!unitActions(state, unitId).canBoost) return null;
+  const next = clone(state);
+  const king = next.units.find((x) => x.id === unitId)!;
+  king.acted = true;
+  king.moved = true;
+  let rallied = 0;
+  for (const a of next.units) {
+    if (a.faction !== king.faction || a.id === king.id || hexDistance(a, king) > 1) continue;
+    a.hp = Math.min(a.maxHp, a.hp + 1);
+    if (a.kind !== 'base') {
+      a.acted = false;
+      a.moved = false;
+    }
+    rallied++;
+  }
+  pushLog(next, `The king rallies ${rallied} all${rallied === 1 ? 'y' : 'ies'}.`);
+  return {
+    state: next,
+    event: { type: 'boost', to: { q: king.q, r: king.r }, unitKind: 'king' },
+  };
 }
 
 // ── Turn flow ────────────────────────────────────────────────────────────
@@ -938,13 +1004,11 @@ function enemiesOf(state: CivState, f: Faction): Unit[] {
   return state.units.filter((u) => u.faction !== f);
 }
 
-/** Pick the strike target: bases first, then lowest hp. */
+/** Pick the strike target: the king above all, then cities, then low hp. */
 function pickTarget(state: CivState, attacks: Axial[]): Axial {
+  const rank = (u: Unit) => (u.kind === 'king' ? 0 : u.kind === 'base' ? 1 : 2);
   const units = attacks.map((h) => unitAt(state, h.q, h.r)!);
-  units.sort((a, b) => {
-    if ((a.kind === 'base') !== (b.kind === 'base')) return a.kind === 'base' ? -1 : 1;
-    return a.hp - b.hp;
-  });
+  units.sort((a, b) => rank(a) - rank(b) || a.hp - b.hp);
   return { q: units[0].q, r: units[0].r };
 }
 
@@ -963,9 +1027,7 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
       const army = next.units.filter((u) => u.faction === 'p2' && u.kind !== 'base');
       const spots = hexNeighbors(b).filter((h) => isFreePassable(next, h));
       if (army.length < AI_UNIT_CAP && spots.length) {
-        const affordable = BUYABLE_KINDS.filter(
-          (k) => k !== 'king' && UNIT_STATS[k].cost <= next.gold.p2,
-        );
+        const affordable = BUYABLE_KINDS.filter((k) => UNIT_STATS[k].cost <= next.gold.p2);
         if (affordable.length) {
           // Early pawns, then whatever's fanciest with a bit of wobble.
           const pawns = army.filter((u) => u.kind === 'pawn').length;
@@ -986,7 +1048,11 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
     }
   }
 
-  const mover = state.units.find((u) => u.faction === f && u.kind !== 'base' && !u.acted);
+  // The army moves first; the king acts last, once the field has settled.
+  const mover =
+    state.units.find(
+      (u) => u.faction === f && u.kind !== 'base' && u.kind !== 'king' && !u.acted,
+    ) ?? state.units.find((u) => u.faction === f && u.kind === 'king' && !u.acted);
   if (!mover) {
     // Horde/AI exhausted — hand back to p1.
     const next = clone(state);
@@ -999,6 +1065,26 @@ export function enemyStep(state: CivState): { state: CivState; event?: CivEvent;
   if (acts.attacks.length) {
     const res = moveOrAttack(state, mover.id, pickTarget(state, acts.attacks))!;
     return { state: res.state, event: res.event, done: false };
+  }
+
+  // The AI king garrisons: no marching into the fog. It rallies its court
+  // when that gets someone healed or a spent unit a second act — else holds.
+  if (mover.kind === 'king') {
+    const worthIt = state.units.some(
+      (a) =>
+        a.faction === f &&
+        a.id !== mover.id &&
+        a.kind !== 'base' &&
+        hexDistance(a, mover) <= 1 &&
+        (a.acted || a.hp < a.maxHp),
+    );
+    if (worthIt && acts.canBoost) {
+      const res = boostKing(state, mover.id)!;
+      return { state: res.state, event: res.event, done: false };
+    }
+    const next = clone(state);
+    next.units.find((x) => x.id === mover.id)!.acted = true;
+    return { state: next, done: false };
   }
 
   // No strike available: walk toward the nearest enemy thing.

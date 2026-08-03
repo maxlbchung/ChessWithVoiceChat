@@ -33,8 +33,10 @@ no recordings/replays/ratings, and it renders outside `Layout` (own topbar) via 
 lazy top-level route in `router.tsx`. Engine: `src/lib/civEngine.ts` (axial hex
 math, seeded procedural terrain, per-unit turns with a named property system
 (`UNIT_PROPS`: momentum = move-then-attack, ranged, anchor = half damage on
-forest/mountain/city and mountain-climbing), zombie-horde and
-rival-AI brains, and fog of war — per-faction `explored` sets plus computed
+forest/mountain/city and mountain-climbing), one non-buyable king per
+civilization (lose it or your last city and you're out; it boosts adjacent
+allies via `boostKing` and settles cities without being consumed),
+zombie-horde and rival-AI brains, and fog of war — per-faction `explored` sets plus computed
 `visibleTiles`, view range = each piece's move/attack reach); page:
 `src/pages/Civilization.tsx` (menu + SVG board + HUD; tiles carry
 `data-hex="q,r"` for Playwright). The board is a camera: drag-pan/wheel-zoom

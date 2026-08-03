@@ -35,6 +35,12 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     date: '2026-08-03',
     kind: 'update',
+    title: 'Chess Civilization: long live the king',
+    body: "Every civilization now starts with exactly one king — and dies with it, or with its last city. The king fights like a pawn, but it can rally everyone beside it: +1 hp and a fresh turn, at the cost of its own. Settling no longer consumes it; the city rises underfoot and the king steps aside. Health is now readable at a glance too: every hit point is its own pip under the piece.",
+  },
+  {
+    date: '2026-08-03',
+    kind: 'update',
     title: 'Chess Civilization: momentum, anchors, and pocket-change armies',
     body: 'Units now carry properties. Pawns and knights have momentum — move, then still strike the same turn. Bishops are ranged: step one hex or fire across three. Kings and bases are anchors, taking half damage in forest, mountains, or a city — and kings alone can climb the peaks. Basic units now cost pocket change: pawns 1g, knights and bishops 3g.',
   },

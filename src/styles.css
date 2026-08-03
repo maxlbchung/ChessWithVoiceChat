@@ -5877,3 +5877,30 @@ a { color: inherit; text-decoration: none; }
 .civ-prop-ranged { color: var(--brass); border-color: rgba(220, 184, 126, 0.45); }
 .civ-prop-anchor { color: #9ec1d8; border-color: rgba(158, 193, 216, 0.4); }
 .civ-momentum-note { color: var(--accent); }
+
+/* ── Chess Civilization: king rework ── */
+/* Segmented hp: one pip per hit point. */
+.civ-hp-pip.ok { fill: var(--good); }
+.civ-hp-pip.low { fill: var(--warn); }
+.civ-hp-pip.crit { fill: var(--bad); }
+.civ-hp-pip.empty { fill: rgba(0, 0, 0, 0.65); }
+
+/* King rally: an accent ring blooming outward from the king. */
+.civ-fx-boost {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: civ-fx-boost 0.65s ease-out forwards;
+}
+@keyframes civ-fx-boost {
+  from { opacity: 0.95; transform: scale(0.35); }
+  to { opacity: 0; transform: scale(1.25); }
+}
+
+.civ-king-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.civ-king-actions .secondary-btn { flex: 1; padding-inline: 0.6rem; font-size: 0.84rem; }
