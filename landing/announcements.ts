@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-08-03',
+    kind: 'new',
+    title: 'Chess Civilization: a whole new game',
+    body: 'Not a variant — a small civilization game wearing the pieces, on its own page. A procedurally generated hex map, a rook for a home base, knights that leap over anything, bishops that fire across three hexes, kings that settle new bases. Survive the zombie horde, out-expand an AI rival, or fight it out hotseat.',
+  },
+  {
     date: '2026-07-29',
     kind: 'update',
     title: 'A new look, everywhere',

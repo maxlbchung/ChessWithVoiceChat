@@ -17,6 +17,13 @@ const VideoEditor = import.meta.env.DEV
   ? lazy(() => import('./pages/VideoEditor').then((m) => ({ default: m.VideoEditor })))
   : null;
 
+// Chess Civilization is a separate game, not a variant: it renders outside the
+// Layout chrome (own topbar, no lobby/profile nav) and is lazy-loaded so the
+// base game's bundle doesn't carry the hex engine.
+const Civilization = lazy(() =>
+  import('./pages/Civilization').then((m) => ({ default: m.Civilization })),
+);
+
 const devRoutes = VideoEditor
   ? [
       {
@@ -44,5 +51,13 @@ export const router = createHashRouter([
       { path: 'settings', element: <Settings /> },
       ...devRoutes,
     ],
+  },
+  {
+    path: '/civilization',
+    element: (
+      <Suspense fallback={<div className="page muted">Charting the map…</div>}>
+        <Civilization />
+      </Suspense>
+    ),
   },
 ]);

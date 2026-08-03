@@ -25,6 +25,17 @@ engine smoke tests, and Playwright drivers in the gitignored `scripts/` folder
 
 Naming skew to remember: variant id `two`, engine file `chess2.ts`, UI name "Guerrilla".
 
+### Chess Civilization (not a variant)
+
+A standalone hex-grid strategy game at `/app/#/civilization`, reached from the
+landing page — deliberately outside the base game: no `GameVariant` id, no lobby,
+no recordings/replays/ratings, and it renders outside `Layout` (own topbar) via a
+lazy top-level route in `router.tsx`. Engine: `src/lib/civEngine.ts` (axial hex
+math, seeded procedural terrain, one-action-per-unit turns, zombie-horde and
+rival-AI brains); page: `src/pages/Civilization.tsx` (menu + SVG board + HUD;
+tiles carry `data-hex="q,r"` for Playwright). Three modes: zombie survival, AI
+conquest, hotseat versus.
+
 ### Routing (`src/router.tsx`)
 
 Hash router, single `Layout` parent: `/` → Home (lobby + free play for all variants),
