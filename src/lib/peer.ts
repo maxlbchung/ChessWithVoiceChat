@@ -23,9 +23,22 @@ export class PeerSession {
 
   constructor(peerId: string | undefined, events: PeerEvents, iceServers: RTCIceServer[]) {
     this.events = events;
+    // Dev/test override: point PeerJS at a local broker (`npx peerjs --port
+    // 9100`) when the public cloud broker is unreachable — sandboxed CI and
+    // some corp proxies block its WebSocket. Unset in production builds, so
+    // the default cloud broker is used there.
+    const devHost = import.meta.env.VITE_PEER_HOST as string | undefined;
     this.peer = new Peer(peerId ?? makePeerId(), {
       config: { iceServers },
       debug: 1,
+      ...(devHost
+        ? {
+            host: devHost,
+            port: Number(import.meta.env.VITE_PEER_PORT ?? 9000),
+            path: (import.meta.env.VITE_PEER_PATH as string | undefined) ?? '/',
+            secure: false,
+          }
+        : {}),
     });
     // Always read through this.events so setEvents() (used when handing the
     // session from Home → Game) actually swaps the active handlers.

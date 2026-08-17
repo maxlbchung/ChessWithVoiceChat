@@ -1089,7 +1089,7 @@ export function SetupGame() {
           </span>
         </div>
       )}
-      <div className="board-column with-setup-tray">
+      <div className={`board-column${inSetup ? ' with-setup-tray' : ''}`}>
         {inSetup && (
           <div className="setup-side-rail">
             <div className="setup-tray">

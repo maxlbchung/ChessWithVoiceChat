@@ -36,10 +36,11 @@ function devMatchmakerPlugin(): Plugin {
     while (joinLog.length && joinLog[0].joinedAt < cutoff) joinLog.shift();
   };
 
-  return {
-    name: 'dev-matchmaker',
-    configureServer(server) {
-      server.middlewares.use('/api/matchmake', async (req, res) => {
+  // Shared between dev and preview servers. `vite preview` serves the
+  // production build, which is the only way to exercise two-client P2P flows
+  // headlessly: dev's React StrictMode double-mounts game pages and the
+  // unmount cleanup tears the PeerJS session down at mount.
+  const handler = async (req: any, res: any) => {
         if (req.method !== 'POST') {
           res.statusCode = 405;
           res.end();
@@ -191,7 +192,15 @@ function devMatchmakerPlugin(): Plugin {
           return;
         }
         reply({ error: 'unknown action' }, 400);
-      });
+  };
+
+  return {
+    name: 'dev-matchmaker',
+    configureServer(server) {
+      server.middlewares.use('/api/matchmake', handler);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use('/api/matchmake', handler);
     },
   };
 }

@@ -2267,6 +2267,25 @@ a { color: inherit; text-decoration: none; }
 .setup-side-rail {
   right: calc(min(var(--max-board), 100%) + 12px);
 }
+/* Unlike the minefield panel (glanceable, survives a clip), the deploy tray
+   is the setup phase's primary control surface — so while it's up, give up
+   board width instead of tray: cap the board so rail (200px) + gap (12px)
+   always fit inside the column. The rail anchor must mirror the same cap —
+   the shared rule above assumes a --max-board-wide board and would strand
+   the tray off-screen left of the real, narrower board. The class comes off
+   when play begins and the board takes its normal size back. */
+.board-column.with-setup-tray .board-wrap {
+  max-width: min(var(--max-board), calc(100% - 212px));
+}
+.setup-side-rail {
+  right: calc(min(var(--max-board), 100% - 212px) + 12px);
+}
+@media (max-width: 600px) {
+  /* Rail is static/stacked here — release the cap. */
+  .board-column.with-setup-tray .board-wrap {
+    max-width: var(--max-board);
+  }
+}
 @media (max-width: 600px) {
   .cash-side-shop,
   .mine-side-rail,
