@@ -61,6 +61,10 @@ export type GameRecord = {
   // setupChess.ts `placementToString`). Required to rebuild the starting
   // position when replaying or exporting from local history.
   setupPlacements?: { w: string; b: string };
+  // Secret Queen matches only — the pawn square each side secretly picked as
+  // their hidden queen (e.g. { w: 'e2', b: 'd7' }). Required to rebuild the
+  // starting position when replaying or exporting from local history.
+  secretQueens?: { w: string; b: string };
 };
 
 export type LocalGameSummary = {
@@ -94,6 +98,13 @@ export type WireMessage =
   // play begins once both sides hold both placements, so the merged starting
   // position is agreed deterministically before ply 1.
   | { type: 'setup-placement'; placement: string }
+  // Secret Queen: the pawn square this player secretly picked as their
+  // hidden queen. Sent once, when the player confirms or their local 30s
+  // selection countdown expires (auto-picking a random pawn). Receiving it
+  // also means "opponent is ready" — play begins once both sides hold both
+  // picks. Receivers validate the square is one of the sender's 8 starting
+  // pawns before trusting it.
+  | { type: 'secret-pick'; square: string }
   | { type: 'move'; move: Move }
   | { type: 'resign' }
   | { type: 'draw-offer' }

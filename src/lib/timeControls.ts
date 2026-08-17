@@ -1,4 +1,4 @@
-export type GameVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup';
+export type GameVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret';
 
 export type TimeControl = {
   id: string;
@@ -38,6 +38,11 @@ export const TIME_CONTROLS: TimeControl[] = [
   { id: 'setup-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 10 * 60_000, variant: 'setup' },
   { id: 'setup-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 20 * 60_000, variant: 'setup' },
   { id: 'setup-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'setup' },
+  // Secret Queen: the main-game clocks below start only after the 30s
+  // selection phase (own countdown, SECRET_PHASE_MS in secretChess.ts).
+  { id: 'secret-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 10 * 60_000, variant: 'secret' },
+  { id: 'secret-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 20 * 60_000, variant: 'secret' },
+  { id: 'secret-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'secret' },
 ];
 
 export function getTimeControl(id: string): TimeControl | undefined {
@@ -66,6 +71,10 @@ export function isSweeperTimeControl(id: string): boolean {
 
 export function isSetupTimeControl(id: string): boolean {
   return getTimeControl(id)?.variant === 'setup';
+}
+
+export function isSecretTimeControl(id: string): boolean {
+  return getTimeControl(id)?.variant === 'secret';
 }
 
 export function timeControlsForVariant(variant: GameVariant): TimeControl[] {
