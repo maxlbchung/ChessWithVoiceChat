@@ -90,6 +90,11 @@ export function Review() {
         setError('This setup match has no stored placements, so it can’t be replayed.');
         return;
       }
+      // Secret Queen replay needs both picks to rebuild the start.
+      if (tc.variant === 'secret' && !rec.secretQueens) {
+        setError('This Secret Queen match has no stored picks, so it can’t be replayed.');
+        return;
+      }
       const exp: ExportedGame = {
         formatVersion: 1,
         app: 'voice-chat-chess',
@@ -108,6 +113,7 @@ export function Review() {
         ...(rec.heroes ? { heroes: rec.heroes } : {}),
         ...(rec.heroBackRanks ? { heroBackRanks: rec.heroBackRanks } : {}),
         ...(rec.setupPlacements ? { setupPlacements: rec.setupPlacements } : {}),
+        ...(rec.secretQueens ? { secretQueens: rec.secretQueens } : {}),
       };
       const replay = buildReplay(exp);
       setLoaded({ exp, replay });
@@ -139,6 +145,11 @@ export function Review() {
         setError('This setup match has no stored placements, so it can’t be exported for replay.');
         return;
       }
+      // A Secret Queen export without its picks can't be re-imported either.
+      if (tc.variant === 'secret' && !rec.secretQueens) {
+        setError('This Secret Queen match has no stored picks, so it can’t be exported for replay.');
+        return;
+      }
       const exp = buildGameExport({
         variant: tc.variant,
         gameId: rec.gameId,
@@ -153,6 +164,7 @@ export function Review() {
         heroes: rec.heroes,
         heroBackRanks: rec.heroBackRanks,
         setupPlacements: rec.setupPlacements,
+        secretQueens: rec.secretQueens,
       });
       downloadGameExport(exp);
     } catch (err) {
@@ -525,6 +537,7 @@ const VARIANT_LABEL: Record<ExportedGame['variant'], string> = {
   hero: 'Hero',
   sweeper: 'Chesssweeper',
   setup: 'Setup',
+  secret: 'Secret Queen',
 };
 
 function MovesPanel({

@@ -345,6 +345,7 @@ const VARIANT_LABEL: Record<GameVariant, string> = {
   hero: 'Hero',
   sweeper: 'Chesssweeper',
   setup: 'Setup',
+  secret: 'Secret Queen',
 };
 
 function DaySummaryTable({

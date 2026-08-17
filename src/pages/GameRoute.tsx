@@ -6,11 +6,13 @@ import { CashGame } from './CashGame';
 import { HeroGame } from './HeroGame';
 import { SweeperGame } from './SweeperGame';
 import { SetupGame } from './SetupGame';
+import { SecretGame } from './SecretGame';
 import { peekLobbyHandoff } from '../store/lobbyHandoff';
 import {
   isCashTimeControl,
   isHeroTimeControl,
   isMergeTimeControl,
+  isSecretTimeControl,
   isSetupTimeControl,
   isSweeperTimeControl,
   isTwoTimeControl,
@@ -44,6 +46,9 @@ export function GameRoute() {
   }
   if (handoff && isSetupTimeControl(handoff.timeControlId)) {
     return <SetupGame key={gameId} />;
+  }
+  if (handoff && isSecretTimeControl(handoff.timeControlId)) {
+    return <SecretGame key={gameId} />;
   }
   return <Game key={gameId} />;
 }

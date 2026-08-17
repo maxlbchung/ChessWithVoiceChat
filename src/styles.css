@@ -3811,6 +3811,18 @@ a { color: inherit; text-decoration: none; }
   line-height: 1.35;
 }
 
+/* Secret Queen's pick rail reuses the setup-tray card; only the chosen-square
+   readout is its own. Mono because a square name is read as data. */
+.secret-pick-line {
+  text-align: center;
+  font-size: 0.85rem;
+}
+.secret-pick-sq {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #bda0ff;
+}
+
 .mine-rail-bomb {
   font-size: 1.45rem;
   line-height: 1;

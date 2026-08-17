@@ -88,6 +88,15 @@ export function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
     const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));
     return { board: state.board as (MergePiece | null)[], lastMove };
   }
+  if (r.variant === 'secret') {
+    // Replays show both fakes honestly as the queens they are, from ply 0 —
+    // review has no notion of "self vs opponent", and the game is over, so
+    // there is nothing left to hide. (The engine board already carries Q/q
+    // for the fakes; masking is a live-game UI concern.)
+    const state = r.states[viewPly] ?? r.states[0];
+    const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));
+    return { board: state.board as (MergePiece | null)[], lastMove };
+  }
   if (r.variant === 'sweeper') {
     const state = r.states[viewPly] ?? r.states[0];
     const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));

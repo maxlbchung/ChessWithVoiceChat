@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -21,6 +21,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     hero: false,
     sweeper: false,
     setup: false,
+    secret: false,
   });
   const toggle = (k: SectionKey) => {
     if (open[k]) sfx.playClose(); else sfx.playOpen();
@@ -108,6 +109,15 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           begins.
         </div>
         {renderGrid(timeControlsForVariant('setup'))}
+      </Section>
+
+      <Section title="Secret Queen" open={open.secret} onToggle={() => toggle('secret')}>
+        <div className="muted small time-mode-blurb">
+          Secretly pick one of your pawns to be a hidden queen. It looks like
+          a pawn to your opponent until it makes its first move — then the
+          disguise drops.
+        </div>
+        {renderGrid(timeControlsForVariant('secret'))}
       </Section>
     </div>
   );
