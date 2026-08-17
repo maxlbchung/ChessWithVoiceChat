@@ -1237,5 +1237,6 @@ function labelFor(reason: GameEndReason): string {
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
     case 'mine': return 'the king stepped on a mine';
+    case 'king-capture': return 'the exposed king was captured';
   }
 }

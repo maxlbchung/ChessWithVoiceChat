@@ -1,4 +1,4 @@
-export type GameVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
+export type GameVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup';
 
 export type TimeControl = {
   id: string;
@@ -33,6 +33,11 @@ export const TIME_CONTROLS: TimeControl[] = [
   { id: 'sweeper-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 10 * 60_000, variant: 'sweeper' },
   { id: 'sweeper-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 20 * 60_000, variant: 'sweeper' },
   { id: 'sweeper-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'sweeper' },
+  // Setup: the main-game clocks below start only after the 60s setup phase
+  // (which has its own countdown, SETUP_PHASE_MS in setupChess.ts).
+  { id: 'setup-blitz-5+0', label: '5 min', initialMs: 300_000, incrementMs: 0, activityWindowMs: 10 * 60_000, variant: 'setup' },
+  { id: 'setup-rapid-10+0', label: '10 min', initialMs: 600_000, incrementMs: 0, activityWindowMs: 20 * 60_000, variant: 'setup' },
+  { id: 'setup-per-move-60', label: '+ 1 min', initialMs: 60_000, incrementMs: 0, perMoveMs: 60_000, activityWindowMs: 30 * 60_000, variant: 'setup' },
 ];
 
 export function getTimeControl(id: string): TimeControl | undefined {
@@ -57,6 +62,10 @@ export function isHeroTimeControl(id: string): boolean {
 
 export function isSweeperTimeControl(id: string): boolean {
   return getTimeControl(id)?.variant === 'sweeper';
+}
+
+export function isSetupTimeControl(id: string): boolean {
+  return getTimeControl(id)?.variant === 'setup';
 }
 
 export function timeControlsForVariant(variant: GameVariant): TimeControl[] {
