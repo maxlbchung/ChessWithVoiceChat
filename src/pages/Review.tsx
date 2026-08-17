@@ -85,6 +85,11 @@ export function Review() {
         setError('This hero match was saved before hero picks were stored — export the JSON from a newer live game to review it.');
         return;
       }
+      // Setup replay needs both placement strings to rebuild the start.
+      if (tc.variant === 'setup' && !rec.setupPlacements) {
+        setError('This setup match has no stored placements, so it can’t be replayed.');
+        return;
+      }
       const exp: ExportedGame = {
         formatVersion: 1,
         app: 'voice-chat-chess',
@@ -102,6 +107,7 @@ export function Review() {
         moves: rec.moves,
         ...(rec.heroes ? { heroes: rec.heroes } : {}),
         ...(rec.heroBackRanks ? { heroBackRanks: rec.heroBackRanks } : {}),
+        ...(rec.setupPlacements ? { setupPlacements: rec.setupPlacements } : {}),
       };
       const replay = buildReplay(exp);
       setLoaded({ exp, replay });
@@ -128,6 +134,11 @@ export function Review() {
         setError('This hero match was saved before hero picks were stored, so it can’t be exported for replay.');
         return;
       }
+      // A setup export without placements can't be re-imported either.
+      if (tc.variant === 'setup' && !rec.setupPlacements) {
+        setError('This setup match has no stored placements, so it can’t be exported for replay.');
+        return;
+      }
       const exp = buildGameExport({
         variant: tc.variant,
         gameId: rec.gameId,
@@ -141,6 +152,7 @@ export function Review() {
         moves: rec.moves,
         heroes: rec.heroes,
         heroBackRanks: rec.heroBackRanks,
+        setupPlacements: rec.setupPlacements,
       });
       downloadGameExport(exp);
     } catch (err) {
@@ -512,6 +524,7 @@ const VARIANT_LABEL: Record<ExportedGame['variant'], string> = {
   cash: 'Cash Money',
   hero: 'Hero',
   sweeper: 'Chesssweeper',
+  setup: 'Setup',
 };
 
 function MovesPanel({

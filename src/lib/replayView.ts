@@ -83,6 +83,11 @@ export function displayAt(r: Replay, viewPly: number): DisplaySnapshot {
     }
     return { board: state.board as unknown as (MergePiece | null)[], lastMove };
   }
+  if (r.variant === 'setup') {
+    const state = r.states[viewPly] ?? r.states[0];
+    const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));
+    return { board: state.board as (MergePiece | null)[], lastMove };
+  }
   if (r.variant === 'sweeper') {
     const state = r.states[viewPly] ?? r.states[0];
     const lastMove = lastMoveFromUci(viewPly, r.results.map((x) => x.uci));

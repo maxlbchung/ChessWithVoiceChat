@@ -10,7 +10,7 @@ type Props = {
   activityCounts?: Record<string, number>;
 };
 
-type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
+type SectionKey = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup';
 
 export function TimeModeSelector({ selectedId, onSelect, disabled, activityCounts }: Props) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
@@ -20,6 +20,7 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
     cash: false,
     hero: false,
     sweeper: false,
+    setup: false,
   });
   const toggle = (k: SectionKey) => {
     if (open[k]) sfx.playClose(); else sfx.playOpen();
@@ -98,6 +99,15 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
           bomb it explodes.
         </div>
         {renderGrid(timeControlsForVariant('sweeper'))}
+      </Section>
+
+      <Section title="Setup" open={open.setup} onToggle={() => toggle('setup')}>
+        <div className="muted small time-mode-blurb">
+          Place your army anywhere on your half of the board — you have 60
+          seconds, and your opponent&apos;s setup stays hidden until the game
+          begins.
+        </div>
+        {renderGrid(timeControlsForVariant('setup'))}
       </Section>
     </div>
   );

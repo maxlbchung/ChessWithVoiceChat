@@ -98,6 +98,9 @@ import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
+// Setup Chess ('setup') is deliberately absent: its whole point is the
+// hidden simultaneous placement duel, which free play (one person driving
+// both sides) can't meaningfully exercise. Online play only.
 type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
 
 type Mode = 'idle' | 'searching' | 'hosting';

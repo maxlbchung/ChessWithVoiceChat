@@ -40,6 +40,13 @@ import {
   type GameState as SweeperState,
   type MoveResult as SweeperResult,
 } from './sweeperChess';
+import {
+  applyMove as setupApply,
+  initialStateFromStrings as setupInitial,
+  parsePlacement as parseSetupPlacement,
+  type GameState as SetupState,
+  type MoveResult as SetupResult,
+} from './setupChess';
 import type {
   GameEndReason,
   GameOutcome,
@@ -84,6 +91,9 @@ export type ExportedGame = {
   // Hero matches only — per-side back-rank overrides (Twin-Jutsu starts
   // shuffled). Absent means the standard arrangement for both sides.
   heroBackRanks?: { w?: string; b?: string };
+  // Required when variant === 'setup' — the two finalized placement strings
+  // (setupChess.ts `placementToString`) that rebuild the starting position.
+  setupPlacements?: { w: string; b: string };
 };
 
 export type BuildExportInput = {
@@ -99,6 +109,7 @@ export type BuildExportInput = {
   moves: Move[];
   heroes?: { w: HeroKind; b: HeroKind };
   heroBackRanks?: { w?: string; b?: string };
+  setupPlacements?: { w: string; b: string };
 };
 
 export function buildGameExport(input: BuildExportInput): ExportedGame {
@@ -126,6 +137,7 @@ export function buildGameExport(input: BuildExportInput): ExportedGame {
     ...(input.heroBackRanks && (input.heroBackRanks.w || input.heroBackRanks.b)
       ? { heroBackRanks: input.heroBackRanks }
       : {}),
+    ...(input.setupPlacements ? { setupPlacements: input.setupPlacements } : {}),
   };
 }
 
@@ -184,7 +196,8 @@ export function parseGameImport(text: string): ExportedGame {
   const variant = o.variant;
   if (
     variant !== 'normal' && variant !== 'merge' && variant !== 'two' &&
-    variant !== 'cash' && variant !== 'hero' && variant !== 'sweeper'
+    variant !== 'cash' && variant !== 'hero' && variant !== 'sweeper' &&
+    variant !== 'setup'
   ) {
     throw new GameImportError('Missing or unknown variant.');
   }
@@ -240,6 +253,23 @@ export function parseGameImport(text: string): ExportedGame {
     if (w || b) heroBackRanks = { w, b };
   }
 
+  // Setup matches can't replay without their placements — reject exports
+  // missing or corrupting them rather than failing later with a confusing
+  // "illegal move".
+  let setupPlacements: { w: string; b: string } | undefined;
+  if (variant === 'setup') {
+    const sp = o.setupPlacements;
+    if (!sp || typeof sp !== 'object') throw new GameImportError('Setup match is missing its placements.');
+    const spp = sp as Record<string, unknown>;
+    if (
+      typeof spp.w !== 'string' || typeof spp.b !== 'string' ||
+      !parseSetupPlacement('w', spp.w) || !parseSetupPlacement('b', spp.b)
+    ) {
+      throw new GameImportError('Setup match has invalid placements.');
+    }
+    setupPlacements = { w: spp.w, b: spp.b };
+  }
+
   return {
     formatVersion: typeof o.formatVersion === 'number' ? o.formatVersion : 1,
     app: typeof o.app === 'string' ? (o.app as 'voice-chat-chess') : 'voice-chat-chess',
@@ -257,6 +287,7 @@ export function parseGameImport(text: string): ExportedGame {
     moves,
     heroes,
     heroBackRanks,
+    setupPlacements,
   };
 }
 
@@ -283,7 +314,8 @@ function isReason(v: unknown): v is GameEndReason {
   return (
     v === 'checkmate' || v === 'stalemate' || v === 'threefold' ||
     v === 'insufficient' || v === 'fifty-move' || v === 'resignation' ||
-    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' || v === 'mine'
+    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' || v === 'mine' ||
+    v === 'king-capture'
   );
 }
 
@@ -334,7 +366,13 @@ export type ReplaySweeper = {
   results: SweeperResult[];
 };
 
-export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplaySweeper;
+export type ReplaySetup = {
+  variant: 'setup';
+  states: SetupState[];
+  results: SetupResult[];
+};
+
+export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplaySweeper | ReplaySetup;
 
 export function buildReplay(exp: ExportedGame): Replay {
   if (exp.variant === 'normal') {
@@ -403,6 +441,20 @@ export function buildReplay(exp: ExportedGame): Replay {
       results.push(res.result);
     }
     return { variant: 'sweeper', states, results };
+  }
+  if (exp.variant === 'setup') {
+    // The starting position is rebuilt from the two stored placement strings
+    // (parseGameImport already validated them).
+    if (!exp.setupPlacements) throw new GameImportError('Setup match is missing its placements.');
+    const states: SetupState[] = [setupInitial(exp.setupPlacements.w, exp.setupPlacements.b)];
+    const results: SetupResult[] = [];
+    for (let i = 0; i < exp.moves.length; i++) {
+      const res = setupApply(states[states.length - 1], exp.moves[i].uci);
+      if (!res) throw new GameImportError(`Illegal setup-chess move at ply ${i + 1} (${exp.moves[i].uci}).`);
+      states.push(res.state);
+      results.push(res.result);
+    }
+    return { variant: 'setup', states, results };
   }
   if (!exp.heroes) throw new GameImportError('Hero match is missing heroes.');
   // heroBackRanks rebuilds a shuffled Twin-Jutsu start; absent → standard.
