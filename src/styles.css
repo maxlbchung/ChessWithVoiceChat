@@ -3807,6 +3807,16 @@ a { color: inherit; text-decoration: none; }
 .setup-tray-status {
   text-align: center;
 }
+/* Side caption over each color's tray row when one card carries both armies
+   (free play / sandbox — no hidden info, both trays visible). Micro-caps. */
+.setup-tray-side-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: var(--track-label, 0.08em);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
 .setup-tray-hint {
   line-height: 1.35;
 }
