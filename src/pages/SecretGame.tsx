@@ -326,10 +326,12 @@ export function SecretGame() {
   // The board shown during the pick phase: the ordinary starting position.
   const pickBoard = useMemo<(Piece | null)[]>(() => startingBoard(), []);
 
-  // My 8 pawns, highlighted as pick candidates until I confirm.
+  // My 8 pawns, highlighted as pick candidates until I confirm. isCapture
+  // deliberately: occupied squares draw the ring marker (the plain dot would
+  // hide behind the pawn sprite).
   const pickTargets = useMemo<{ to: Square; isCapture: boolean; isMerge: boolean }[]>(() => {
     if (phase !== 'pick' || myReadyPick) return [];
-    return pawnSquaresFor(myEngineColor).map((sq) => ({ to: sq, isCapture: false, isMerge: false }));
+    return pawnSquaresFor(myEngineColor).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
   }, [phase, myReadyPick, myEngineColor]);
 
   const onPickSquareClick = (sq: Square) => {
