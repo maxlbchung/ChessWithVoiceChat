@@ -373,13 +373,13 @@ export function SecretGame() {
   // The board shown during the pick phase: the ordinary starting position.
   const pickBoard = useMemo<(Piece | null)[]>(() => startingBoard(), []);
 
-  // My 8 pawns, highlighted as pick candidates until I confirm. isCapture
-  // deliberately: occupied squares draw the ring marker (the plain dot would
-  // hide behind the pawn sprite).
-  const pickTargets = useMemo<{ to: Square; isCapture: boolean; isMerge: boolean }[]>(() => {
+  // My 8 pawns, circled green as pick candidates until I confirm. The
+  // currently selected pawn drops out of the list — it wears the grey
+  // "picked" circle instead (secretPickedSquares below).
+  const pickCandidates = useMemo<Square[]>(() => {
     if (phase !== 'pick' || myReadyPick) return [];
-    return pawnSquaresFor(myEngineColor).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
-  }, [phase, myReadyPick, myEngineColor]);
+    return pawnSquaresFor(myEngineColor).filter((sq) => sq !== myPick);
+  }, [phase, myReadyPick, myEngineColor, myPick]);
 
   const onPickSquareClick = (sq: Square) => {
     if (!gameStarted || myReadyPick) return;
@@ -846,8 +846,8 @@ export function SecretGame() {
   //     shared state, hidden by the UI);
   //   - my own unrevealed fake renders as the queen it is, with a ghost-pawn
   //     marker showing the disguise the opponent sees.
-  // During the pick phase there are no masks yet — the selection ring marks
-  // the chosen pawn.
+  // During the pick phase there are no masks yet — the green/grey pick
+  // circles mark the candidates and the chosen pawn.
   const { maskedAsPawnSqs, maskedSelfPawnSqs } = useMemo(() => {
     if (inPick) {
       return { maskedAsPawnSqs: [] as Square[], maskedSelfPawnSqs: [] as Square[] };
@@ -879,11 +879,11 @@ export function SecretGame() {
     : null;
 
   const legalTargets = useMemo(() => {
-    if (inPick) return pickTargets;
+    if (inPick) return [];
     if (!atPresent || !selectedSquare || !game) return [];
     return legalMovesFrom(game, selectedSquare);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inPick, pickTargets, selectedSquare, game, atPresent]);
+  }, [inPick, selectedSquare, game, atPresent]);
 
   const lastMove = useMemo(() => {
     if (inPick || viewPly <= 0) return null;
@@ -1074,7 +1074,7 @@ export function SecretGame() {
           <MergeBoard
             board={displayBoard}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={inPick ? myPick : (atPresent ? selectedSquare : null)}
+            selectedSquare={inPick ? null : (atPresent ? selectedSquare : null)}
             legalTargets={legalTargets}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
@@ -1088,6 +1088,8 @@ export function SecretGame() {
             popKey={popAnim?.key}
             maskedAsPawnSquares={maskedAsPawnSqs}
             maskedSelfPawnSquares={maskedSelfPawnSqs}
+            secretPickSquares={inPick ? pickCandidates : undefined}
+            secretPickedSquares={inPick && myPick ? [myPick] : undefined}
             emojiBubble={emojiBubble}
           />
           {pendingPromo && game && (

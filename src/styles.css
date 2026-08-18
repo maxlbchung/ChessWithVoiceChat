@@ -29,6 +29,7 @@
   --good: #7ec39a;
   --bad: #d68b8b;           /* light muted red, visible on dark */
   --warn: #e0c08a;          /* warm sand on dark */
+  --secret-mask: #bda0ff;   /* Secret Queen violet — mask glow, shadow, readouts */
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.30);
   /* Letterpress: the 1px top highlight + deep drop that makes a card read as
@@ -2704,6 +2705,24 @@ a { color: inherit; text-decoration: none; }
     drop-shadow(0 0 8px color-mix(in srgb, var(--mask-glow, #bda0ff) 60%, transparent));
 }
 
+/* Secret Queen owner's view: the pawn disguise renders in FRONT (the sprite),
+   and the queen the piece really is looms BEHIND it — a solid violet
+   silhouette shifted up so the crown peeks over the pawn's head. Deliberately
+   much bolder than the Twin-Jutsu ghost above: it has to read at a glance.
+   Sits at the sprite's z-index but earlier in the DOM, so the pawn wins. */
+.secret-shadow-queen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.92;
+  transform: translateY(-14%);
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+
 /* Frost: encase a frozen piece in a translucent ice block with a soft cyan
    tint, a sharp inset highlight on the square's edge, and a snowflake in
    the centre. Lives above pieces (z-index 2) so the freeze reads clearly. */
@@ -3830,7 +3849,20 @@ a { color: inherit; text-decoration: none; }
 .secret-pick-sq {
   font-family: var(--font-mono);
   font-weight: 600;
-  color: #bda0ff;
+  color: var(--secret-mask);
+}
+/* Board circles for the pick phase: green = candidate pawn, grey = the
+   chosen/confirmed pick. Drawn behind the piece sprite (like the target
+   rings) so each reads as a halo around the pawn. */
+.secret-pick-ring {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  border: 3px solid var(--accent-strong);
+  pointer-events: none;
+}
+.secret-pick-ring.picked {
+  border-color: var(--muted);
 }
 
 .mine-rail-bomb {

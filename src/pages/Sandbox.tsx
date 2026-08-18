@@ -2219,15 +2219,9 @@ export function Sandbox() {
       }
       return out;
     }
-    // Secret designation armed: ring that side's pawns (the candidates).
-    if (variant === 'secret' && secretArm) {
-      const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
-      for (let i = 0; i < 64; i++) {
-        const p = current.board[i];
-        if (p && p.color === secretArm && p.letter.toUpperCase() === 'P') out.push(ringTarget(i));
-      }
-      return out;
-    }
+    // Secret designation armed: the candidates get green pick circles via
+    // secretPickSquares on the board instead of target rings.
+    if (variant === 'secret' && secretArm) return [];
     if (variant === 'cash' && shopArmed) {
       const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
       for (let i = 0; i < 64; i++) {
@@ -2482,6 +2476,23 @@ export function Sandbox() {
                     return f && !f.revealed && current.board[f.idx] ? [heroIdxToSq(f.idx)] : [];
                   })
                 : undefined}
+              // Designation armed: green circles on that side's candidate
+              // pawns, grey on its currently designated fake (if any).
+              secretPickSquares={variant === 'secret' && secretArm
+                ? (() => {
+                    const out: string[] = [];
+                    for (let i = 0; i < 64; i++) {
+                      const p = current.board[i];
+                      if (p && p.color === secretArm && p.letter.toUpperCase() === 'P') out.push(heroIdxToSq(i));
+                    }
+                    return out;
+                  })()
+                : undefined}
+              secretPickedSquares={(() => {
+                if (variant !== 'secret' || !secretArm) return undefined;
+                const f = current.secretFakes[secretArm];
+                return f && current.board[f.idx] ? [heroIdxToSq(f.idx)] : undefined;
+              })()}
               slimeBigKings={deriveSlimeGroups(current.board)
                 .map((g) => {
                   const ref = current.board[g.tiles[0]];

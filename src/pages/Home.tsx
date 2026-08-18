@@ -589,14 +589,19 @@ export function Home() {
     [],
   );
 
-  // The 8 candidate pawns of whichever side is currently picking. isCapture
-  // deliberately: occupied squares draw the ring marker (the plain dot would
-  // hide behind the pawn sprite) — same trick SecretGame uses.
-  const secretPickTargets = useMemo<{ to: string; isCapture: boolean; isMerge: boolean }[]>(() => {
+  // The 8 candidate pawns of whichever side is currently picking, circled
+  // green — same treatment SecretGame uses. A side's already-chosen pawn
+  // drops out of the candidates; it wears the grey "picked" circle instead.
+  const secretPickCandidates = useMemo<string[]>(() => {
     if (freeVariant !== 'secret' || secretStage === 'play') return [];
     const color = secretStage === 'pickB' ? 'b' : 'w';
-    return secretPawnSquaresFor(color).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
-  }, [freeVariant, secretStage]);
+    const chosen = secretPicks[color];
+    return secretPawnSquaresFor(color).filter((sq) => sq !== chosen);
+  }, [freeVariant, secretStage, secretPicks]);
+  const secretPickedSqs = useMemo<string[]>(() => {
+    if (freeVariant !== 'secret' || secretStage === 'play') return [];
+    return [secretPicks.w, secretPicks.b].filter((s): s is string => !!s);
+  }, [freeVariant, secretStage, secretPicks]);
 
   const secretLegalTargets = useMemo(() => {
     if (freeVariant !== 'secret' || secretStage !== 'play' || !freeSelected || !secretViewState) return [];
@@ -3056,20 +3061,17 @@ export function Home() {
                     ? (secretViewState?.board ?? secretPickBoard)
                     : secretPickBoard) as (MergePiece | null)[]}
                   orientation={freeOrientation}
-                  selectedSquare={secretStage === 'play'
-                    ? freeSelected
-                    : (secretStage === 'pickB' ? secretPicks.b : secretPicks.w)}
-                  legalTargets={secretStage === 'play' ? secretLegalTargets : secretPickTargets}
+                  selectedSquare={secretStage === 'play' ? freeSelected : null}
+                  legalTargets={secretStage === 'play' ? secretLegalTargets : []}
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleSecretDrop}
                   onDragStartSquare={onFreeDragStart}
-                  // While black picks, White's confirmed pick keeps a tint so
-                  // it stays visible without any mask machinery.
-                  lastMove={secretStage === 'play'
-                    ? freeLastMove
-                    : (secretStage === 'pickB' && secretPicks.w
-                        ? { from: secretPicks.w, to: secretPicks.w }
-                        : null)}
+                  lastMove={secretStage === 'play' ? freeLastMove : null}
+                  // Pick phase: green circles on the candidates, grey on any
+                  // already-confirmed pick (White's stays marked while Black
+                  // chooses).
+                  secretPickSquares={secretStage !== 'play' ? secretPickCandidates : undefined}
+                  secretPickedSquares={secretStage !== 'play' ? secretPickedSqs : undefined}
                   slideMoves={slideAnim?.moves}
                   slideKey={slideAnim?.key}
                   popSquares={popAnim?.squares}
