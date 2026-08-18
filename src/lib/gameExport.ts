@@ -40,6 +40,20 @@ import {
   type GameState as SweeperState,
   type MoveResult as SweeperResult,
 } from './sweeperChess';
+import {
+  applyMove as setupApply,
+  initialStateFromStrings as setupInitial,
+  parsePlacement as parseSetupPlacement,
+  type GameState as SetupState,
+  type MoveResult as SetupResult,
+} from './setupChess';
+import {
+  applyMove as secretApply,
+  initialState as secretInitial,
+  isValidPickSquare,
+  type GameState as SecretState,
+  type MoveResult as SecretResult,
+} from './secretChess';
 import type {
   GameEndReason,
   GameOutcome,
@@ -84,6 +98,12 @@ export type ExportedGame = {
   // Hero matches only — per-side back-rank overrides (Twin-Jutsu starts
   // shuffled). Absent means the standard arrangement for both sides.
   heroBackRanks?: { w?: string; b?: string };
+  // Required when variant === 'setup' — the two finalized placement strings
+  // (setupChess.ts `placementToString`) that rebuild the starting position.
+  setupPlacements?: { w: string; b: string };
+  // Required when variant === 'secret' — the pawn square each side picked as
+  // their hidden queen, rebuilding the starting position.
+  secretQueens?: { w: string; b: string };
 };
 
 export type BuildExportInput = {
@@ -99,6 +119,8 @@ export type BuildExportInput = {
   moves: Move[];
   heroes?: { w: HeroKind; b: HeroKind };
   heroBackRanks?: { w?: string; b?: string };
+  setupPlacements?: { w: string; b: string };
+  secretQueens?: { w: string; b: string };
 };
 
 export function buildGameExport(input: BuildExportInput): ExportedGame {
@@ -126,6 +148,8 @@ export function buildGameExport(input: BuildExportInput): ExportedGame {
     ...(input.heroBackRanks && (input.heroBackRanks.w || input.heroBackRanks.b)
       ? { heroBackRanks: input.heroBackRanks }
       : {}),
+    ...(input.setupPlacements ? { setupPlacements: input.setupPlacements } : {}),
+    ...(input.secretQueens ? { secretQueens: input.secretQueens } : {}),
   };
 }
 
@@ -184,7 +208,8 @@ export function parseGameImport(text: string): ExportedGame {
   const variant = o.variant;
   if (
     variant !== 'normal' && variant !== 'merge' && variant !== 'two' &&
-    variant !== 'cash' && variant !== 'hero' && variant !== 'sweeper'
+    variant !== 'cash' && variant !== 'hero' && variant !== 'sweeper' &&
+    variant !== 'setup' && variant !== 'secret'
   ) {
     throw new GameImportError('Missing or unknown variant.');
   }
@@ -240,6 +265,39 @@ export function parseGameImport(text: string): ExportedGame {
     if (w || b) heroBackRanks = { w, b };
   }
 
+  // Setup matches can't replay without their placements — reject exports
+  // missing or corrupting them rather than failing later with a confusing
+  // "illegal move".
+  let setupPlacements: { w: string; b: string } | undefined;
+  if (variant === 'setup') {
+    const sp = o.setupPlacements;
+    if (!sp || typeof sp !== 'object') throw new GameImportError('Setup match is missing its placements.');
+    const spp = sp as Record<string, unknown>;
+    if (
+      typeof spp.w !== 'string' || typeof spp.b !== 'string' ||
+      !parseSetupPlacement('w', spp.w) || !parseSetupPlacement('b', spp.b)
+    ) {
+      throw new GameImportError('Setup match has invalid placements.');
+    }
+    setupPlacements = { w: spp.w, b: spp.b };
+  }
+
+  // Secret Queen matches can't replay without the two picks — validate that
+  // each names one of its side's 8 starting pawns.
+  let secretQueens: { w: string; b: string } | undefined;
+  if (variant === 'secret') {
+    const sq = o.secretQueens;
+    if (!sq || typeof sq !== 'object') throw new GameImportError('Secret Queen match is missing its picks.');
+    const sqq = sq as Record<string, unknown>;
+    if (
+      typeof sqq.w !== 'string' || typeof sqq.b !== 'string' ||
+      !isValidPickSquare('w', sqq.w) || !isValidPickSquare('b', sqq.b)
+    ) {
+      throw new GameImportError('Secret Queen match has invalid picks.');
+    }
+    secretQueens = { w: sqq.w, b: sqq.b };
+  }
+
   return {
     formatVersion: typeof o.formatVersion === 'number' ? o.formatVersion : 1,
     app: typeof o.app === 'string' ? (o.app as 'voice-chat-chess') : 'voice-chat-chess',
@@ -257,6 +315,8 @@ export function parseGameImport(text: string): ExportedGame {
     moves,
     heroes,
     heroBackRanks,
+    setupPlacements,
+    secretQueens,
   };
 }
 
@@ -283,7 +343,8 @@ function isReason(v: unknown): v is GameEndReason {
   return (
     v === 'checkmate' || v === 'stalemate' || v === 'threefold' ||
     v === 'insufficient' || v === 'fifty-move' || v === 'resignation' ||
-    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' || v === 'mine'
+    v === 'timeout' || v === 'draw-agreed' || v === 'disconnect' || v === 'mine' ||
+    v === 'king-capture'
   );
 }
 
@@ -334,7 +395,19 @@ export type ReplaySweeper = {
   results: SweeperResult[];
 };
 
-export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplaySweeper;
+export type ReplaySetup = {
+  variant: 'setup';
+  states: SetupState[];
+  results: SetupResult[];
+};
+
+export type ReplaySecret = {
+  variant: 'secret';
+  states: SecretState[];
+  results: SecretResult[];
+};
+
+export type Replay = ReplayNormal | ReplayMerge | ReplayTwo | ReplayCash | ReplayHero | ReplaySweeper | ReplaySetup | ReplaySecret;
 
 export function buildReplay(exp: ExportedGame): Replay {
   if (exp.variant === 'normal') {
@@ -403,6 +476,34 @@ export function buildReplay(exp: ExportedGame): Replay {
       results.push(res.result);
     }
     return { variant: 'sweeper', states, results };
+  }
+  if (exp.variant === 'setup') {
+    // The starting position is rebuilt from the two stored placement strings
+    // (parseGameImport already validated them).
+    if (!exp.setupPlacements) throw new GameImportError('Setup match is missing its placements.');
+    const states: SetupState[] = [setupInitial(exp.setupPlacements.w, exp.setupPlacements.b)];
+    const results: SetupResult[] = [];
+    for (let i = 0; i < exp.moves.length; i++) {
+      const res = setupApply(states[states.length - 1], exp.moves[i].uci);
+      if (!res) throw new GameImportError(`Illegal setup-chess move at ply ${i + 1} (${exp.moves[i].uci}).`);
+      states.push(res.state);
+      results.push(res.result);
+    }
+    return { variant: 'setup', states, results };
+  }
+  if (exp.variant === 'secret') {
+    // The starting position is rebuilt from the two stored picks
+    // (parseGameImport already validated them).
+    if (!exp.secretQueens) throw new GameImportError('Secret Queen match is missing its picks.');
+    const states: SecretState[] = [secretInitial(exp.secretQueens.w, exp.secretQueens.b)];
+    const results: SecretResult[] = [];
+    for (let i = 0; i < exp.moves.length; i++) {
+      const res = secretApply(states[states.length - 1], exp.moves[i].uci);
+      if (!res) throw new GameImportError(`Illegal secret-queen move at ply ${i + 1} (${exp.moves[i].uci}).`);
+      states.push(res.state);
+      results.push(res.result);
+    }
+    return { variant: 'secret', states, results };
   }
   if (!exp.heroes) throw new GameImportError('Hero match is missing heroes.');
   // heroBackRanks rebuilds a shuffled Twin-Jutsu start; absent → standard.

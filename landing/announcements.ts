@@ -33,6 +33,18 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-08-17',
+    kind: 'new',
+    title: 'Secret Queen: one pawn is lying',
+    body: 'Before the game starts, both players get 30 seconds to secretly crown one of their pawns. It moves like a queen from the very first move — but to your opponent it looks like an ordinary pawn until it strikes, and then the disguise drops for good. Pick your moment: an early reveal wins material, a late one wins games.',
+  },
+  {
+    date: '2026-08-17',
+    kind: 'new',
+    title: 'Setup Chess: bring your own opening',
+    body: 'A new variant where the opening is yours to invent. Both players get 60 secret seconds to arrange their army anywhere on their own half of the board — castle your king in a corner, stack the center, fan your pawns out wide. When the clock runs out the two halves are revealed and a normal game begins. No castling, no book lines, no mercy for a badly hidden king.',
+  },
+  {
     date: '2026-08-03',
     kind: 'update',
     title: 'Chess Civilization: long live the king',

@@ -85,6 +85,16 @@ export function Review() {
         setError('This hero match was saved before hero picks were stored — export the JSON from a newer live game to review it.');
         return;
       }
+      // Setup replay needs both placement strings to rebuild the start.
+      if (tc.variant === 'setup' && !rec.setupPlacements) {
+        setError('This setup match has no stored placements, so it can’t be replayed.');
+        return;
+      }
+      // Secret Queen replay needs both picks to rebuild the start.
+      if (tc.variant === 'secret' && !rec.secretQueens) {
+        setError('This Secret Queen match has no stored picks, so it can’t be replayed.');
+        return;
+      }
       const exp: ExportedGame = {
         formatVersion: 1,
         app: 'voice-chat-chess',
@@ -102,6 +112,8 @@ export function Review() {
         moves: rec.moves,
         ...(rec.heroes ? { heroes: rec.heroes } : {}),
         ...(rec.heroBackRanks ? { heroBackRanks: rec.heroBackRanks } : {}),
+        ...(rec.setupPlacements ? { setupPlacements: rec.setupPlacements } : {}),
+        ...(rec.secretQueens ? { secretQueens: rec.secretQueens } : {}),
       };
       const replay = buildReplay(exp);
       setLoaded({ exp, replay });
@@ -128,6 +140,16 @@ export function Review() {
         setError('This hero match was saved before hero picks were stored, so it can’t be exported for replay.');
         return;
       }
+      // A setup export without placements can't be re-imported either.
+      if (tc.variant === 'setup' && !rec.setupPlacements) {
+        setError('This setup match has no stored placements, so it can’t be exported for replay.');
+        return;
+      }
+      // A Secret Queen export without its picks can't be re-imported either.
+      if (tc.variant === 'secret' && !rec.secretQueens) {
+        setError('This Secret Queen match has no stored picks, so it can’t be exported for replay.');
+        return;
+      }
       const exp = buildGameExport({
         variant: tc.variant,
         gameId: rec.gameId,
@@ -141,6 +163,8 @@ export function Review() {
         moves: rec.moves,
         heroes: rec.heroes,
         heroBackRanks: rec.heroBackRanks,
+        setupPlacements: rec.setupPlacements,
+        secretQueens: rec.secretQueens,
       });
       downloadGameExport(exp);
     } catch (err) {
@@ -512,6 +536,8 @@ const VARIANT_LABEL: Record<ExportedGame['variant'], string> = {
   cash: 'Cash Money',
   hero: 'Hero',
   sweeper: 'Chesssweeper',
+  setup: 'Setup',
+  secret: 'Secret Queen',
 };
 
 function MovesPanel({
@@ -603,5 +629,6 @@ function labelFor(reason: GameEndReason): string {
     case 'draw-agreed': return 'by agreement';
     case 'disconnect': return 'opponent disconnected';
     case 'mine': return 'the king stepped on a mine';
+    case 'king-capture': return 'the exposed king was captured';
   }
 }

@@ -100,6 +100,15 @@ type Props = {
   // real piece renders normally and a translucent king sits on top so the
   // owner can see which of their pieces are still hidden from the opponent.
   maskedSelfSquares?: Square[] | null;
+  // Secret Queen: squares whose true piece should be rendered as a pawn icon
+  // in the piece's color — the opponent's unrevealed fake queen. The pawn
+  // channel twin of `maskedAsKingSquares`.
+  maskedAsPawnSquares?: Square[] | null;
+  // Secret Queen: squares where the local player owns the disguised piece.
+  // The real piece (a queen) renders normally with a translucent pawn ghost
+  // on top — "this is what your opponent sees here". The pawn channel twin
+  // of `maskedSelfSquares`.
+  maskedSelfPawnSquares?: Square[] | null;
   // Slime: big-king blobs. Each renders as a single stretched king sprite
   // spanning its four tiles (with a goo overlay) instead of four per-square
   // sprites — the cell sprites for these squares are suppressed.
@@ -380,6 +389,8 @@ export function MergeBoard({
   clearAnnotationsKey,
   maskedAsKingSquares,
   maskedSelfSquares,
+  maskedAsPawnSquares,
+  maskedSelfPawnSquares,
   slimeBigKings,
   slimeKingSquares,
   slimeShiftArrows,
@@ -529,6 +540,8 @@ export function MergeBoard({
   const popSet = useMemo(() => new Set(popSquares ?? []), [popSquares]);
   const maskedAsKingSet = useMemo(() => new Set(maskedAsKingSquares ?? []), [maskedAsKingSquares]);
   const maskedSelfSet = useMemo(() => new Set(maskedSelfSquares ?? []), [maskedSelfSquares]);
+  const maskedAsPawnSet = useMemo(() => new Set(maskedAsPawnSquares ?? []), [maskedAsPawnSquares]);
+  const maskedSelfPawnSet = useMemo(() => new Set(maskedSelfPawnSquares ?? []), [maskedSelfPawnSquares]);
   // Squares occupied by a Slime big-king tile — their per-square sprites are
   // suppressed; the stretched blob layer below draws the king instead.
   const slimeTileSet = useMemo(() => {
@@ -835,6 +848,9 @@ export function MergeBoard({
           // with a translucent king overlay so the owner sees what's hidden.
           const isMaskedAsKing = maskedAsKingSet.has(sq);
           const isMaskedSelf = maskedSelfSet.has(sq);
+          // Secret Queen masking — same split, pawn channel.
+          const isMaskedAsPawn = maskedAsPawnSet.has(sq);
+          const isMaskedSelfPawn = maskedSelfPawnSet.has(sq);
           // Hero-mode king glow: colour ring drawn behind the king SVG.
           // Suppressed on masked-as-king squares — otherwise the real king's
           // aura would leak through every decoy and defeat the disguise.
@@ -1060,8 +1076,13 @@ export function MergeBoard({
                 // a king of the same color before handing it to PieceSprite.
                 // Slides / pops still fire because animation drivers key off
                 // sq, not the letter. Glow is already suppressed above.
+                // Secret Queen masked-as-pawn works the same way, one row
+                // down the court cards: the opponent's unrevealed fake queen
+                // hands PieceSprite a pawn of its color.
                 const renderedPiece: Piece = isMaskedAsKing
                   ? { color: piece.color, letter: (piece.color === 'w' ? 'K' : 'k') as PieceLetter }
+                  : isMaskedAsPawn
+                  ? { color: piece.color, letter: (piece.color === 'w' ? 'P' : 'p') as PieceLetter }
                   : piece;
                 // Source piece is hidden while the pointer drag is in flight —
                 // the floating sprite (rendered into a portal at the bottom of
@@ -1158,6 +1179,45 @@ export function MergeBoard({
                         <path d="M 12.5,33.5 C 18,30.5 27,30.5 32.5,33.5" style={{ fill: 'none', stroke }} />
                         <path d="M 12.5,37 C 18,34 27,34 32.5,37" style={{ fill: 'none', stroke }} />
                       </g>
+                    </svg>
+                  </div>
+                );
+              })()}
+              {piece && isMaskedSelfPawn && (() => {
+                // Secret Queen: ghosted pawn sitting on top of the player's
+                // own fake queen — "this is the disguise your opponent
+                // sees". Same treatment as the Twin-Jutsu ghost king above
+                // (shares .masked-self-overlay), with the Cburnett pawn
+                // silhouette and the mode's violet mask glow.
+                const size = squarePx * 0.9;
+                const fill = '#bda0ff';
+                const stroke = 'rgba(0,0,0,0.5)';
+                return (
+                  <div
+                    aria-hidden
+                    className="masked-self-overlay"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                      ['--mask-glow' as any]: fill,
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      version="1.1"
+                      width={size}
+                      height={size}
+                      viewBox="0 0 45 45"
+                    >
+                      <path
+                        d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 H 34 C 34,31.58 29.59,27.09 26.59,26.03 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z"
+                        style={{ fill, stroke, strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'miter', strokeMiterlimit: 4 }}
+                      />
                     </svg>
                   </div>
                 );

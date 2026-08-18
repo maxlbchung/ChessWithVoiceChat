@@ -16,7 +16,10 @@ export type GameEndReason =
   | 'disconnect'
   // Chesssweeper: a king was destroyed by a landmine (or left hanging by the
   // blast). Never produced by the other variants.
-  | 'mine';
+  | 'mine'
+  // Setup chess: a king left exposed by the setup phase was captured on the
+  // opening move(s). Never produced by the other variants.
+  | 'king-capture';
 
 export type PlayerInfo = {
   handle: string;
@@ -54,6 +57,14 @@ export type GameRecord = {
   // shuffled). Absent for games where neither side shuffled and on records
   // from before the shuffle existed; both mean the standard arrangement.
   heroBackRanks?: { w?: string; b?: string };
+  // Setup matches only — the two finalized placement strings (see
+  // setupChess.ts `placementToString`). Required to rebuild the starting
+  // position when replaying or exporting from local history.
+  setupPlacements?: { w: string; b: string };
+  // Secret Queen matches only — the pawn square each side secretly picked as
+  // their hidden queen (e.g. { w: 'e2', b: 'd7' }). Required to rebuild the
+  // starting position when replaying or exporting from local history.
+  secretQueens?: { w: string; b: string };
 };
 
 export type LocalGameSummary = {
@@ -80,6 +91,20 @@ export type WireMessage =
       hostRating: number;
     }
   | { type: 'ready' }
+  // Setup chess: a player's finalized placement for their half of the board
+  // (see setupChess.ts `placementToString`). Sent once, when the player hits
+  // Ready or their local 60s setup countdown expires (auto-placing whatever
+  // was still in the tray). Receiving it also means "opponent is ready" —
+  // play begins once both sides hold both placements, so the merged starting
+  // position is agreed deterministically before ply 1.
+  | { type: 'setup-placement'; placement: string }
+  // Secret Queen: the pawn square this player secretly picked as their
+  // hidden queen. Sent once, when the player confirms or their local 30s
+  // selection countdown expires (auto-picking a random pawn). Receiving it
+  // also means "opponent is ready" — play begins once both sides hold both
+  // picks. Receivers validate the square is one of the sender's 8 starting
+  // pawns before trusting it.
+  | { type: 'secret-pick'; square: string }
   | { type: 'move'; move: Move }
   | { type: 'resign' }
   | { type: 'draw-offer' }

@@ -2241,12 +2241,15 @@ a { color: inherit; text-decoration: none; }
    very narrow viewports — where there's no horizontal space left at all —
    does the shop fall back to stacking above the board. */
 /* Chesssweeper's minefield panel rides the exact same rail. */
+/* Setup Chess's deploy tray does too. */
 .board-column.with-cash-shop,
-.board-column.with-mine-rail {
+.board-column.with-mine-rail,
+.board-column.with-setup-tray {
   position: relative;
 }
 .cash-side-shop,
-.mine-side-rail {
+.mine-side-rail,
+.setup-side-rail {
   position: absolute;
   top: 0;
   /* Anchor the shop's right edge 12px left of the board's left edge. The
@@ -2260,12 +2263,33 @@ a { color: inherit; text-decoration: none; }
    max-width), which leaves the anchor above hanging ~90px clear of the board.
    min(…, 100%) is the board's real rendered width, so the panel actually
    hugs it at every viewport. (The cash shop above wants the same fix.) */
-.mine-side-rail {
+.mine-side-rail,
+.setup-side-rail {
   right: calc(min(var(--max-board), 100%) + 12px);
+}
+/* Unlike the minefield panel (glanceable, survives a clip), the deploy tray
+   is the setup phase's primary control surface — so while it's up, give up
+   board width instead of tray: cap the board so rail (200px) + gap (12px)
+   always fit inside the column. The rail anchor must mirror the same cap —
+   the shared rule above assumes a --max-board-wide board and would strand
+   the tray off-screen left of the real, narrower board. The class comes off
+   when play begins and the board takes its normal size back. */
+.board-column.with-setup-tray .board-wrap {
+  max-width: min(var(--max-board), calc(100% - 212px));
+}
+.setup-side-rail {
+  right: calc(min(var(--max-board), 100% - 212px) + 12px);
+}
+@media (max-width: 600px) {
+  /* Rail is static/stacked here — release the cap. */
+  .board-column.with-setup-tray .board-wrap {
+    max-width: var(--max-board);
+  }
 }
 @media (max-width: 600px) {
   .cash-side-shop,
-  .mine-side-rail {
+  .mine-side-rail,
+  .setup-side-rail {
     position: static;
     width: 100%;
     max-width: var(--max-board);
@@ -3707,6 +3731,98 @@ a { color: inherit; text-decoration: none; }
 .mine-panel-hint {
   line-height: 1.35;
 }
+/* --------------------------------------------------------------------
+   Setup Chess deploy tray. Same card format as the Cash shop / minefield
+   panel, hugging the board's left edge during the setup phase.
+   -------------------------------------------------------------------- */
+.setup-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.7rem;
+  background: var(--glass);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: var(--plate);
+  min-width: 0;
+}
+.setup-tray-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+/* The countdown is read as a number — mono face, like every clock. */
+.setup-tray-clock {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 0.3rem 0.35rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.setup-tray-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+}
+.setup-tray-piece {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.2rem;
+  background: var(--glass-soft);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+  color: inherit;
+}
+.setup-tray-piece:hover:not(:disabled) {
+  border-color: var(--rule-strong);
+}
+.setup-tray-piece.armed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.setup-tray-piece.spent {
+  opacity: 0.35;
+  cursor: default;
+}
+.setup-tray-sprite {
+  display: block;
+  line-height: 0;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+}
+/* Remaining count reads as data → mono micro-caps. */
+.setup-tray-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.setup-tray-status {
+  text-align: center;
+}
+.setup-tray-hint {
+  line-height: 1.35;
+}
+
+/* Secret Queen's pick rail reuses the setup-tray card; only the chosen-square
+   readout is its own. Mono because a square name is read as data. */
+.secret-pick-line {
+  text-align: center;
+  font-size: 0.85rem;
+}
+.secret-pick-sq {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #bda0ff;
+}
+
 .mine-rail-bomb {
   font-size: 1.45rem;
   line-height: 1;

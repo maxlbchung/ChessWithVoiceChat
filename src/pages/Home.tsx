@@ -98,6 +98,10 @@ import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
+// Setup Chess ('setup') and Secret Queen ('secret') are deliberately absent:
+// both hinge on hidden information (secret placements / a secretly picked
+// pawn), which free play (one person driving both sides) can't meaningfully
+// exercise. Online play only.
 type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
 
 type Mode = 'idle' | 'searching' | 'hosting';

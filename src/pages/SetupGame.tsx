@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { DragEvent as ReactDragEvent } from 'react';
 import { PlayerCard, type VoiceState } from '../components/PlayerCard';
 import { VoiceControls } from '../components/VoiceControls';
 import { ChatComposer } from '../components/ChatComposer';
 import { FinishAvatar, ResultAvatar } from '../components/EndScreenAvatars';
 import { StartOverlay } from '../components/StartOverlay';
 import { useSettingsStore } from '../store/settingsStore';
-import { MergeBoard, type AbilityAnim } from '../components/MergeBoard';
-import { MineRail } from '../components/MineRail';
+import { MergeBoard } from '../components/MergeBoard';
 import { computeCaptures } from '../lib/captures';
 import { PromotionPicker, type PromotionLetter } from '../components/PromotionPicker';
 import { takeLobbyHandoff } from '../store/lobbyHandoff';
 import { useRematch, shouldKeepSessionForRematch } from '../lib/useRematch';
 import type { PeerSession } from '../lib/peer';
 import { useIdentityStore } from '../store/identityStore';
-import { getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
+import { formatClock, getTimeControl, lowTimeThresholdMs } from '../lib/timeControls';
 import type {
   Color,
   GameEndReason,
@@ -32,10 +32,15 @@ import * as sfx from '../lib/sfx';
 import { renderChatText } from '../lib/linkify';
 import { isQuickEmoji, kingSquaresForBoard, useEmojiBubble } from '../lib/inGameEmojis';
 import { buildGameExport, downloadGameExport } from '../lib/gameExport';
+import { renderPiece, type PieceKey } from '../lib/pieceSvgs';
 import {
+  ARMY_ORDER,
+  SETUP_PHASE_MS,
   applyMove,
+  autoCompletePlacement,
+  canPlaceAt,
   idxToSq,
-  initialState,
+  initialStateFromStrings,
   isCheckmate,
   isFiftyMoveRule,
   isInCheck,
@@ -43,25 +48,29 @@ import {
   isStalemate,
   isThreefoldRepetition,
   legalMovesFrom,
-  minesForGame,
-  revealedCounts,
+  parsePlacement,
+  placementToString,
+  remainingArmy,
   sqToIdx,
   type GameState,
   type MoveResult,
+  type Piece,
   type PieceLetter,
+  type Placement,
   type Square,
-} from '../lib/sweeperChess';
+} from '../lib/setupChess';
 
 type EndState = { outcome: GameOutcome; reason: GameEndReason };
 
-// Blast timing. A click-move slides the piece across the board first, so the
-// mine goes off exactly as it lands (the slide itself is 260ms). A dragged or
-// remote piece is already sitting on the square, so it just gets a short beat
-// to register before it's destroyed.
-const BLAST_ON_LANDING_MS = 275;
-const BLAST_BEAT_MS = 150;
+// The two page phases. 'setup' spans from mount until both placements are
+// exchanged; 'play' is a normal game of chess from the merged position.
+type Phase = 'setup' | 'play';
 
-export function SweeperGame() {
+const PIECE_NAME: Record<string, string> = {
+  K: 'King', Q: 'Queen', R: 'Rook', B: 'Bishop', N: 'Knight', P: 'Pawn',
+};
+
+export function SetupGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
   const { identity, rating, avatar, setRating } = useIdentityStore();
@@ -80,16 +89,46 @@ export function SweeperGame() {
   const tc = getTimeControl(handoff.timeControlId)!;
   const lowMs = lowTimeThresholdMs(tc);
 
-  // Both peers derive the identical minefield from the shared gameId, so the
-  // layout never travels over the wire and neither side can peek at it.
-  const mines = useMemo(() => minesForGame(gameId), [gameId]);
+  const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
+  const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
+  const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
+  const oppEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'b' : 'w';
 
-  const [game, setGame] = useState<GameState>(() => initialState(mines));
-  // History snapshots aligned with the moves array: states[0] is the start
-  // position; after N played moves, states[N] is the current position. A
-  // detonation isn't a chess move, so these snapshots — not a replayable move
-  // list — are what makes scrubbing work.
-  const [states, setStates] = useState<GameState[]>(() => [initialState(mines)]);
+  // --------------------------------------------------------------------
+  // Setup-phase state
+  // --------------------------------------------------------------------
+  const [phase, setPhase] = useState<Phase>('setup');
+  const phaseRef = useRef<Phase>('setup');
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+  // My in-progress placement (board idx -> uppercase letter).
+  const [myPlacement, setMyPlacement] = useState<Placement>(() => new Map());
+  const myPlacementRef = useRef<Placement>(myPlacement);
+  useEffect(() => { myPlacementRef.current = myPlacement; }, [myPlacement]);
+  // Tray piece armed for click-to-place, e.g. 'Q'.
+  const [armedLetter, setArmedLetter] = useState<string | null>(null);
+  // A placed piece selected for moving during setup.
+  const [setupSelected, setSetupSelected] = useState<Square | null>(null);
+  // Finalized placement strings (mine / opponent's), in the engine's
+  // canonical encoding. Both non-null => play begins.
+  const myFinalRef = useRef<string | null>(null);
+  const oppFinalRef = useRef<string | null>(null);
+  const [myReadySetup, setMyReadySetup] = useState(false);
+  const [oppReadySetup, setOppReadySetup] = useState(false);
+  // Countdown. The deadline is armed when the start overlay finishes so both
+  // sides start their 60 seconds at (nearly) the same moment; each side
+  // auto-finalizes its own placement on its own local expiry, so a second or
+  // two of skew only delays the exchange, never desyncs it.
+  const setupDeadlineRef = useRef<number | null>(null);
+  const [setupMsLeft, setSetupMsLeft] = useState(SETUP_PHASE_MS);
+
+  // --------------------------------------------------------------------
+  // Play-phase state (null / empty until both placements are in)
+  // --------------------------------------------------------------------
+  const [game, setGame] = useState<GameState | null>(null);
+  // History snapshots aligned with the moves array: states[0] is the merged
+  // starting position; after N played moves, states[N] is current.
+  const [states, setStates] = useState<GameState[]>([]);
   const [results, setResults] = useState<MoveResult[]>([]);
   const [viewPly, setViewPly] = useState(0);
   const viewPlyRef = useRef(0);
@@ -110,33 +149,17 @@ export function SweeperGame() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatLog]);
   const [partnerReady, setPartnerReady] = useState(false);
-  // Start animation gates real game time: clock doesn't tick and moves are
-  // blocked until the intro overlay fades out (~3.5s after both connect).
+  // The intro overlay gates the setup countdown: placing is allowed only
+  // after it fades (~3.5s after both connect).
   const [gameStarted, setGameStarted] = useState(false);
   const gameStartedRef = useRef(false);
   useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   const [connState, setConnState] = useState<'connecting' | 'connected' | 'failed'>('connecting');
   const [connDetail, setConnDetail] = useState<string>('');
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
-  // Squares the player has flagged as suspected mines. Private scratch state:
-  // never sent over the wire, never stored — telling the opponent where you
-  // think the mines are would hand them the map. Flagging takes over the
-  // right-click gesture, so it's behind a mode toggle: off, right-click still
-  // draws the usual annotation arrows.
-  const [flags, setFlags] = useState<Square[]>([]);
-  const [flagMode, setFlagMode] = useState(false);
-  const toggleFlag = (sq: Square) => {
-    setFlags((f) => (f.includes(sq) ? f.filter((s) => s !== sq) : [...f, sq]));
-    sfx.playSelect();
-  };
   const [pendingPromo, setPendingPromo] = useState<{ from: Square; to: Square; viaClick: boolean } | null>(null);
   const [slideAnim, setSlideAnim] = useState<{ moves: { from: Square; to: Square }[]; key: number } | null>(null);
   const [popAnim, setPopAnim] = useState<{ squares: Square[]; key: number } | null>(null);
-  // The blast overlay, plus the doomed sprite drawn back on top of the (already
-  // cleared) square during the beat before it goes off.
-  const [mineAnim, setMineAnim] = useState<AbilityAnim | null>(null);
-  const [doomed, setDoomed] = useState<{ sq: Square; letter: PieceLetter }[]>([]);
-  const blastTimerRef = useRef<number | null>(null);
   useEffect(() => {
     if (!slideAnim) return;
     const t = window.setTimeout(() => setSlideAnim(null), 320);
@@ -147,11 +170,6 @@ export function SweeperGame() {
     const t = window.setTimeout(() => setPopAnim(null), 420);
     return () => clearTimeout(t);
   }, [popAnim]);
-  useEffect(() => {
-    if (!mineAnim) return;
-    const t = window.setTimeout(() => setMineAnim(null), 1200);
-    return () => clearTimeout(t);
-  }, [mineAnim]);
   const [disconnectMs, setDisconnectMs] = useState<number | null>(null);
   const disconnectDeadlineRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -182,10 +200,6 @@ export function SweeperGame() {
     localStreamRef.current = localStream;
   }, [localStream]);
 
-  const myColor: Color = handoff.iAmWhite ? 'white' : 'black';
-  const oppColor: Color = handoff.iAmWhite ? 'black' : 'white';
-  const myEngineColor: 'w' | 'b' = handoff.iAmWhite ? 'w' : 'b';
-
   const me: PlayerInfo = {
     handle: identity.handle,
     rating,
@@ -204,37 +218,12 @@ export function SweeperGame() {
   const startedAtRef = useRef<number>(Date.now());
   const lastTickRef = useRef<number>(performance.now());
   const rematch = useRematch(handoff, sessionRef.current);
-  const gameRef = useRef<GameState>(game);
+  const gameRef = useRef<GameState | null>(game);
   useEffect(() => { gameRef.current = game; }, [game]);
   const movesCountRef = useRef(0);
   useEffect(() => { movesCountRef.current = moves.length; }, [moves.length]);
   const animationsEnabledRef = useRef(animationsEnabled);
   useEffect(() => { animationsEnabledRef.current = animationsEnabled; }, [animationsEnabled]);
-
-  // Piece travels (sliding in, if this move animates) → blast + sfx → gone.
-  // The doomed sprite stands in for the mover while it's in flight, since the
-  // engine has already cleared the square. With animations off it's just the
-  // sound.
-  const triggerBlast = (
-    sq: Square,
-    letter: PieceLetter | null,
-    color: 'w' | 'b',
-    key: string,
-    sliding = false,
-  ) => {
-    if (!animationsEnabledRef.current) {
-      sfx.playExplosion();
-      return;
-    }
-    if (letter) setDoomed([{ sq, letter }]);
-    if (blastTimerRef.current != null) clearTimeout(blastTimerRef.current);
-    blastTimerRef.current = window.setTimeout(() => {
-      blastTimerRef.current = null;
-      setDoomed([]);
-      setMineAnim({ kind: 'mine', toSq: sq, color, key });
-      sfx.playExplosion();
-    }, sliding ? BLAST_ON_LANDING_MS : BLAST_BEAT_MS);
-  };
 
   const sendChatMessage = (text: string, options: { clearInput?: boolean; emoji?: boolean } = {}) => {
     const trimmed = text.trim();
@@ -282,14 +271,224 @@ export function SweeperGame() {
     disconnectTimerRef.current = window.setInterval(tick, 100);
   };
 
-  // Keep endRef synced and cancel any in-flight forfeit countdown the moment
-  // the match ends — peer-session handlers were bound at mount with a stale
-  // `end` closure and must read endRef.current instead.
   useEffect(() => {
     endRef.current = end;
     if (end) cancelDisconnectCountdown();
   }, [end]);
 
+  // --------------------------------------------------------------------
+  // Setup-phase logic
+  // --------------------------------------------------------------------
+
+  // Finalize my placement: auto-complete whatever is still in the tray,
+  // freeze it, and send it. Called by the Ready button and by the local
+  // countdown expiry — whichever comes first. Idempotent.
+  const finalizeMyPlacement = () => {
+    if (myFinalRef.current != null) return;
+    if (phaseRef.current !== 'setup') return;
+    const complete = autoCompletePlacement(myEngineColor, myPlacementRef.current);
+    const str = placementToString(complete);
+    myFinalRef.current = str;
+    setMyPlacement(complete);
+    setMyReadySetup(true);
+    setArmedLetter(null);
+    setSetupSelected(null);
+    try { sessionRef.current.send({ type: 'setup-placement', placement: str }); } catch {}
+    maybeBeginPlay();
+  };
+
+  // Both placements in hand → merge deterministically and start the game.
+  // Both peers compute the identical starting position from the same two
+  // strings, so no extra confirmation round-trip is needed.
+  const maybeBeginPlay = () => {
+    if (phaseRef.current !== 'setup') return;
+    const mine = myFinalRef.current;
+    const theirs = oppFinalRef.current;
+    if (mine == null || theirs == null) return;
+    const whiteStr = handoff.iAmWhite ? mine : theirs;
+    const blackStr = handoff.iAmWhite ? theirs : mine;
+    let init: GameState;
+    try {
+      init = initialStateFromStrings(whiteStr, blackStr);
+    } catch (e) {
+      console.warn('failed to build merged position', e);
+      return;
+    }
+    setPhase('play');
+    phaseRef.current = 'play';
+    setGame(init);
+    gameRef.current = init;
+    setStates([init]);
+    setViewPly(0);
+    sfx.playQueue();
+  };
+
+  // Countdown ticker. Armed when the intro overlay finishes; expires into
+  // auto-finalize. Deadline is wall-clock so a throttled background tab still
+  // finalizes roughly on time.
+  useEffect(() => {
+    if (!gameStarted || phase !== 'setup' || myReadySetup) return;
+    if (setupDeadlineRef.current == null) {
+      setupDeadlineRef.current = Date.now() + SETUP_PHASE_MS;
+    }
+    const id = window.setInterval(() => {
+      const left = (setupDeadlineRef.current ?? 0) - Date.now();
+      if (left <= 0) {
+        setSetupMsLeft(0);
+        clearInterval(id);
+        finalizeMyPlacement();
+        return;
+      }
+      setSetupMsLeft(left);
+    }, 100);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameStarted, phase, myReadySetup]);
+
+  const trayLeft = useMemo(() => remainingArmy(myPlacement), [myPlacement]);
+  const trayTotal = useMemo(
+    () => Object.values(trayLeft).reduce((a, b) => a + b, 0),
+    [trayLeft],
+  );
+
+  // The board shown during setup: my pieces only — the opponent's half stays
+  // empty until the reveal.
+  const setupBoard = useMemo<(Piece | null)[]>(() => {
+    const board: (Piece | null)[] = new Array(64).fill(null);
+    for (const [idx, letter] of myPlacement) {
+      board[idx] = {
+        color: myEngineColor,
+        letter: (myEngineColor === 'w' ? letter.toUpperCase() : letter.toLowerCase()) as PieceLetter,
+      };
+    }
+    return board;
+  }, [myPlacement, myEngineColor]);
+
+  // Squares the armed tray piece (or the selected placed piece) may land on.
+  const setupTargets = useMemo<{ to: Square; isCapture: boolean; isMerge: boolean }[]>(() => {
+    if (phase !== 'setup' || myReadySetup) return [];
+    const letter = armedLetter ?? (setupSelected ? myPlacement.get(sqToIdx(setupSelected)) ?? null : null);
+    if (!letter) return [];
+    const out: { to: Square; isCapture: boolean; isMerge: boolean }[] = [];
+    for (let idx = 0; idx < 64; idx++) {
+      if (myPlacement.has(idx)) continue;
+      if (!canPlaceAt(myEngineColor, letter, idx)) continue;
+      out.push({ to: idxToSq(idx), isCapture: false, isMerge: false });
+    }
+    return out;
+  }, [phase, myReadySetup, armedLetter, setupSelected, myPlacement, myEngineColor]);
+
+  const placePiece = (letter: string, sq: Square): boolean => {
+    if (phaseRef.current !== 'setup' || myFinalRef.current != null) return false;
+    const idx = sqToIdx(sq);
+    if (myPlacementRef.current.has(idx)) return false;
+    if (!canPlaceAt(myEngineColor, letter, idx)) return false;
+    if ((remainingArmy(myPlacementRef.current)[letter] ?? 0) <= 0) return false;
+    setMyPlacement((p) => {
+      const next = new Map(p);
+      next.set(idx, letter);
+      return next;
+    });
+    sfx.playPlace();
+    return true;
+  };
+
+  const movePlacedPiece = (from: Square, to: Square): boolean => {
+    if (phaseRef.current !== 'setup' || myFinalRef.current != null) return false;
+    const fromIdx = sqToIdx(from);
+    const toIdx = sqToIdx(to);
+    const letter = myPlacementRef.current.get(fromIdx);
+    if (!letter) return false;
+    if (myPlacementRef.current.has(toIdx)) return false;
+    if (!canPlaceAt(myEngineColor, letter, toIdx)) return false;
+    setMyPlacement((p) => {
+      const next = new Map(p);
+      next.delete(fromIdx);
+      next.set(toIdx, letter);
+      return next;
+    });
+    sfx.playMove();
+    return true;
+  };
+
+  const removePlacedPiece = (sq: Square) => {
+    if (phaseRef.current !== 'setup' || myFinalRef.current != null) return;
+    const idx = sqToIdx(sq);
+    if (!myPlacementRef.current.has(idx)) return;
+    setMyPlacement((p) => {
+      const next = new Map(p);
+      next.delete(idx);
+      return next;
+    });
+    setSetupSelected(null);
+    sfx.playCaptureReversed();
+  };
+
+  const onSetupSquareClick = (sq: Square) => {
+    if (!gameStarted || myReadySetup) return;
+    const idx = sqToIdx(sq);
+    const occupant = myPlacement.get(idx);
+    if (armedLetter) {
+      if (occupant) {
+        // Clicking one of my pieces while armed switches to moving it.
+        setArmedLetter(null);
+        setSetupSelected(sq);
+        sfx.playSelect();
+        return;
+      }
+      if (placePiece(armedLetter, sq)) {
+        // Keep the letter armed while more of that piece remain — placing
+        // 8 pawns shouldn't take 16 clicks.
+        if ((remainingArmy(myPlacementRef.current)[armedLetter] ?? 0) <= 0) setArmedLetter(null);
+        return;
+      }
+      return;
+    }
+    if (setupSelected) {
+      if (setupSelected === sq) { setSetupSelected(null); return; }
+      if (occupant) { setSetupSelected(sq); sfx.playSelect(); return; }
+      if (movePlacedPiece(setupSelected, sq)) setSetupSelected(null);
+      return;
+    }
+    if (occupant) {
+      setSetupSelected(sq);
+      sfx.playSelect();
+    }
+  };
+
+  const onSetupDragStart = (from: Square) => {
+    if (!gameStarted || myReadySetup) return;
+    if (!myPlacement.has(sqToIdx(from))) return;
+    setArmedLetter(null);
+    if (setupSelected !== from) setSetupSelected(from);
+  };
+
+  const onSetupPieceDrop = (from: Square, to: Square): boolean => {
+    if (!gameStarted || myReadySetup) return false;
+    const ok = movePlacedPiece(from, to);
+    if (ok) setSetupSelected(null);
+    return ok;
+  };
+
+  // Drop from the tray (HTML5 drag with a "spawn:<letter>" payload — the
+  // same channel the sandbox palette uses).
+  const onSetupSpawn = (letter: PieceLetter, to: Square) => {
+    if (!gameStarted || myReadySetup) return;
+    placePiece(letter.toUpperCase(), to);
+  };
+
+  const onTrayDragStart = (e: ReactDragEvent<HTMLButtonElement>, letter: string) => {
+    // Letter casing encodes color for the board's spawn payload.
+    const cased = myEngineColor === 'w' ? letter.toUpperCase() : letter.toLowerCase();
+    try {
+      e.dataTransfer.setData('text/plain', `spawn:${cased}`);
+      e.dataTransfer.effectAllowed = 'copyMove';
+    } catch {}
+  };
+
+  // --------------------------------------------------------------------
+  // Networking
+  // --------------------------------------------------------------------
   useEffect(() => {
     const session = sessionRef.current;
 
@@ -298,6 +497,19 @@ export function SweeperGame() {
       if (rematch.handleRematchMessage(msg)) return;
       if (msg.type === 'hello') return;
       if (msg.type === 'ready') { setPartnerReady(true); return; }
+      if (msg.type === 'setup-placement') {
+        // Validate before trusting: a placement that fails the army/half
+        // rules is a protocol violation, not a position we should play.
+        if (oppFinalRef.current != null) return;
+        if (!parsePlacement(oppEngineColor, msg.placement)) {
+          console.warn('invalid setup placement from peer', msg.placement);
+          return;
+        }
+        oppFinalRef.current = msg.placement;
+        setOppReadySetup(true);
+        maybeBeginPlay();
+        return;
+      }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
       if (msg.type === 'draw-offer') { setDrawOfferedByOpp(true); return; }
@@ -357,6 +569,11 @@ export function SweeperGame() {
       session.send({ type: 'voice-state', voiceActive, micOn });
       session.send({ type: 'ready' });
       setPartnerReady(true);
+      // Re-send my finalized placement on reconnect — the opponent may have
+      // missed it while the link was down.
+      if (myFinalRef.current != null) {
+        session.send({ type: 'setup-placement', placement: myFinalRef.current });
+      }
     };
 
     session.setEvents({
@@ -408,10 +625,6 @@ export function SweeperGame() {
         clearInterval(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
-      if (blastTimerRef.current != null) {
-        clearTimeout(blastTimerRef.current);
-        blastTimerRef.current = null;
-      }
       // Keep the session alive across rematch route changes.
       if (!shouldKeepSessionForRematch()) {
         try { sessionRef.current.destroy(); } catch {}
@@ -420,16 +633,15 @@ export function SweeperGame() {
     };
   }, []);
 
-  // Clocks
+  // Main-game clocks. Tick only during the play phase — the setup phase has
+  // its own countdown and doesn't consume game time.
   useEffect(() => {
     if (end) return;
     let raf = 0;
     const loop = (t: number) => {
       const dt = t - lastTickRef.current;
       lastTickRef.current = t;
-      // Tick once the start animation has finished. White's clock starts
-      // automatically at this point even before the first move is made.
-      if (gameStartedRef.current) {
+      if (phaseRef.current === 'play' && gameRef.current) {
         const turn = gameRef.current.turn;
         if (turn === 'w') {
           setWhiteMs((ms) => {
@@ -453,18 +665,9 @@ export function SweeperGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end]);
 
-  // moves.length in the deps catches the race where the opponent's first
-  // move lands before our StartOverlay onDone fires — without it, the
-  // overlay unmounts mid-animation and gameStarted is stuck false forever.
-  useEffect(() => {
-    if (gameStarted) return;
-    if (!partnerReady) return;
-    if (movesCountRef.current > 0) setGameStarted(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partnerReady, gameStarted, moves.length]);
-
   useEffect(() => {
     if (end) return;
+    if (phase !== 'play') return;
     if (whiteMs <= 0) claimTimeout('white');
     else if (blackMs <= 0) claimTimeout('black');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -476,22 +679,15 @@ export function SweeperGame() {
   };
 
   // --------------------------------------------------------------------
-  // Move handling
+  // Move handling (play phase)
   // --------------------------------------------------------------------
-  const isMyTurn = () => game.turn === myEngineColor;
+  const isMyTurn = () => phase === 'play' && !!game && game.turn === myEngineColor;
 
-  // Shared post-move SFX + blast sequencing for local and remote moves.
-  // `sliding` says the mover is animating across the board, so the blast waits
-  // for it to land.
-  const playMoveFeedback = (res: MoveResult, mover: 'w' | 'b', ply: number, sliding = false) => {
-    if (res.castled) sfx.playCastle();
-    else if (res.captured) sfx.playCapture();
+  const playMoveFeedback = (res: MoveResult) => {
+    if (res.captured) sfx.playCapture();
     else sfx.playMove();
-    if (res.mineIdx != null) {
-      triggerBlast(idxToSq(res.mineIdx), res.destroyedLetter, mover, `mine-${ply}-${res.uci}`, sliding);
-    } else if (res.check && !res.checkmate) {
-      sfx.playCheck();
-    }
+    if (res.kingCaptured) sfx.playWin();
+    else if (res.check && !res.checkmate) sfx.playCheck();
   };
 
   const applyLocalMove = async (
@@ -501,9 +697,7 @@ export function SweeperGame() {
     viaClick = false,
   ): Promise<boolean> => {
     if (end) return false;
-    if (!gameStarted) return false;
-    if (!isMyTurn()) return false;
-    // Can only move at the present; scrubbing back disables input.
+    if (!isMyTurn() || !game) return false;
     if (viewPlyRef.current !== movesCountRef.current) return false;
     const beforeTurn = game.turn;
     let uci = from + to;
@@ -513,9 +707,8 @@ export function SweeperGame() {
 
     const ply = moves.length + 1;
     const sliding = viaClick && animationsEnabled;
-    playMoveFeedback(res.result, beforeTurn, ply, sliding);
+    playMoveFeedback(res.result);
 
-    // Update clocks
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
       setBlackMs(tc.perMoveMs);
@@ -544,16 +737,10 @@ export function SweeperGame() {
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setViewPly((p) => p + 1);
-    // The move animates even when it ends on a mine: the engine has already
-    // cleared the square, so the doomed sprite is what slides in, and the
-    // blast fires as it arrives. A mine caught in transit stops the slide
-    // there — that square is where the piece died. Promotion pops are
-    // pointless for a piece that's about to be destroyed.
     if (sliding) {
-      const stop = res.result.abortedAt != null ? idxToSq(res.result.abortedAt) : to;
-      setSlideAnim({ moves: [{ from, to: stop }], key: Date.now() });
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
     }
-    if (animationsEnabled && !!promotion && res.result.mineIdx == null) {
+    if (animationsEnabled && !!promotion) {
       setPopAnim({ squares: [to], key: Date.now() });
     }
     sessionRef.current.send({ type: 'move', move: signed });
@@ -567,29 +754,30 @@ export function SweeperGame() {
 
   const applyRemoteMove = async (move: Move) => {
     if (end) return;
+    if (phaseRef.current !== 'play' || !gameRef.current) {
+      console.warn('remote move before play phase', move);
+      return;
+    }
     if (move.ply !== movesCountRef.current + 1) {
       console.warn('out of order move', move.ply, 'expected', movesCountRef.current + 1);
       return;
     }
-    const beforeTurn = gameRef.current.turn;
     const res = applyMove(gameRef.current, move.uci);
     if (!res) {
       console.warn('illegal remote move', move);
       return;
     }
-    // Defense in depth: ensure fenAfter matches. A mismatch here would also
-    // mean the two sides disagree about the minefield.
+    // Defense in depth: a fenAfter mismatch means the two sides disagree
+    // about the merged starting position.
     if (res.result.fenAfter !== move.fenAfter) {
       console.warn('FEN mismatch from peer', { ours: res.result.fenAfter, theirs: move.fenAfter });
     }
-    playMoveFeedback(res.result, beforeTurn, move.ply);
+    playMoveFeedback(res.result);
     const wasAtPresent = viewPlyRef.current === movesCountRef.current;
     setGame(res.state);
     setStates((s) => [...s, res.state]);
     setResults((r) => [...r, res.result]);
     setMoves((m) => [...m, move]);
-    // Auto-advance the viewer only if they were watching the live position;
-    // otherwise leave them where they were so they can keep reviewing.
     if (wasAtPresent) setViewPly((p) => p + 1);
     if (tc.perMoveMs != null) {
       setWhiteMs(tc.perMoveMs);
@@ -605,10 +793,10 @@ export function SweeperGame() {
   };
 
   const checkBoardEnd = (s: GameState) => {
-    // A blown-up king (or one left hanging by the blast) ends it on the spot,
+    // A captured king (possible only out of an exposed-king setup) ends it
     // ahead of any normal chess verdict.
-    if (s.mineLoss) {
-      finalize({ outcome: s.mineLoss === 'w' ? 'black' : 'white', reason: 'mine' });
+    if (s.kingCaptured) {
+      finalize({ outcome: s.kingCaptured === 'w' ? 'black' : 'white', reason: 'king-capture' });
       return;
     }
     if (isCheckmate(s)) {
@@ -620,6 +808,13 @@ export function SweeperGame() {
     if (isThreefoldRepetition(s)) { finalize({ outcome: 'draw', reason: 'threefold' }); return; }
     if (isInsufficientMaterial(s)) { finalize({ outcome: 'draw', reason: 'insufficient' }); return; }
     if (isFiftyMoveRule(s)) { finalize({ outcome: 'draw', reason: 'fifty-move' }); return; }
+  };
+
+  const setupPlacementsForRecord = (): { w: string; b: string } | undefined => {
+    const mine = myFinalRef.current;
+    const theirs = oppFinalRef.current;
+    if (mine == null || theirs == null) return undefined;
+    return handoff.iAmWhite ? { w: mine, b: theirs } : { w: theirs, b: mine };
   };
 
   const finalize = async (state: EndState) => {
@@ -635,6 +830,7 @@ export function SweeperGame() {
     const after = newRating(before, opp.rating, myResult, gamesPlayed);
     await setRating(after);
 
+    const placements = setupPlacementsForRecord();
     const record: GameRecord = {
       gameId: gameId!,
       timeControlId: tc.id,
@@ -645,6 +841,7 @@ export function SweeperGame() {
       outcome: state.outcome,
       reason: state.reason,
       moves,
+      ...(placements ? { setupPlacements: placements } : {}),
     };
     await saveGameRecord(record);
     await appendSummary({
@@ -709,63 +906,45 @@ export function SweeperGame() {
   // --------------------------------------------------------------------
   // Rendering
   // --------------------------------------------------------------------
-  const viewedState: GameState = states[viewPly] ?? states[0];
+  const inSetup = phase === 'setup';
+  const viewedState: GameState | null = inSetup ? null : (states[viewPly] ?? states[0] ?? null);
   const atPresent = viewPly === moves.length;
 
+  const displayBoard: (Piece | null)[] = inSetup
+    ? setupBoard
+    : (viewedState?.board ?? setupBoard);
+
   const captures = useMemo(
-    () => computeCaptures(viewedState.board, initialState(mines).board),
-    [viewedState.board, mines],
+    () => (viewedState && states[0] ? computeCaptures(viewedState.board, states[0].board) : null),
+    [viewedState, states],
   );
   const emojiBubble = emojiBubbleEvent
     ? {
         emoji: emojiBubbleEvent.emoji,
         key: emojiBubbleEvent.key,
         squares: kingSquaresForBoard(
-          viewedState.board,
-          emojiBubbleEvent.side === 'me' ? myEngineColor : myEngineColor === 'w' ? 'b' : 'w',
+          displayBoard,
+          emojiBubbleEvent.side === 'me' ? myEngineColor : oppEngineColor,
         ),
       }
     : null;
 
-  // Numbers + craters as of the position being viewed, so scrubbing back
-  // un-learns what the board hadn't revealed yet.
-  const sweeperCounts = useMemo(
-    () => revealedCounts(viewedState).map(({ idx, count }) => ({ sq: idxToSq(idx), count })),
-    [viewedState],
-  );
-  // The engine marks a mine detonated the moment the move commits, but the
-  // crater must not appear under a piece that's still sliding toward it —
-  // that would spoil the mine before impact. `doomed` holds that square for
-  // exactly the flight, so hide its crater until the blast goes off.
-  const sweeperCraters = useMemo(
-    () => {
-      const inFlight = new Set(doomed.map((d) => d.sq));
-      return viewedState.detonated.map(idxToSq).filter((sq) => !inFlight.has(sq));
-    },
-    [viewedState, doomed],
-  );
   const legalTargets = useMemo(() => {
-    if (!atPresent) return [];
-    if (!selectedSquare) return [];
+    if (inSetup) return setupTargets;
+    if (!atPresent || !selectedSquare || !game) return [];
     return legalMovesFrom(game, selectedSquare);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSquare, game, atPresent]);
+  }, [inSetup, setupTargets, selectedSquare, game, atPresent]);
 
   const lastMove = useMemo(() => {
-    if (viewPly <= 0) return null;
+    if (inSetup || viewPly <= 0) return null;
     const uci = moves[viewPly - 1]?.uci;
     if (!uci || !/^[a-h][1-8][a-h][1-8]/.test(uci)) return null;
-    // A move cut short by a mine never reached its destination — tint where
-    // the piece actually died instead.
-    const aborted = results[viewPly - 1]?.abortedAt;
-    const to = aborted != null ? idxToSq(aborted) : uci.slice(2, 4);
-    return { from: uci.slice(0, 2) as Square, to: to as Square };
-  }, [viewPly, moves, results]);
+    return { from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square };
+  }, [inSetup, viewPly, moves]);
 
-  // Scrub one ply. Plays the move's normal SFX going forward, reversed going
-  // back. The Undo/Redo buttons pass playSfx=false so they rely on the global
-  // button-click SFX instead.
   const navigateGameView = (forward: boolean, playSfx = true) => {
+    if (inSetup) return;
     setViewPly((p) => {
       const total = results.length;
       const next = forward ? Math.min(total, p + 1) : Math.max(0, p - 1);
@@ -774,27 +953,21 @@ export function SweeperGame() {
       if (playSfx && r) {
         sfx.cutoffChessSfx();
         if (forward) {
-          if (r.castled) sfx.playCastle();
-          else if (r.captured) sfx.playCapture();
+          if (r.captured) sfx.playCapture();
           else sfx.playMove();
-          if (r.mineIdx == null && r.check && !r.checkmate) sfx.playCheck();
+          if (r.check && !r.checkmate) sfx.playCheck();
         } else {
           if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
           if (r.check) sfx.playCheckReversed();
         }
       }
-      // Re-fire the blast when scrubbing forward into the ply that set it off.
-      if (forward && r?.mineIdx != null) {
-        triggerBlast(idxToSq(r.mineIdx), r.destroyedLetter, r.mineLoss ?? (p % 2 === 0 ? 'w' : 'b'), `mine-view-${p}-${r.uci}`);
-      }
       return next;
     });
   };
 
-  const canUndoView = viewPly > 0;
-  const canRedoView = viewPly < results.length;
+  const canUndoView = !inSetup && viewPly > 0;
+  const canRedoView = !inSetup && viewPly < results.length;
 
-  // Arrow keys scrub through played positions. Skipped while typing in chat.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -806,22 +979,19 @@ export function SweeperGame() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results]);
+  }, [results, inSetup]);
 
-  // Leaving the present clears any stale piece selection.
   useEffect(() => {
     if (!atPresent) setSelectedSquare(null);
   }, [atPresent]);
 
   const isActiveSide = (c: Color): boolean => {
-    if (end) return false;
-    if (moves.length === 0) return false;
+    if (end || inSetup || !game) return false;
     return (game.turn === 'w') === (c === 'white');
   };
 
-  // Try to play `from`→`to`. Pawn promotions defer to the picker overlay
-  // (resolved by `resolvePromotion` once the user clicks a piece).
   const attemptMove = (from: Square, to: Square, viaClick = false): boolean => {
+    if (!game) return false;
     const piece = game.board[sqToIdx(from)];
     const isPawn = piece && piece.letter.toUpperCase() === 'P';
     const targetRank = parseInt(to[1], 10);
@@ -845,8 +1015,8 @@ export function SweeperGame() {
 
   const onSquareClick = (square: Square) => {
     if (end) return;
-    if (!gameStarted) return;
-    if (!atPresent) return;
+    if (inSetup) { onSetupSquareClick(square); return; }
+    if (!atPresent || !game) return;
     if (!isMyTurn()) { setSelectedSquare(null); return; }
     const target = legalTargets.find((t) => t.to === square);
     if (selectedSquare === square) { setSelectedSquare(null); return; }
@@ -862,12 +1032,10 @@ export function SweeperGame() {
     setSelectedSquare(null);
   };
 
-  // Drag start on an own piece — same effect as clicking it, so the legal
-  // target rings show up while the user drags.
   const onDragStartSquare = (from: Square) => {
     if (end) return;
-    if (!gameStarted) return;
-    if (!atPresent) return;
+    if (inSetup) { onSetupDragStart(from); return; }
+    if (!atPresent || !game) return;
     if (!isMyTurn()) return;
     const piece = game.board[sqToIdx(from)];
     if (!piece || piece.color !== myEngineColor) return;
@@ -876,8 +1044,8 @@ export function SweeperGame() {
 
   const onPieceDrop = (from: Square, to: Square): boolean => {
     if (end) return false;
-    if (!gameStarted) return false;
-    if (!atPresent) return false;
+    if (inSetup) return onSetupPieceDrop(from, to);
+    if (!atPresent || !game) return false;
     if (!isMyTurn()) return false;
     const piece = game.board[sqToIdx(from)];
     if (!piece || piece.color !== myEngineColor) return false;
@@ -888,10 +1056,8 @@ export function SweeperGame() {
 
   const movesDisplay = useMemo(() => {
     return results.reduce<string[]>((acc, r, i) => {
-      // Mark the plies that set a mine off so the move list tells the story.
-      const label = r.san + (r.mineIdx != null ? ' 💥' : '');
-      if (i % 2 === 0) acc.push(`${i / 2 + 1}. ${label}`);
-      else acc[acc.length - 1] += ` ${label}`;
+      if (i % 2 === 0) acc.push(`${i / 2 + 1}. ${r.san}`);
+      else acc[acc.length - 1] += ` ${r.san}`;
       return acc;
     }, []);
   }, [results]);
@@ -900,7 +1066,16 @@ export function SweeperGame() {
     ? eloDelta(rating, opp.rating, end.outcome === 'draw' ? 0.5 : end.outcome === myColor ? 1 : 0, 0)
     : 0;
 
-  const inCheck = !end && isInCheck(game);
+  const inCheck = !end && !inSetup && !!game && isInCheck(game);
+
+  const setupInteractive = inSetup && gameStarted && !myReadySetup && !end;
+  const playInteractive = !inSetup && !end && isMyTurn() && atPresent && !pendingPromo;
+
+  const trayPieces = ARMY_ORDER.map((letter) => ({
+    letter,
+    left: trayLeft[letter] ?? 0,
+    key: (myEngineColor === 'w' ? 'w' : 'b') + letter,
+  }));
 
   return (
     <div className="game-layout">
@@ -914,43 +1089,81 @@ export function SweeperGame() {
           </span>
         </div>
       )}
-      <div className="board-column with-mine-rail">
-        <div className="mine-side-rail">
-          <MineRail
-            detonated={viewedState.detonated.length}
-            flagMode={flagMode}
-            onToggleFlagMode={() => {
-              setFlagMode((v) => !v);
-              sfx.playClick();
-            }}
-          />
-        </div>
-        <div className={`board-wrap${!atPresent ? ' viewing-history' : ''}`}>
+      <div className={`board-column${inSetup ? ' with-setup-tray' : ''}`}>
+        {inSetup && (
+          <div className="setup-side-rail">
+            <div className="setup-tray">
+              <div className="setup-tray-title">Deploy your army</div>
+              <div className="setup-tray-clock" aria-label="Setup time remaining">
+                {gameStarted ? formatClock(setupMsLeft) : formatClock(SETUP_PHASE_MS)}
+              </div>
+              <div className="setup-tray-grid">
+                {trayPieces.map(({ letter, left, key }) => (
+                  <button
+                    key={letter}
+                    type="button"
+                    className={`setup-tray-piece${armedLetter === letter ? ' armed' : ''}${left <= 0 ? ' spent' : ''}`}
+                    disabled={!setupInteractive || left <= 0}
+                    draggable={setupInteractive && left > 0}
+                    onDragStart={(e) => onTrayDragStart(e, letter)}
+                    onClick={() => {
+                      if (!setupInteractive) return;
+                      setSetupSelected(null);
+                      setArmedLetter((cur) => (cur === letter ? null : letter));
+                      sfx.playSelect();
+                    }}
+                    aria-label={`${PIECE_NAME[letter]}, ${left} left to place`}
+                    data-no-sfx
+                  >
+                    <span className="setup-tray-sprite">{renderPiece(key as PieceKey, 30)}</span>
+                    <span className="setup-tray-count">×{left}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={!gameStarted || myReadySetup}
+                onClick={() => { finalizeMyPlacement(); }}
+              >
+                {myReadySetup ? 'Ready ✓' : trayTotal > 0 ? `Ready (${trayTotal} random)` : 'Ready'}
+              </button>
+              <div className="setup-tray-status muted small">
+                {myReadySetup
+                  ? (oppReadySetup ? 'Both ready — starting…' : 'Waiting for opponent…')
+                  : oppReadySetup ? 'Opponent is ready.' : 'Opponent is placing…'}
+              </div>
+              <div className="setup-tray-hint muted small">
+                Place your pieces anywhere on your half — pawns not on your
+                back rank. Click or drag from the tray; right-click a placed
+                piece to return it. Pieces left when the clock runs out are
+                placed at random. Opponent placements stay hidden until both
+                sides are ready.
+              </div>
+            </div>
+          </div>
+        )}
+        <div className={`board-wrap${!inSetup && !atPresent ? ' viewing-history' : ''}`}>
           <MergeBoard
-            board={viewedState.board}
+            board={displayBoard}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={atPresent ? selectedSquare : null}
-            legalTargets={atPresent ? legalTargets : []}
+            selectedSquare={inSetup ? setupSelected : (atPresent ? selectedSquare : null)}
+            legalTargets={legalTargets}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
             onDragStartSquare={onDragStartSquare}
-            onRightClickSquare={flagMode ? toggleFlag : undefined}
-            interactive={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
-            draggable={!end && gameStarted && isMyTurn() && atPresent && !pendingPromo}
+            onSpawn={setupInteractive ? onSetupSpawn : undefined}
+            onRightClickSquare={setupInteractive ? removePlacedPiece : undefined}
+            interactive={setupInteractive || playInteractive}
+            draggable={setupInteractive || playInteractive}
             lastMove={lastMove}
             slideMoves={slideAnim?.moves}
             slideKey={slideAnim?.key}
             popSquares={popAnim?.squares}
             popKey={popAnim?.key}
-            abilityAnim={mineAnim}
-            doomedPieces={doomed}
-            sweeperCounts={sweeperCounts}
-            sweeperCraters={sweeperCraters}
-            sweeperFlags={flags}
-            sweeperZone
             emojiBubble={emojiBubble}
           />
-          {pendingPromo && (
+          {pendingPromo && game && (
             <PromotionPicker
               square={pendingPromo.to}
               color={game.turn}
@@ -959,7 +1172,7 @@ export function SweeperGame() {
               onCancel={() => setPendingPromo(null)}
             />
           )}
-          {partnerReady && !gameStarted && movesCountRef.current === 0 && (
+          {partnerReady && !gameStarted && (
             <StartOverlay
               whiteAvatar={handoff.iAmWhite ? avatar : oppDisplayAvatar}
               whiteHandle={handoff.iAmWhite ? me.handle : oppDisplayHandle}
@@ -1022,7 +1235,7 @@ export function SweeperGame() {
           captureSide={myColor === 'white' ? 'w' : 'b'}
         />
         <div className="game-meta">
-          <div className="game-meta-title">Chesssweeper · {tc.label}</div>
+          <div className="game-meta-title">Setup · {tc.label}</div>
           <div className="muted small">
             peer: {handoff.partnerPeerId.slice(-6)} {partnerReady ? '✓' : '…'}
             {' · '}
@@ -1030,6 +1243,11 @@ export function SweeperGame() {
             {connState === 'connecting' && <span>connecting{connDetail ? ` (${connDetail})` : '…'}</span>}
             {connState === 'failed' && <span className="neg">failed: {connDetail}</span>}
           </div>
+          {inSetup && (
+            <div className="small muted">
+              Setup phase — {gameStarted ? formatClock(setupMsLeft) : formatClock(SETUP_PHASE_MS)} to deploy.
+            </div>
+          )}
           {inCheck && <div className="small neg">Check.</div>}
           <VoiceControls
             inline
@@ -1063,10 +1281,12 @@ export function SweeperGame() {
           <button
             className="free-play-btn"
             type="button"
-            disabled={moves.length === 0}
+            disabled={moves.length === 0 || !setupPlacementsForRecord()}
             onClick={() => {
+              const placements = setupPlacementsForRecord();
+              if (!placements) return;
               const exp = buildGameExport({
-                variant: 'sweeper',
+                variant: 'setup',
                 gameId: gameId!,
                 timeControlId: tc.id,
                 white: handoff.iAmWhite ? me : opp,
@@ -1076,6 +1296,7 @@ export function SweeperGame() {
                 outcome: end?.outcome ?? null,
                 reason: end?.reason ?? null,
                 moves,
+                setupPlacements: placements,
               });
               downloadGameExport(exp);
             }}
@@ -1118,7 +1339,7 @@ export function SweeperGame() {
               ) : (
                 <button
                   className="secondary-btn"
-                  disabled={drawOfferedByMe}
+                  disabled={drawOfferedByMe || inSetup}
                   onClick={() => {
                     sessionRef.current.send({ type: 'draw-offer' });
                     setDrawOfferedByMe(true);
@@ -1133,7 +1354,9 @@ export function SweeperGame() {
 
         <div className="moves-panel">
           {movesDisplay.length === 0 ? (
-            <div className="muted small">No moves yet.</div>
+            <div className="muted small">
+              {inSetup ? 'Game starts after setup.' : 'No moves yet.'}
+            </div>
           ) : (
             movesDisplay.map((line, i) => (
               <div key={i} className="moves-line">{line}</div>
