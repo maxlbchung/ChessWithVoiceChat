@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent as ReactDragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { HOLLOW_PURPLE_DRIFT_MS, MergeBoard } from '../components/MergeBoard';
@@ -82,11 +83,36 @@ import {
   type GameState as SweeperState,
   type MoveResult as SweeperResult,
 } from '../lib/sweeperChess';
+import {
+  ARMY_ORDER as SETUP_ARMY_ORDER,
+  applyMove as setupApply,
+  autoCompletePlacement as setupAutoComplete,
+  canPlaceAt as setupCanPlaceAt,
+  idxToSq as setupIdxToSq,
+  initialStateFromPlacements as setupInitialFromPlacements,
+  legalMovesFrom as setupLegal,
+  remainingArmy as setupRemainingArmy,
+  sqToIdx as setupSqToIdx,
+  type GameState as SetupState,
+  type MoveResult as SetupResult,
+  type Placement as SetupPlacement,
+} from '../lib/setupChess';
+import {
+  applyMove as secretApply,
+  initialState as secretInitial,
+  legalMovesFrom as secretLegal,
+  pawnSquaresFor as secretPawnSquaresFor,
+  randomPickSquare as secretRandomPick,
+  startingBoard as secretStartingBoard,
+  sqToIdx as secretSqToIdx,
+  type GameState as SecretState,
+  type MoveResult as SecretResult,
+} from '../lib/secretChess';
 import { HeroAbilities } from '../components/HeroAbilities';
 import { MineRail } from '../components/MineRail';
 import type { Piece as MergePiece } from '../lib/mergeChess';
 import type { AbilityAnim } from '../components/MergeBoard';
-import { renderPiece } from '../lib/pieceSvgs';
+import { renderPiece, type PieceKey } from '../lib/pieceSvgs';
 import { useSettingsStore } from '../store/settingsStore';
 const ACTIVITY_WINDOWS: Record<string, number> = Object.fromEntries(
   TIME_CONTROLS.map((tc) => [tc.id, tc.activityWindowMs]),
@@ -98,11 +124,13 @@ import { getIceServers } from '../lib/iceConfig';
 import { setLobbyHandoff } from '../store/lobbyHandoff';
 import * as sfx from '../lib/sfx';
 
-// Setup Chess ('setup') and Secret Queen ('secret') are deliberately absent:
-// both hinge on hidden information (secret placements / a secretly picked
-// pawn), which free play (one person driving both sides) can't meaningfully
-// exercise. Online play only.
-type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper';
+// Setup Chess ('setup') and Secret Queen ('secret') play here with their
+// hidden information laid bare — one person drives both sides, so free play
+// shows everything: Setup runs an untimed placement stage for BOTH armies
+// before the merged game, and Secret Queen has you pick both fakes (each
+// rendered with the owner-shadow pawn marker; the reveal still fires on the
+// fake's first move so the moment previews).
+type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret';
 
 type Mode = 'idle' | 'searching' | 'hosting';
 
@@ -140,7 +168,7 @@ export function Home() {
   // resolver knows which engine's apply path to dispatch to.
   const [freePromo, setFreePromo] = useState<{
     from: string; to: string;
-    variant: 'normal' | 'merge' | 'two' | 'hero' | 'sweeper';
+    variant: 'normal' | 'merge' | 'two' | 'hero' | 'sweeper' | 'setup' | 'secret';
     viaClick: boolean;
   } | null>(null);
   const [freeSelected, setFreeSelected] = useState<string | null>(null);
@@ -190,6 +218,27 @@ export function Home() {
   useEffect(() => () => {
     if (sweeperBlastTimerRef.current != null) clearTimeout(sweeperBlastTimerRef.current);
   }, []);
+
+  // Setup Chess — an untimed placement stage before play. Unlike online play
+  // there is nothing hidden: you arrange BOTH armies (white ranks 1–4, black
+  // ranks 5–8) with per-color trays, then Start auto-completes any leftovers
+  // and merges into a live game with the king-capture rule.
+  const [setupStage, setSetupStage] = useState<'place' | 'play'>('place');
+  const [setupPlacements, setSetupPlacements] = useState<{ w: SetupPlacement; b: SetupPlacement }>(
+    () => ({ w: new Map(), b: new Map() }),
+  );
+  // Tray piece armed for click-to-place (color + uppercase letter).
+  const [setupArmed, setSetupArmed] = useState<{ color: 'w' | 'b'; letter: string } | null>(null);
+  const [setupStates, setSetupStates] = useState<SetupState[]>([]);
+  const [setupResults, setSetupResults] = useState<SetupResult[]>([]);
+
+  // Secret Queen — pick white's secret pawn, then black's, then play. Both
+  // fakes render with the owner-shadow marker (single player sees all); the
+  // reveal still flips on the fake's first move / hidden check.
+  const [secretStage, setSecretStage] = useState<'pickW' | 'pickB' | 'play'>('pickW');
+  const [secretPicks, setSecretPicks] = useState<{ w: string | null; b: string | null }>({ w: null, b: null });
+  const [secretStates, setSecretStates] = useState<SecretState[]>([]);
+  const [secretResults, setSecretResults] = useState<SecretResult[]>([]);
 
   // Hero state — picks default to Frost (W) / Warlord (B); changing either
   // resets the engine. abilityArmed signals "next click is a target".
@@ -272,6 +321,15 @@ export function Home() {
     setSweeperDoomed([]);
     setSweeperAnim(null);
     setSweeperFlags([]);
+    setSetupStage('place');
+    setSetupPlacements({ w: new Map(), b: new Map() });
+    setSetupArmed(null);
+    setSetupStates([]);
+    setSetupResults([]);
+    setSecretStage('pickW');
+    setSecretPicks({ w: null, b: null });
+    setSecretStates([]);
+    setSecretResults([]);
     // Clear any stale hero ability animation — without this, switching away
     // from hero and back would re-fire the last animation against a fresh
     // board (e.g. a Knight shake on the king's *old* square).
@@ -352,12 +410,17 @@ export function Home() {
   }, [goofballLeg1, freeVariant, freeViewPly, heroResults.length, heroBaseState]);
   const heroViewState: HeroState = heroGoofballStaged ?? heroBaseState;
   const sweeperViewState: SweeperState = sweeperStates[freeViewPly] ?? sweeperStates[0];
+  // Null until their pre-play stage finishes (placement / picks).
+  const setupViewState: SetupState | null = setupStates[freeViewPly] ?? setupStates[0] ?? null;
+  const secretViewState: SecretState | null = secretStates[freeViewPly] ?? secretStates[0] ?? null;
   const totalFreePly =
     freeVariant === 'normal' ? freeChess.history().length :
     freeVariant === 'merge' ? mergeResults.length :
     freeVariant === 'two' ? twoResults.length :
     freeVariant === 'cash' ? cashResults.length :
     freeVariant === 'sweeper' ? sweeperResults.length :
+    freeVariant === 'setup' ? setupResults.length :
+    freeVariant === 'secret' ? secretResults.length :
     heroResults.length;
   const freeTurn: 'w' | 'b' =
     freeVariant === 'normal' ? previewChess.turn() :
@@ -365,6 +428,9 @@ export function Home() {
     freeVariant === 'two' ? twoViewState.turn :
     freeVariant === 'cash' ? cashViewState.turn :
     freeVariant === 'sweeper' ? sweeperViewState.turn :
+    freeVariant === 'setup' ? (setupViewState?.turn ?? 'w') :
+    // Pre-play the swatch tracks whose secret pawn is being picked.
+    freeVariant === 'secret' ? (secretViewState?.turn ?? (secretStage === 'pickB' ? 'b' : 'w')) :
     heroViewState.turn;
   const canUndoFree = freeViewPly > 0;
 
@@ -401,10 +467,26 @@ export function Home() {
       if (!r?.checkmate) return null;
       return { winner: sweeperViewState.turn === 'w' ? 'b' : 'w' };
     }
+    if (freeVariant === 'setup') {
+      if (!setupViewState) return null;
+      // A captured exposed king ends it just as hard as checkmate.
+      if (setupViewState.kingCaptured) {
+        return { winner: setupViewState.kingCaptured === 'w' ? 'b' : 'w' };
+      }
+      const r = setupResults[freeViewPly - 1];
+      if (!r?.checkmate) return null;
+      return { winner: setupViewState.turn === 'w' ? 'b' : 'w' };
+    }
+    if (freeVariant === 'secret') {
+      if (!secretViewState) return null;
+      const r = secretResults[freeViewPly - 1];
+      if (!r?.checkmate) return null;
+      return { winner: secretViewState.turn === 'w' ? 'b' : 'w' };
+    }
     const r = heroResults[freeViewPly - 1];
     if (!r?.checkmate) return null;
     return { winner: heroViewState.turn === 'w' ? 'b' : 'w' };
-  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn, heroResults, heroViewState.turn, sweeperResults, sweeperViewState]);
+  }, [freeVariant, previewChess, freeViewPly, mergeResults, mergeViewState.turn, twoResults, twoViewState.turn, cashResults, cashViewState.turn, heroResults, heroViewState.turn, sweeperResults, sweeperViewState, setupResults, setupViewState, secretResults, secretViewState]);
 
   const freeLegalTargets = useMemo<string[]>(() => {
     if (!freeSelected) return [];
@@ -447,6 +529,91 @@ export function Home() {
     if (freeVariant !== 'sweeper' || !freeSelected) return [];
     return sweeperLegal(sweeperViewState, freeSelected);
   }, [freeVariant, freeSelected, sweeperViewState]);
+
+  // ---- Setup Chess (free play) ----
+  // Board shown during the placement stage: both in-progress armies.
+  const setupPlaceBoard = useMemo<(MergePiece | null)[]>(() => {
+    const board: (MergePiece | null)[] = new Array(64).fill(null);
+    for (const [idx, letter] of setupPlacements.w) {
+      board[idx] = { color: 'w', letter: letter.toUpperCase() as MergePiece['letter'] };
+    }
+    for (const [idx, letter] of setupPlacements.b) {
+      board[idx] = { color: 'b', letter: letter.toLowerCase() as MergePiece['letter'] };
+    }
+    return board;
+  }, [setupPlacements]);
+
+  // What's left to place, per side (letter -> count).
+  const setupRemaining = useMemo(() => ({
+    w: setupRemainingArmy(setupPlacements.w),
+    b: setupRemainingArmy(setupPlacements.b),
+  }), [setupPlacements]);
+  const setupLeftTotal =
+    Object.values(setupRemaining.w).reduce((a, b) => a + b, 0) +
+    Object.values(setupRemaining.b).reduce((a, b) => a + b, 0);
+
+  // Squares the armed tray piece (or selected placed piece) may land on.
+  const setupPlaceTargets = useMemo<{ to: string; isCapture: boolean; isMerge: boolean }[]>(() => {
+    if (freeVariant !== 'setup' || setupStage !== 'place') return [];
+    let color: 'w' | 'b' | null = null;
+    let letter: string | null = null;
+    if (setupArmed) {
+      color = setupArmed.color;
+      letter = setupArmed.letter;
+    } else if (freeSelected) {
+      const idx = setupSqToIdx(freeSelected);
+      const w = setupPlacements.w.get(idx);
+      const b = setupPlacements.b.get(idx);
+      if (w) { color = 'w'; letter = w; }
+      else if (b) { color = 'b'; letter = b; }
+    }
+    if (!color || !letter) return [];
+    const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
+    for (let idx = 0; idx < 64; idx++) {
+      if (setupPlacements.w.has(idx) || setupPlacements.b.has(idx)) continue;
+      if (!setupCanPlaceAt(color, letter, idx)) continue;
+      out.push({ to: setupIdxToSq(idx), isCapture: false, isMerge: false });
+    }
+    return out;
+  }, [freeVariant, setupStage, setupArmed, freeSelected, setupPlacements]);
+
+  const setupLegalTargets = useMemo(() => {
+    if (freeVariant !== 'setup' || setupStage !== 'play' || !freeSelected || !setupViewState) return [];
+    return setupLegal(setupViewState, freeSelected);
+  }, [freeVariant, setupStage, freeSelected, setupViewState]);
+
+  // ---- Secret Queen (free play) ----
+  // Standard starting position shown while the picks are being made.
+  const secretPickBoard = useMemo<(MergePiece | null)[]>(
+    () => secretStartingBoard() as (MergePiece | null)[],
+    [],
+  );
+
+  // The 8 candidate pawns of whichever side is currently picking. isCapture
+  // deliberately: occupied squares draw the ring marker (the plain dot would
+  // hide behind the pawn sprite) — same trick SecretGame uses.
+  const secretPickTargets = useMemo<{ to: string; isCapture: boolean; isMerge: boolean }[]>(() => {
+    if (freeVariant !== 'secret' || secretStage === 'play') return [];
+    const color = secretStage === 'pickB' ? 'b' : 'w';
+    return secretPawnSquaresFor(color).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
+  }, [freeVariant, secretStage]);
+
+  const secretLegalTargets = useMemo(() => {
+    if (freeVariant !== 'secret' || secretStage !== 'play' || !freeSelected || !secretViewState) return [];
+    return secretLegal(secretViewState, freeSelected);
+  }, [freeVariant, secretStage, freeSelected, secretViewState]);
+
+  // Both unrevealed fakes get the owner-shadow pawn marker — no opponent
+  // masking in single-player, you see everything.
+  const secretSelfPawnSqs = useMemo<string[]>(() => {
+    if (freeVariant !== 'secret' || !secretViewState) return [];
+    const out: string[] = [];
+    for (const c of ['w', 'b'] as const) {
+      const f = secretViewState.fakes[c];
+      if (f.sq && !f.revealed) out.push(f.sq);
+    }
+    return out;
+  }, [freeVariant, secretViewState]);
 
   // Revealed numbers + craters at the viewed ply — scrubbing back un-learns
   // whatever the board hadn't uncovered yet.
@@ -570,6 +737,8 @@ export function Home() {
     else if (freeVariant === 'cash') uci = cashResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'hero') uci = heroResults[freeViewPly - 1]?.uci;
     else if (freeVariant === 'sweeper') uci = sweeperResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'setup') uci = setupResults[freeViewPly - 1]?.uci;
+    else if (freeVariant === 'secret') uci = secretResults[freeViewPly - 1]?.uci;
     if (!uci) return null;
     if (freeVariant === 'cash') {
       const buy = cashParseBuy(uci);
@@ -612,7 +781,7 @@ export function Home() {
     if (aborted != null) return { from: uci.slice(0, 2), to: sweeperIdxToSq(aborted) };
     return { from: uci.slice(0, 2), to: uci.slice(2, 4) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates, sweeperResults]);
+  }, [freeVariant, freeViewPly, freeFen, mergeResults, twoResults, cashResults, heroResults, heroStates, sweeperResults, setupResults, secretResults]);
 
   const applyFreeMove = (from: string, to: string, promotion?: string, viaClick = false): boolean => {
     while (freeChess.history().length > freeViewPly) freeChess.undo();
@@ -818,6 +987,200 @@ export function Home() {
     }
     if (animationsEnabled && !!promotion && res.result.mineIdx == null) {
       setPopAnim({ squares: [to], key: Date.now() });
+    }
+    return true;
+  };
+
+  // ---- Setup Chess placement-stage actions ----
+  // All of them look up which side's map holds a square; the two maps never
+  // overlap (placement blocks occupied squares across both).
+  const setupOccupantOf = (idx: number): { color: 'w' | 'b'; letter: string } | null => {
+    const w = setupPlacements.w.get(idx);
+    if (w) return { color: 'w', letter: w };
+    const b = setupPlacements.b.get(idx);
+    if (b) return { color: 'b', letter: b };
+    return null;
+  };
+
+  const placeSetupPiece = (color: 'w' | 'b', letter: string, sq: string): boolean => {
+    if (setupStage !== 'place') return false;
+    const idx = setupSqToIdx(sq);
+    if (setupOccupantOf(idx)) return false;
+    if (!setupCanPlaceAt(color, letter, idx)) return false;
+    if ((setupRemaining[color][letter] ?? 0) <= 0) return false;
+    setSetupPlacements((p) => {
+      const next = new Map(p[color]);
+      next.set(idx, letter);
+      return { ...p, [color]: next };
+    });
+    sfx.playPlace();
+    // Keep the letter armed while more of that piece remain — placing 8
+    // pawns shouldn't take 16 clicks (same convention as SetupGame).
+    if (setupArmed && setupArmed.color === color && setupArmed.letter === letter
+        && (setupRemaining[color][letter] ?? 0) <= 1) {
+      setSetupArmed(null);
+    }
+    return true;
+  };
+
+  const moveSetupPiece = (from: string, to: string): boolean => {
+    if (setupStage !== 'place') return false;
+    const fromIdx = setupSqToIdx(from);
+    const toIdx = setupSqToIdx(to);
+    const occ = setupOccupantOf(fromIdx);
+    if (!occ) return false;
+    if (setupOccupantOf(toIdx)) return false;
+    if (!setupCanPlaceAt(occ.color, occ.letter, toIdx)) return false;
+    setSetupPlacements((p) => {
+      const next = new Map(p[occ.color]);
+      next.delete(fromIdx);
+      next.set(toIdx, occ.letter);
+      return { ...p, [occ.color]: next };
+    });
+    sfx.playMove();
+    return true;
+  };
+
+  const removeSetupPiece = (sq: string) => {
+    if (setupStage !== 'place') return;
+    const idx = setupSqToIdx(sq);
+    const occ = setupOccupantOf(idx);
+    if (!occ) return;
+    setSetupPlacements((p) => {
+      const next = new Map(p[occ.color]);
+      next.delete(idx);
+      return { ...p, [occ.color]: next };
+    });
+    setFreeSelected(null);
+    sfx.playCaptureReversed();
+  };
+
+  // Tray → board HTML5 drag; letter casing encodes color for the board's
+  // "spawn:<letter>" payload (same channel SetupGame/Sandbox use).
+  const onSetupTrayDragStart = (e: ReactDragEvent<HTMLButtonElement>, color: 'w' | 'b', letter: string) => {
+    const cased = color === 'w' ? letter.toUpperCase() : letter.toLowerCase();
+    try {
+      e.dataTransfer.setData('text/plain', `spawn:${cased}`);
+      e.dataTransfer.effectAllowed = 'copyMove';
+    } catch {}
+  };
+
+  const handleSetupSpawn = (letter: string, to: string) => {
+    placeSetupPiece(letter === letter.toUpperCase() ? 'w' : 'b', letter.toUpperCase(), to);
+  };
+
+  // Start: auto-complete whatever's left in the trays, merge, begin play.
+  const startSetupPlay = () => {
+    if (setupStage !== 'place') return;
+    const w = setupAutoComplete('w', setupPlacements.w);
+    const b = setupAutoComplete('b', setupPlacements.b);
+    setSetupPlacements({ w, b });
+    const init = setupInitialFromPlacements(w, b);
+    setSetupStates([init]);
+    setSetupResults([]);
+    setSetupStage('play');
+    setSetupArmed(null);
+    setFreeViewPly(0);
+    setFreeSelected(null);
+    sfx.playQueue();
+  };
+
+  const applySetupMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false): boolean => {
+    // Branch in past: drop everything after viewPly, then apply on the snapshot we're viewing.
+    const truncStates = setupStates.slice(0, freeViewPly + 1);
+    const truncResults = setupResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    if (!base) return false;
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    const res = setupApply(base, uci);
+    if (!res) return false;
+    if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    if (res.result.kingCaptured || res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setSetupStates([...truncStates, res.state]);
+    setSetupResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    if (viaClick && animationsEnabled) {
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
+    if (animationsEnabled && !!promotion) {
+      setPopAnim({ squares: [to], key: Date.now() });
+    }
+    return true;
+  };
+
+  // ---- Secret Queen pick-stage + play actions ----
+  const startSecretPlay = (w: string, b: string) => {
+    const init = secretInitial(w, b);
+    setSecretStates([init]);
+    setSecretResults([]);
+    setSecretStage('play');
+    setFreeViewPly(0);
+    setFreeSelected(null);
+    sfx.playQueue();
+  };
+
+  const pickSecretPawn = (sq: string) => {
+    if (secretStage === 'pickW') {
+      if (!secretPawnSquaresFor('w').includes(sq)) return;
+      setSecretPicks((p) => ({ ...p, w: sq }));
+      setSecretStage('pickB');
+      sfx.playSelect();
+      return;
+    }
+    if (secretStage === 'pickB') {
+      if (!secretPawnSquaresFor('b').includes(sq)) return;
+      setSecretPicks((p) => ({ ...p, b: sq }));
+      startSecretPlay(secretPicks.w ?? secretRandomPick('w'), sq);
+    }
+  };
+
+  const randomSecretPick = () => {
+    if (secretStage === 'pickW') {
+      const w = secretRandomPick('w');
+      setSecretPicks((p) => ({ ...p, w }));
+      setSecretStage('pickB');
+      sfx.playSelect();
+      return;
+    }
+    if (secretStage === 'pickB') {
+      const b = secretRandomPick('b');
+      setSecretPicks((p) => ({ ...p, b }));
+      startSecretPlay(secretPicks.w ?? secretRandomPick('w'), b);
+    }
+  };
+
+  const applySecretMove = (from: string, to: string, promotion?: 'Q' | 'R' | 'B' | 'N', viaClick = false): boolean => {
+    const truncStates = secretStates.slice(0, freeViewPly + 1);
+    const truncResults = secretResults.slice(0, freeViewPly);
+    const base = truncStates[truncStates.length - 1];
+    if (!base) return false;
+    const uci = from + to + (promotion ? promotion.toLowerCase() : '');
+    const res = secretApply(base, uci);
+    if (!res) return false;
+    if (res.result.captured) sfx.playCapture();
+    else sfx.playMove();
+    // The unmask moment — same smoke-bomb cue + pop SecretGame uses. A
+    // capture-reveal keeps the plain capture sound.
+    const reveal = res.result.reveal && res.result.reveal.cause !== 'captured' ? res.result.reveal : null;
+    if (reveal) sfx.playTwinJutsu();
+    if (res.result.checkmate) sfx.playWin();
+    else if (res.result.check) sfx.playCheck();
+    setSecretStates([...truncStates, res.state]);
+    setSecretResults([...truncResults, res.result]);
+    setFreeViewPly(truncStates.length);
+    setFreeSelected(null);
+    if (viaClick && animationsEnabled) {
+      setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+    }
+    if (animationsEnabled) {
+      const pops: string[] = [];
+      if (promotion) pops.push(to);
+      const revealSq = reveal ? res.state.fakes[reveal.side].sq : null;
+      if (revealSq && !pops.includes(revealSq)) pops.push(revealSq);
+      if (pops.length > 0) setPopAnim({ squares: pops, key: Date.now() });
     }
     return true;
   };
@@ -1202,7 +1565,7 @@ export function Home() {
   // Detect whether `from`→`to` would promote a pawn for the given variant.
   // Cash has no promotion (pawns cash in for gold instead) — always false.
   const isPromotionMove = (
-    variant: 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper',
+    variant: 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret',
     from: string,
     to: string,
   ): boolean => {
@@ -1217,11 +1580,17 @@ export function Home() {
       variant === 'merge' ? mergeSqToIdx(from) :
       variant === 'two' ? twoSqToIdx(from) :
       variant === 'sweeper' ? sweeperSqToIdx(from) :
+      variant === 'setup' ? setupSqToIdx(from) :
+      variant === 'secret' ? secretSqToIdx(from) :
       heroSqToIdx(from);
+    // A Secret Queen fake carries letter Q on the board, so it's never
+    // offered a promotion — it reaches the last rank and stays a queen.
     const piece =
       variant === 'merge' ? mergeViewState.board[idx] :
       variant === 'two' ? twoViewState.board[idx] :
       variant === 'sweeper' ? sweeperViewState.board[idx] :
+      variant === 'setup' ? setupViewState?.board[idx] :
+      variant === 'secret' ? secretViewState?.board[idx] :
       heroViewState.board[idx];
     return !!piece && piece.letter.toUpperCase() === 'P';
   };
@@ -1254,6 +1623,18 @@ export function Home() {
       const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
         ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
       applySweeperMove(from, to, valid, viaClick);
+      return;
+    }
+    if (variant === 'setup') {
+      const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+        ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      applySetupMove(from, to, valid, viaClick);
+      return;
+    }
+    if (variant === 'secret') {
+      const valid: 'Q' | 'R' | 'B' | 'N' = ['Q', 'R', 'B', 'N'].includes(letter)
+        ? (letter as 'Q' | 'R' | 'B' | 'N') : 'Q';
+      applySecretMove(from, to, valid, viaClick);
       return;
     }
     // hero — Mutation side accepts Z/C/A fused options. The applyHeroMove
@@ -1304,6 +1685,29 @@ export function Home() {
   };
   const handleCashDrop = (from: string, to: string): boolean => {
     return applyCashMove(from, to);
+  };
+  const handleSetupDrop = (from: string, to: string): boolean => {
+    if (setupStage === 'place') {
+      const ok = moveSetupPiece(from, to);
+      if (ok) setFreeSelected(null);
+      return ok;
+    }
+    if (!setupViewState) return false;
+    if (!setupLegal(setupViewState, from).some((m) => m.to === to)) return false;
+    if (isPromotionMove('setup', from, to)) {
+      setFreePromo({ from, to, variant: 'setup', viaClick: false });
+      return true;
+    }
+    return applySetupMove(from, to);
+  };
+  const handleSecretDrop = (from: string, to: string): boolean => {
+    if (secretStage !== 'play' || !secretViewState) return false;
+    if (!secretLegal(secretViewState, from).some((m) => m.to === to)) return false;
+    if (isPromotionMove('secret', from, to)) {
+      setFreePromo({ from, to, variant: 'secret', viaClick: false });
+      return true;
+    }
+    return applySecretMove(from, to);
   };
   const handleHeroDrop = (from: string, to: string): boolean => {
     // Dragging an enemy piece while Goofball is armed fires the ability:
@@ -1416,6 +1820,72 @@ export function Home() {
       }
       const piece = sweeperViewState.board[sweeperSqToIdx(square)];
       if (piece && piece.color === sweeperViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
+      return;
+    }
+    if (freeVariant === 'setup') {
+      if (setupStage === 'place') {
+        const occupant = setupOccupantOf(setupSqToIdx(square));
+        if (setupArmed) {
+          if (occupant) {
+            // Clicking a placed piece while armed switches to moving it.
+            setSetupArmed(null);
+            setFreeSelected(square);
+            sfx.playSelect();
+            return;
+          }
+          placeSetupPiece(setupArmed.color, setupArmed.letter, square);
+          return;
+        }
+        if (freeSelected) {
+          if (occupant) { setFreeSelected(square); sfx.playSelect(); return; }
+          if (moveSetupPiece(freeSelected, square)) setFreeSelected(null);
+          return;
+        }
+        if (occupant) {
+          setFreeSelected(square);
+          sfx.playSelect();
+        }
+        return;
+      }
+      if (!setupViewState) return;
+      if (freeSelected && setupLegalTargets.some((t) => t.to === square)) {
+        if (isPromotionMove('setup', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'setup', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applySetupMove(freeSelected, square, undefined, true);
+        return;
+      }
+      const piece = setupViewState.board[setupSqToIdx(square)];
+      if (piece && piece.color === setupViewState.turn) {
+        setFreeSelected(square);
+        return;
+      }
+      setFreeSelected(null);
+      return;
+    }
+    if (freeVariant === 'secret') {
+      if (secretStage !== 'play') {
+        pickSecretPawn(square);
+        return;
+      }
+      if (!secretViewState) return;
+      if (freeSelected && secretLegalTargets.some((t) => t.to === square)) {
+        if (isPromotionMove('secret', freeSelected, square)) {
+          setFreePromo({ from: freeSelected, to: square, variant: 'secret', viaClick: true });
+          setFreeSelected(null);
+          return;
+        }
+        applySecretMove(freeSelected, square, undefined, true);
+        return;
+      }
+      const piece = secretViewState.board[secretSqToIdx(square)];
+      if (piece && piece.color === secretViewState.turn) {
         setFreeSelected(square);
         return;
       }
@@ -1593,6 +2063,26 @@ export function Home() {
       if (freeSelected !== from) setFreeSelected(from);
       return;
     }
+    if (freeVariant === 'setup') {
+      if (setupStage === 'place') {
+        if (!setupOccupantOf(setupSqToIdx(from))) return;
+        setSetupArmed(null);
+        if (freeSelected !== from) setFreeSelected(from);
+        return;
+      }
+      if (!setupViewState) return;
+      const piece = setupViewState.board[setupSqToIdx(from)];
+      if (!piece || piece.color !== setupViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
+    if (freeVariant === 'secret') {
+      if (secretStage !== 'play' || !secretViewState) return;
+      const piece = secretViewState.board[secretSqToIdx(from)];
+      if (!piece || piece.color !== secretViewState.turn) return;
+      if (freeSelected !== from) setFreeSelected(from);
+      return;
+    }
     if (freeVariant === 'hero') {
       // Goofball: dragging an enemy piece while armed is part of the
       // ability (drop fires it). Don't disarm and don't select our own
@@ -1639,6 +2129,16 @@ export function Home() {
     setSweeperDoomed([]);
     setSweeperAnim(null);
     setSweeperFlags([]);
+    // Setup / Secret Queen: back to their pre-play stages.
+    setSetupStage('place');
+    setSetupPlacements({ w: new Map(), b: new Map() });
+    setSetupArmed(null);
+    setSetupStates([]);
+    setSetupResults([]);
+    setSecretStage('pickW');
+    setSecretPicks({ w: null, b: null });
+    setSecretStates([]);
+    setSecretResults([]);
     setFreeViewPly(0);
     setFreeSelected(null);
     setFreeAnnotationsClearKey((k) => k + 1);
@@ -1732,6 +2232,31 @@ export function Home() {
               else if (r.bought) sfx.playPlace();
               else if (r.captured) sfx.playCapture();
               else sfx.playMove();
+              if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
+        } else if (freeVariant === 'setup') {
+          const r = setupResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.captured) sfx.playCapture(); else sfx.playMove();
+              if (r.kingCaptured) sfx.playWin();
+              else if (r.check && !r.checkmate) sfx.playCheck();
+            } else {
+              if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
+              if (r.check) sfx.playCheckReversed();
+            }
+          }
+        } else if (freeVariant === 'secret') {
+          const r = secretResults[forward ? p : next];
+          if (r) {
+            if (forward) {
+              if (r.captured) sfx.playCapture(); else sfx.playMove();
+              // Scrubbing forward into the unmask replays its cue.
+              if (r.reveal && r.reveal.cause !== 'captured') sfx.playTwinJutsu();
               if (r.check && !r.checkmate) sfx.playCheck();
             } else {
               if (r.captured) sfx.playCaptureReversed(); else sfx.playMoveReversed();
@@ -1991,6 +2516,7 @@ export function Home() {
     setFreeSelected(null);
     setCashShopLetter(null);
     setHeroAbilityArmed(false);
+    setSetupArmed(null);
   }, [freeViewPly]);
 
   // Poll queue stats so the home page shows how many people are searching per mode.
@@ -2213,7 +2739,11 @@ export function Home() {
             Chess with voice chat, new variants, and more!
           </p>
         </div>
-        <div className={`free-play-board${freeVariant === 'cash' || freeVariant === 'hero' || freeVariant === 'sweeper' ? ' with-shop' : ''}`}>
+        <div className={`free-play-board${
+          freeVariant === 'cash' || freeVariant === 'hero' || freeVariant === 'sweeper' ||
+          (freeVariant === 'setup' && setupStage === 'place') ||
+          (freeVariant === 'secret' && secretStage !== 'play')
+            ? ' with-shop' : ''}`}>
           {freeVariant === 'sweeper' && (
             <div className="free-play-shop-col">
               <MineRail
@@ -2224,6 +2754,82 @@ export function Home() {
                   sfx.playClick();
                 }}
               />
+            </div>
+          )}
+          {freeVariant === 'setup' && setupStage === 'place' && (
+            <div className="free-play-shop-col">
+              <div className="setup-tray">
+                <div className="setup-tray-title">Deploy both armies</div>
+                {(['w', 'b'] as const).map((color) => (
+                  <div key={color}>
+                    <div className="setup-tray-side-label">{color === 'w' ? 'White' : 'Black'}</div>
+                    <div className="setup-tray-grid">
+                      {SETUP_ARMY_ORDER.map((letter) => {
+                        const left = setupRemaining[color][letter] ?? 0;
+                        const armed = setupArmed?.color === color && setupArmed?.letter === letter;
+                        return (
+                          <button
+                            key={color + letter}
+                            type="button"
+                            className={`setup-tray-piece${armed ? ' armed' : ''}${left <= 0 ? ' spent' : ''}`}
+                            disabled={left <= 0}
+                            draggable={left > 0}
+                            onDragStart={(e) => onSetupTrayDragStart(e, color, letter)}
+                            onClick={() => {
+                              setFreeSelected(null);
+                              setSetupArmed((cur) =>
+                                cur && cur.color === color && cur.letter === letter
+                                  ? null
+                                  : { color, letter },
+                              );
+                              sfx.playSelect();
+                            }}
+                            aria-label={`${color === 'w' ? 'White' : 'Black'} ${letter}, ${left} left to place`}
+                            data-no-sfx
+                          >
+                            <span className="setup-tray-sprite">{renderPiece((color + letter) as PieceKey, 26)}</span>
+                            <span className="setup-tray-count">×{left}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <button type="button" className="primary-btn" onClick={startSetupPlay}>
+                  {setupLeftTotal > 0 ? `Start (${setupLeftTotal} random)` : 'Start game'}
+                </button>
+                <div className="setup-tray-hint muted small">
+                  Place both armies anywhere on their own halves — pawns not
+                  on the back rank. Click or drag from the trays; right-click
+                  a placed piece to return it. Leftovers are placed at random
+                  when you start. An exposed king may simply be captured.
+                </div>
+              </div>
+            </div>
+          )}
+          {freeVariant === 'secret' && secretStage !== 'play' && (
+            <div className="free-play-shop-col">
+              <div className="setup-tray">
+                <div className="setup-tray-title">Pick the secret queens</div>
+                <div className="secret-pick-line">
+                  {secretStage === 'pickW'
+                    ? 'Click one of White’s pawns.'
+                    : 'Click one of Black’s pawns.'}
+                </div>
+                {secretPicks.w && (
+                  <div className="secret-pick-line">
+                    White’s pick: <span className="secret-pick-sq">{secretPicks.w}</span>
+                  </div>
+                )}
+                <button type="button" className="primary-btn" onClick={randomSecretPick}>
+                  Random
+                </button>
+                <div className="setup-tray-hint muted small">
+                  One pawn per side secretly moves like a queen. Free play
+                  shows both with the owner’s shadow marker — the disguise
+                  still drops for good on the fake’s first move.
+                </div>
+              </div>
             </div>
           )}
           {freeVariant === 'cash' && (
@@ -2344,6 +2950,8 @@ export function Home() {
                   { value: 'cash',   label: 'Cash Money' },
                   { value: 'hero',   label: 'Hero' },
                   { value: 'sweeper', label: 'Chesssweeper' },
+                  { value: 'setup',  label: 'Setup' },
+                  { value: 'secret', label: 'Secret Queen' },
                 ]}
                 onChange={(next) => {
                   if (next !== freeVariant) {
@@ -2352,6 +2960,8 @@ export function Home() {
                     else if (next === 'cash') sfx.playPlace();
                     else if (next === 'hero') sfx.playSlice();
                     else if (next === 'sweeper') sfx.playExplosion();
+                    else if (next === 'setup') sfx.playPlace();
+                    else if (next === 'secret') sfx.playTwinJutsu();
                     else sfx.playMove();
                   }
                   setFreeVariant(next);
@@ -2418,6 +3028,53 @@ export function Home() {
                   sweeperCraters={sweeperBoardCraters}
                   sweeperFlags={sweeperFlags}
                   sweeperZone
+                  clearAnnotationsKey={freeAnnotationsClearKey}
+                />
+              ) : freeVariant === 'setup' ? (
+                <MergeBoard
+                  board={setupStage === 'place'
+                    ? setupPlaceBoard
+                    : ((setupViewState?.board ?? setupPlaceBoard) as (MergePiece | null)[])}
+                  orientation={freeOrientation}
+                  selectedSquare={freeSelected}
+                  legalTargets={setupStage === 'place' ? setupPlaceTargets : setupLegalTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleSetupDrop}
+                  onDragStartSquare={onFreeDragStart}
+                  onSpawn={setupStage === 'place' ? handleSetupSpawn : undefined}
+                  onRightClickSquare={setupStage === 'place' ? removeSetupPiece : undefined}
+                  lastMove={setupStage === 'play' ? freeLastMove : null}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  clearAnnotationsKey={freeAnnotationsClearKey}
+                />
+              ) : freeVariant === 'secret' ? (
+                <MergeBoard
+                  board={(secretStage === 'play'
+                    ? (secretViewState?.board ?? secretPickBoard)
+                    : secretPickBoard) as (MergePiece | null)[]}
+                  orientation={freeOrientation}
+                  selectedSquare={secretStage === 'play'
+                    ? freeSelected
+                    : (secretStage === 'pickB' ? secretPicks.b : secretPicks.w)}
+                  legalTargets={secretStage === 'play' ? secretLegalTargets : secretPickTargets}
+                  onSquareClick={onFreeSquareClick}
+                  onPieceDrop={handleSecretDrop}
+                  onDragStartSquare={onFreeDragStart}
+                  // While black picks, White's confirmed pick keeps a tint so
+                  // it stays visible without any mask machinery.
+                  lastMove={secretStage === 'play'
+                    ? freeLastMove
+                    : (secretStage === 'pickB' && secretPicks.w
+                        ? { from: secretPicks.w, to: secretPicks.w }
+                        : null)}
+                  slideMoves={slideAnim?.moves}
+                  slideKey={slideAnim?.key}
+                  popSquares={popAnim?.squares}
+                  popKey={popAnim?.key}
+                  maskedSelfPawnSquares={secretSelfPawnSqs}
                   clearAnnotationsKey={freeAnnotationsClearKey}
                 />
               ) : freeVariant === 'merge' ? (
@@ -2602,6 +3259,8 @@ export function Home() {
                     freePromo.variant === 'normal' ? previewChess.turn() :
                     freePromo.variant === 'merge' ? mergeViewState.turn :
                     freePromo.variant === 'two' ? twoViewState.turn :
+                    freePromo.variant === 'setup' ? (setupViewState?.turn ?? 'w') :
+                    freePromo.variant === 'secret' ? (secretViewState?.turn ?? 'w') :
                     heroViewState.turn
                   }
                   orientation={freeOrientation}

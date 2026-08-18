@@ -159,7 +159,10 @@ export function autoCompletePlacement(
         if (placement.has(idx)) continue;
         if (canPlaceAt(color, letter, idx)) candidates.push(idx);
       }
-      const pick = candidates[Math.floor(rand() * candidates.length)];
+      // Clamp: rand() may return exactly 1 (or a caller-supplied rand might),
+      // which would index one past the end — same guard as randomPickSquare
+      // in secretChess.
+      const pick = candidates[Math.min(candidates.length - 1, Math.floor(rand() * candidates.length))];
       placement.set(pick, letter);
     }
   }

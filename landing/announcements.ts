@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-08-18',
+    kind: 'update',
+    title: 'Setup & Secret Queen, now solo too',
+    body: 'The two newest variants have joined free play and the Sandbox. Drill Setup Chess by arranging both armies yourself before the merged game begins, or crown both secret queens and watch the disguise drop — nothing is hidden when you drive both sides, so it’s the perfect place to rehearse your schemes.',
+  },
+  {
     date: '2026-08-17',
     kind: 'new',
     title: 'Secret Queen: one pawn is lying',

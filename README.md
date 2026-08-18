@@ -1,10 +1,10 @@
 # Voice Chat Chess
 
-Six flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the central infrastructure is kept minimal: a small Cloudflare Worker that pairs peers in a queue, a TURN relay for cross-NAT voice, and the public PeerJS broker for WebRTC signaling. None of those services see your moves.
+Eight flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the central infrastructure is kept minimal: a small Cloudflare Worker that pairs peers in a queue, a TURN relay for cross-NAT voice, and the public PeerJS broker for WebRTC signaling. None of those services see your moves.
 
 ## Game modes
 
-VCC ships with six variants. Each one is playable solo in free-play (with full history scrubbing and branching) or online via the matchmaker. Every mode has the same three time controls: **5 min**, **10 min**, and **+1 min / move**.
+VCC ships with eight variants. Each one is playable solo in free-play (with full history scrubbing and branching) or online via the matchmaker. Every mode has the same three time controls: **5 min**, **10 min**, and **+1 min / move**.
 
 | Mode | What's different |
 | --- | --- |
@@ -13,6 +13,8 @@ VCC ships with six variants. Each one is playable solo in free-play (with full h
 | **Guerilla** | A back-rank rethink: Queen moves 1 square like a king · Bishop slides 1–2 squares diagonally · Knight jumps over any adjacent piece checkers-style (captures both the hopped piece and the landed-on piece) · Rook moves 1 square orthogonally and can push a friendly chain. Pawn/King are standard. No castling. |
 | **Cash Money** | Start with 8 pawns + a king — no other pieces. Gain 1 gold every turn; pushing a pawn to the opposing back rank cashes it in for **+10 gold**. Buy upgrades at the shop (Knight 3g, Bishop 3g, Rook 5g, Queen 9g) — each buy replaces one of your pawns and uses your turn. Multi-queen is legal. No castling. |
 | **Hero** | Standard chess plus your king has an ability, picked at game start: **Frost** (freeze a piece) · **Warlord** (destroy an enemy piece adjacent to your king) · **Necromancer** (spawn a pawn next to your king) · **Flight** (fly any of your pieces to any empty square) · **Harem** (bishops + rooks start as queens) · **Mutation** (fuse B/R/Q with knight movement) · **ICBM** (delayed-strike missile) · **Goofball** (force up to two opponent moves) · **Twin-Jutsu** (your pieces masquerade as kings) · **Kamakaze** (arm your own pieces as chain-reacting explosives). Full rules + cooldowns in [hero.md](hero.md). No castling. |
+| **Setup** | Bring your own opening: both players get 60 simultaneous seconds to arrange their standard army anywhere on their own half (pawns off the back rank), hidden from the opponent. The halves merge and a normal game begins — no castling, and an exposed king may simply be captured, ending the game at once. In free play / sandbox you place both sides yourself, untimed. |
+| **Secret Queen** | Before move one, each side secretly crowns one of its 8 pawns. The fake moves like a queen from ply 1 but renders as an ordinary pawn to the opponent until it moves, gives a discovered check, or is captured — then the disguise drops for good. In free play / sandbox you pick both fakes and see them both, marked with the owner-shadow pawn. |
 | **Chesssweeper** | Standard chess over a hidden minefield: **4 landmines** are buried at random in the middle two ranks (4 and 5). Landing a piece on a square reveals how many *live* mines touch it (the 8 surrounding squares) — land on a mine and it detonates, destroying the piece that stepped on it. Each mine fires once and leaves a crater. Blow up your own king — or let the blast leave it hanging — and you lose on the spot. A panel beside the board shows one bomb per buried mine (spent ones fade to a shadow) and toggles **flag mode**, where right-click marks squares you suspect instead of drawing annotation arrows — your own private note, never sent to the opponent. Both players derive the same minefield from the shared game ID, so the layout never crosses the wire. |
 
 ## What's decentralized here
@@ -31,7 +33,7 @@ VCC ships with six variants. Each one is playable solo in free-play (with full h
 
 ## Features
 
-- ♟️ Six variants — Normal, Merge, Two, Cash Money, Hero, Chesssweeper
+- ♟️ Eight variants — Normal, Merge, Two, Cash Money, Hero, Chesssweeper, Setup, Secret Queen
 - 🎲 Free-play mode for every variant — scrub the move history, branch new lines, try anything against yourself
 - ⏱️ Three time controls per variant — 5 min, 10 min, +1 min / move (with tenths-of-a-second display under 10s)
 - 🎯 Local ELO ratings (K=32 < 30 games, K=24 after)
@@ -152,7 +154,7 @@ worker/
 vite.config.ts           # dev-mode in-memory matchmaker plugin
 ```
 
-The board component (`MergeBoard`) is custom-built — `react-chessboard` was dropped so all six variants could share one render path that supports drag-drop, last-move highlights, frozen-piece overlays (Hero/Frost), and ability animations.
+The board component (`MergeBoard`) is custom-built — `react-chessboard` was dropped so all eight variants could share one render path that supports drag-drop, last-move highlights, frozen-piece overlays (Hero/Frost), and ability animations.
 
 ## Known limits / v2 ideas
 

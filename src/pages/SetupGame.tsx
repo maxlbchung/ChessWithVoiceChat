@@ -70,6 +70,13 @@ const PIECE_NAME: Record<string, string> = {
   K: 'King', Q: 'Queen', R: 'Rook', B: 'Bishop', N: 'Knight', P: 'Pawn',
 };
 
+// Duration of the StartOverlay's CSS animation (board-start-fade in
+// styles.css). Used to anchor the setup deadline to the wall clock without
+// depending on animationend, which never fires in a backgrounded tab.
+const START_OVERLAY_MS = 3500;
+// Slack past the shared setup deadline before a silent opponent forfeits.
+const STALL_GRACE_MS = 30_000;
+
 export function SetupGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
@@ -321,15 +328,38 @@ export function SetupGame() {
     setStates([init]);
     setViewPly(0);
     sfx.playQueue();
+    // A fully legal pair of placements can already be checkmate or stalemate
+    // for white at ply 0 (an exposed BLACK king instead plays out through the
+    // king-capture rule — chess.js offers the capture as a move, so it is
+    // neither mate nor stalemate). Both clients computed the same merged
+    // state from the same two strings, so this local check finalizes the
+    // game identically on both sides, exactly like the post-move check.
+    checkBoardEnd(init);
   };
 
-  // Countdown ticker. Armed when the intro overlay finishes; expires into
-  // auto-finalize. Deadline is wall-clock so a throttled background tab still
-  // finalizes roughly on time.
+  // The StartOverlay's animationend never fires in a backgrounded tab (CSS
+  // animations pause), which would leave gameStarted stuck false — the same
+  // race the established pages rescue (see SweeperGame). Opponent progress
+  // (their placement arriving, or play having begun) proves the game is
+  // underway; a timeout covers a foregrounded tab whose event was lost.
   useEffect(() => {
-    if (!gameStarted || phase !== 'setup' || myReadySetup) return;
+    if (gameStarted || !partnerReady) return;
+    if (oppReadySetup || phase === 'play') { setGameStarted(true); return; }
+    const t = window.setTimeout(() => setGameStarted(true), START_OVERLAY_MS + 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameStarted, partnerReady, oppReadySetup, phase]);
+
+  // Countdown ticker. The deadline is anchored to the wall clock as soon as
+  // the peer link is up (partnerReady): overlay duration + phase budget.
+  // That way a throttled background tab still auto-finalizes roughly on time
+  // even if the overlay's animationend never fires; gameStarted arming is
+  // kept as a fallback for edge cases where partnerReady lagged.
+  useEffect(() => {
+    if ((!gameStarted && !partnerReady) || phase !== 'setup' || myReadySetup) return;
     if (setupDeadlineRef.current == null) {
-      setupDeadlineRef.current = Date.now() + SETUP_PHASE_MS;
+      setupDeadlineRef.current =
+        Date.now() + (gameStarted ? 0 : START_OVERLAY_MS) + SETUP_PHASE_MS;
     }
     const id = window.setInterval(() => {
       const left = (setupDeadlineRef.current ?? 0) - Date.now();
@@ -339,11 +369,35 @@ export function SetupGame() {
         finalizeMyPlacement();
         return;
       }
-      setSetupMsLeft(left);
+      setSetupMsLeft(Math.min(left, SETUP_PHASE_MS));
     }, 100);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStarted, phase, myReadySetup]);
+  }, [gameStarted, partnerReady, phase, myReadySetup]);
+
+  // Anti-stall backstop: my placement is in, the shared deadline plus a
+  // grace period has passed, and the opponent still hasn't sent theirs — a
+  // stalled/killed tab that never disconnected cleanly, or a peer whose
+  // placement failed validation and was dropped. End it through the same
+  // forfeit path a disconnect uses. The stalled client normally auto-sends
+  // once its own (throttled) timer fires, so this is a rare last resort.
+  useEffect(() => {
+    if (!myReadySetup || oppReadySetup || phase !== 'setup' || end) return;
+    const deadline = setupDeadlineRef.current ?? Date.now() + SETUP_PHASE_MS;
+    const fireAt = Math.max(deadline, Date.now()) + STALL_GRACE_MS;
+    const id = window.setInterval(() => {
+      if (endRef.current || phaseRef.current !== 'setup' || oppFinalRef.current != null) {
+        clearInterval(id);
+        return;
+      }
+      if (Date.now() >= fireAt) {
+        clearInterval(id);
+        finalize({ outcome: myColor, reason: 'disconnect' });
+      }
+    }, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myReadySetup, oppReadySetup, phase, end]);
 
   const trayLeft = useMemo(() => remainingArmy(myPlacement), [myPlacement]);
   const trayTotal = useMemo(
@@ -512,8 +566,17 @@ export function SetupGame() {
       }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
-      if (msg.type === 'draw-offer') { setDrawOfferedByOpp(true); return; }
-      if (msg.type === 'draw-accept') { finalize({ outcome: 'draw', reason: 'draw-agreed' }); return; }
+      // Draw traffic is only meaningful during play — the local buttons are
+      // disabled during setup, so an offer/accept arriving then is a hostile
+      // or buggy peer angling for a 0-move rated draw. Drop it.
+      if (msg.type === 'draw-offer') {
+        if (phaseRef.current === 'play') setDrawOfferedByOpp(true);
+        return;
+      }
+      if (msg.type === 'draw-accept') {
+        if (phaseRef.current === 'play') finalize({ outcome: 'draw', reason: 'draw-agreed' });
+        return;
+      }
       if (msg.type === 'draw-decline') { setDrawOfferedByMe(false); return; }
       if (msg.type === 'timeout-claim') {
         const loser = msg.loserColor;

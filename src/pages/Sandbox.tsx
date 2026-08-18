@@ -49,8 +49,17 @@ import {
   idxToSq as heroIdxToSq,
   type HeroKind,
 } from '../lib/heroChess';
+import {
+  ARMY_ORDER as SETUP_ARMY_ORDER,
+  autoCompletePlacement as setupAutoComplete,
+  canPlaceAt as setupCanPlaceAt,
+  placementToString as setupPlacementToString,
+  remainingArmy as setupRemainingArmy,
+  type Placement as SetupPlacement,
+} from '../lib/setupChess';
+import { isValidPickSquare as isValidSecretPickSquare } from '../lib/secretChess';
 import type { AbilityAnim } from '../components/MergeBoard';
-import { renderPiece, renderNeutralKing, lettersToPieceKeys } from '../lib/pieceSvgs';
+import { renderPiece, renderNeutralKing, lettersToPieceKeys, type PieceKey } from '../lib/pieceSvgs';
 import * as sfx from '../lib/sfx';
 import { useSettingsStore } from '../store/settingsStore';
 import { downloadSandboxPng } from '../lib/sandboxExport';
@@ -58,7 +67,13 @@ import { buildGameExport, downloadGameExport } from '../lib/gameExport';
 import type { Move } from '../lib/types';
 import type { DisplaySnapshot } from '../lib/replayView';
 
-type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
+type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'setup' | 'secret';
+
+// A designated Secret Queen fake in sandbox: the board idx it stands on now,
+// the square where it was designated (drives Export Game's picks), and
+// whether the disguise has dropped. The board itself holds the real queen;
+// the marker renders the owner-shadow pawn on top.
+type SandboxSecretFake = { idx: number; pickSq: string; revealed: boolean };
 
 type SandboxState = {
   board: (MergePiece | null)[];
@@ -84,6 +99,9 @@ type SandboxState = {
   // is deleted, same bookkeeping as frozenIdxs.
   stunnedIdxs: number[];
   explosiveIdxs: number[];
+  // Secret Queen fakes ('secret' variant only). Tracked through history so
+  // undo/redo restores designations along with the board.
+  secretFakes: { w: SandboxSecretFake | null; b: SandboxSecretFake | null };
   // UCI-ish action that produced this state from the previous one. Used only
   // for Export Game so sandbox exports match normal game JSON.
   moveUci?: string;
@@ -100,6 +118,10 @@ const PALETTE_LETTERS: Record<SandboxVariant, PaletteSpec> = {
   two: standardPalette,
   cash: standardPalette,
   hero: standardPalette,
+  // Setup's palette applies to the play stage only — the placement stage
+  // swaps it for the army trays.
+  setup: standardPalette,
+  secret: standardPalette,
   // Merge exposes the three combo pieces too — chancellor (R+N),
   // archbishop (B+N), amazon (Q+N).
   merge: {
@@ -113,7 +135,11 @@ const SHOP_LETTERS_SANDBOX: string[] = ['Q', 'R', 'B', 'N'];
 // Initial board for each variant, returned as a flat 64-square Piece[] array
 // in the layout MergeBoard expects (idx 0 = a8 ... 63 = h1).
 function initialBoard(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): (MergePiece | null)[] {
-  if (variant === 'normal') {
+  // Setup starts from an empty board — its placement stage builds the armies.
+  if (variant === 'setup') return emptyBoard();
+  // Secret Queen starts from the ordinary opening; fakes are designated via
+  // the panel afterwards.
+  if (variant === 'normal' || variant === 'secret') {
     const c = new Chess();
     const out: (MergePiece | null)[] = [];
     for (const row of c.board()) {
@@ -159,6 +185,19 @@ const stunnedAfterClear = frozenAfterClear;
 const explosiveAfterMove = frozenAfterMove;
 const explosiveAfterClear = frozenAfterClear;
 
+// Secret-fake bookkeeping: drop any fake standing on `idx` (piece deleted /
+// square overwritten by a spawn).
+function fakesAfterClear(
+  fakes: { w: SandboxSecretFake | null; b: SandboxSecretFake | null },
+  idx: number,
+): { w: SandboxSecretFake | null; b: SandboxSecretFake | null } {
+  if (fakes.w?.idx !== idx && fakes.b?.idx !== idx) return fakes;
+  return {
+    w: fakes.w && fakes.w.idx === idx ? null : fakes.w,
+    b: fakes.b && fakes.b.idx === idx ? null : fakes.b,
+  };
+}
+
 function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): SandboxState {
   const board = initialBoard(variant, heroW, heroB);
   const masked = new Array(64).fill(false);
@@ -179,6 +218,7 @@ function freshState(variant: SandboxVariant, heroW: HeroKind, heroB: HeroKind): 
     masked,
     stunnedIdxs: [],
     explosiveIdxs: [],
+    secretFakes: { w: null, b: null },
   };
 }
 
@@ -197,6 +237,8 @@ function sandboxTimeControlId(variant: SandboxVariant): string {
     case 'two': return 'two-blitz-5+0';
     case 'cash': return 'cash-blitz-5+0';
     case 'hero': return 'hero-blitz-5+0';
+    case 'setup': return 'setup-blitz-5+0';
+    case 'secret': return 'secret-blitz-5+0';
     default: return 'blitz-5+0';
   }
 }
@@ -601,6 +643,20 @@ export function Sandbox() {
   // Cash mode: shop-armed letter, per color.
   const [shopArmed, setShopArmed] = useState<{ color: 'w' | 'b'; letter: string } | null>(null);
 
+  // Setup mode: 'place' builds both armies with the trays (placement rules
+  // enforced); 'play' is freeform sandbox from the merged position with the
+  // king-capture rule surfaced. Start resets history, so undo can't cross
+  // back into the placement stage — Reset returns there.
+  const [setupStage, setSetupStage] = useState<'place' | 'play'>('place');
+  // Tray piece armed for click-to-place (color + uppercase letter).
+  const [setupArmed, setSetupArmed] = useState<{ color: 'w' | 'b'; letter: string } | null>(null);
+  // The two finalized placement strings recorded when Start fired — Export
+  // Game needs them to write a replayable 'setup' export.
+  const [setupPlacementStrings, setSetupPlacementStrings] = useState<{ w: string; b: string } | null>(null);
+
+  // Secret mode: which side's "designate the secret queen" action is armed.
+  const [secretArm, setSecretArm] = useState<'w' | 'b' | null>(null);
+
   // Hero mode: ability-armed, per color.
   const [abilityArmed, setAbilityArmed] = useState<'w' | 'b' | null>(null);
   // Goofball is a two-click ability: first click picks the opponent piece
@@ -693,6 +749,10 @@ export function Sandbox() {
     setAbilityArmed(null);
     setGoofballFrom(null);
     setAbilityAnim(null);
+    setSetupStage('place');
+    setSetupArmed(null);
+    setSetupPlacementStrings(null);
+    setSecretArm(null);
     setAnnotationsClearKey((k) => k + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant]);
@@ -778,11 +838,16 @@ export function Sandbox() {
     setShopArmed(null);
     setAbilityArmed(null);
     setAbilityAnim(null);
+    // Setup: back to the placement stage.
+    setSetupStage('place');
+    setSetupArmed(null);
+    setSetupPlacementStrings(null);
+    setSecretArm(null);
     setAnnotationsClearKey((k) => k + 1);
   };
   const handleClear = () => {
     sfx.playReset();
-    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], stunnedIdxs: [], explosiveIdxs: [], enPassant: null, masked: new Array(64).fill(false), moveUci: undefined }]);
+    setHistory((h) => [...h.slice(0, viewPly + 1), { ...current, board: emptyBoard(), frozenIdxs: [], stunnedIdxs: [], explosiveIdxs: [], enPassant: null, masked: new Array(64).fill(false), secretFakes: { w: null, b: null }, moveUci: undefined }]);
     setViewPly((p) => p + 1);
     setSelectedSq(null);
     setShopArmed(null);
@@ -790,9 +855,66 @@ export function Sandbox() {
     setAnnotationsClearKey((k) => k + 1);
   };
 
+  // Setup placement stage: what's left to place per side, derived from the
+  // board contents — the board IS the placement, both halves live on it.
+  const setupRemaining = useMemo(() => {
+    if (variant !== 'setup' || setupStage !== 'place') {
+      return { w: {} as Record<string, number>, b: {} as Record<string, number> };
+    }
+    const w: SetupPlacement = new Map();
+    const b: SetupPlacement = new Map();
+    for (let i = 0; i < 64; i++) {
+      const p = current.board[i];
+      if (!p) continue;
+      (p.color === 'w' ? w : b).set(i, p.letter.toUpperCase());
+    }
+    return { w: setupRemainingArmy(w), b: setupRemainingArmy(b) };
+  }, [variant, setupStage, current.board]);
+  const setupLeftTotal =
+    Object.values(setupRemaining.w).reduce((a, b) => a + b, 0) +
+    Object.values(setupRemaining.b).reduce((a, b) => a + b, 0);
+
+  // Start play: auto-complete whatever's still in the trays, record the two
+  // canonical placement strings (for Export Game), and reset history to the
+  // merged position — placement steps aren't scrubbable from the play stage.
+  const handleSetupStart = () => {
+    if (variant !== 'setup' || setupStage !== 'place') return;
+    const w: SetupPlacement = new Map();
+    const b: SetupPlacement = new Map();
+    for (let i = 0; i < 64; i++) {
+      const p = current.board[i];
+      if (!p) continue;
+      (p.color === 'w' ? w : b).set(i, p.letter.toUpperCase());
+    }
+    const wFull = setupAutoComplete('w', w);
+    const bFull = setupAutoComplete('b', b);
+    const nextBoard = emptyBoard();
+    for (const [i, L] of wFull) nextBoard[i] = { color: 'w', letter: L.toUpperCase() as PieceLetter };
+    for (const [i, L] of bFull) nextBoard[i] = { color: 'b', letter: L.toLowerCase() as PieceLetter };
+    setSetupPlacementStrings({ w: setupPlacementToString(wFull), b: setupPlacementToString(bFull) });
+    setHistory([{ ...freshState('setup', heroW, heroB), board: nextBoard }]);
+    setViewPly(0);
+    setSetupStage('play');
+    setSetupArmed(null);
+    setSelectedSq(null);
+    setAnnotationsClearKey((k) => k + 1);
+    sfx.playQueue();
+  };
+
   // Spawn a piece on the board (palette → drop, or shop-letter → click).
-  const spawnPiece = (letter: PieceLetter, sq: string, moveUci?: string) => {
+  // Returns whether the spawn happened — the setup placement stage rejects
+  // spawns that break the placement rules.
+  const spawnPiece = (letter: PieceLetter, sq: string, moveUci?: string): boolean => {
     const idx = mergeSqToIdx(sq);
+    // Setup placement stage plays by the placement rules: army letters only,
+    // own half, pawns off the back rank, empty target, none left = none placed.
+    if (variant === 'setup' && setupStage === 'place') {
+      const color = colorOf(letter);
+      const upper = letter.toUpperCase();
+      if (current.board[idx]) return false;
+      if (!setupCanPlaceAt(color, upper, idx)) return false;
+      if ((setupRemaining[color][upper] ?? 0) <= 0) return false;
+    }
     const nextBoard = current.board.slice();
     nextBoard[idx] = { color: colorOf(letter), letter };
     const nextMasked = current.masked.slice();
@@ -805,11 +927,14 @@ export function Sandbox() {
       explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
       enPassant: null,
       masked: nextMasked,
+      // Spawning over a fake replaces it.
+      secretFakes: fakesAfterClear(current.secretFakes, idx),
     }, moveUci);
     sfx.playPlace();
     if (animationsEnabled) {
       setPopAnim({ squares: [sq], key: Date.now() });
     }
+    return true;
   };
 
   // Move a piece. Self-capture is blocked, with two exceptions:
@@ -831,6 +956,22 @@ export function Sandbox() {
     if (!moving) return false;
     const target = current.board[toIdx];
     const uci = from + to;
+
+    // Setup placement stage: rearranging only — empty targets on the piece's
+    // own legal half. No captures, no cross-half raids until play starts.
+    if (variant === 'setup' && setupStage === 'place') {
+      if (target) return false;
+      if (!setupCanPlaceAt(moving.color, moving.letter.toUpperCase(), toIdx)) return false;
+      const nextBoard = current.board.slice();
+      nextBoard[fromIdx] = null;
+      nextBoard[toIdx] = moving;
+      pushState({ ...current, board: nextBoard, enPassant: null });
+      sfx.playMove();
+      if (viaClick && animationsEnabled) {
+        setSlideAnim({ moves: [{ from, to }], key: Date.now() });
+      }
+      return true;
+    }
 
     // Juggernaut absorb (hero variant): capturing a sub-tier-3 Juggernaut
     // kills the attacker and feeds the boss a tier — mirror the live engine.
@@ -1066,7 +1207,32 @@ export function Sandbox() {
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
     if (epCapturedIdx != null) nextMasked[epCapturedIdx] = false;
-    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, stunnedIdxs: nextStunned, explosiveIdxs: nextExplosive, enPassant: nextEnPassant, masked: nextMasked }, uci);
+    // Secret Queen fake tracking: the fake follows its piece (first move
+    // drops the disguise, mirroring the live engine); capturing the
+    // opponent's fake clears it.
+    let nextFakes = current.secretFakes;
+    let secretRevealSq: string | null = null;
+    if (variant === 'secret') {
+      nextFakes = { ...current.secretFakes };
+      for (const c of ['w', 'b'] as const) {
+        const f = nextFakes[c];
+        if (!f) continue;
+        if (f.idx === toIdx && moving.color !== c) {
+          // Fake captured — record gone, the truth is out.
+          nextFakes[c] = null;
+        } else if (f.idx === fromIdx && moving.color === c) {
+          const wasHidden = !f.revealed;
+          nextFakes[c] = { ...f, idx: toIdx, revealed: true };
+          if (wasHidden) secretRevealSq = to;
+        }
+      }
+    }
+    pushState({ ...current, board: nextBoard, frozenIdxs: nextFrozen, stunnedIdxs: nextStunned, explosiveIdxs: nextExplosive, enPassant: nextEnPassant, masked: nextMasked, secretFakes: nextFakes }, uci);
+    if (secretRevealSq) {
+      // The unmask moment — same smoke-bomb cue + pop the game pages use.
+      sfx.playTwinJutsu();
+      if (animationsEnabled) setPopAnim({ squares: [secretRevealSq], key: Date.now() });
+    }
     if (isMerge) sfx.playMerge();
     else if (target && target.color !== moving.color && target.letter.toUpperCase() === 'S') sfx.playSlimeSplit();
     else if (target || epCapturedIdx != null) sfx.playCapture();
@@ -1105,8 +1271,55 @@ export function Sandbox() {
       explosiveIdxs: explosiveAfterClear(current.explosiveIdxs, idx),
       enPassant: null,
       masked: nextMasked,
+      secretFakes: fakesAfterClear(current.secretFakes, idx),
     });
     sfx.playCapture();
+  };
+
+  // ----- Secret Queen (sandbox semantics) -----
+  // Designating turns the clicked pawn into the real queen it secretly is,
+  // plus the owner-shadow pawn marker. Redesignating a side moves the secret:
+  // the previous fake (if still standing, unrevealed) turns back into a pawn.
+  const designateSecretFake = (color: 'w' | 'b', sq: string) => {
+    const idx = mergeSqToIdx(sq);
+    const p = current.board[idx];
+    if (!p || p.color !== color || p.letter.toUpperCase() !== 'P') {
+      setSecretArm(null);
+      return;
+    }
+    const nextBoard = current.board.slice();
+    nextBoard[idx] = { color, letter: (color === 'w' ? 'Q' : 'q') as PieceLetter };
+    const prev = current.secretFakes[color];
+    if (prev && !prev.revealed) {
+      const prevPiece = nextBoard[prev.idx];
+      if (prevPiece && prevPiece.color === color && prevPiece.letter.toUpperCase() === 'Q') {
+        nextBoard[prev.idx] = { color, letter: (color === 'w' ? 'P' : 'p') as PieceLetter };
+      }
+    }
+    pushState({
+      ...current,
+      board: nextBoard,
+      enPassant: null,
+      secretFakes: { ...current.secretFakes, [color]: { idx, pickSq: sq, revealed: false } },
+    });
+    sfx.playSelect();
+    if (animationsEnabled) setPopAnim({ squares: [sq], key: Date.now() });
+    setSecretArm(null);
+  };
+
+  // Flip a fake's disguise on/off to observe the reveal marker (and hear the
+  // unmask cue when it drops).
+  const toggleSecretReveal = (color: 'w' | 'b') => {
+    const f = current.secretFakes[color];
+    if (!f) return;
+    pushState({
+      ...current,
+      secretFakes: { ...current.secretFakes, [color]: { ...f, revealed: !f.revealed } },
+    });
+    sfx.playTwinJutsu();
+    if (!f.revealed && animationsEnabled) {
+      setPopAnim({ squares: [heroIdxToSq(f.idx)], key: Date.now() });
+    }
   };
 
   // ----- Hero ability effects (sandbox semantics) -----
@@ -1750,6 +1963,27 @@ export function Sandbox() {
 
   // ----- Board interaction wiring -----
   const onSquareClick = (sq: string) => {
+    // Secret designation armed: click picks that side's fake pawn.
+    if (variant === 'secret' && secretArm) {
+      designateSecretFake(secretArm, sq);
+      return;
+    }
+    // Setup tray armed: click places the armed piece (placement rules apply).
+    if (variant === 'setup' && setupStage === 'place' && setupArmed) {
+      const cased = setupArmed.color === 'w' ? setupArmed.letter : setupArmed.letter.toLowerCase();
+      const placed = spawnPiece(cased as PieceLetter, sq);
+      if (placed) {
+        // Keep the letter armed while more of that piece remain.
+        if ((setupRemaining[setupArmed.color][setupArmed.letter] ?? 0) <= 1) setSetupArmed(null);
+        return;
+      }
+      // Clicking a placed piece while armed switches to moving it.
+      if (current.board[mergeSqToIdx(sq)]) {
+        setSetupArmed(null);
+        setSelectedSq(sq);
+      }
+      return;
+    }
     // Hero ability armed: click resolves the ability target.
     if (variant === 'hero' && abilityArmed) {
       fireAbility(abilityArmed, sq);
@@ -1796,6 +2030,8 @@ export function Sandbox() {
     setShopArmed(null);
     setAbilityArmed(null);
     setPaletteArmed(null);
+    setSetupArmed(null);
+    setSecretArm(null);
     setSelectedSq(from);
   };
 
@@ -1840,10 +2076,18 @@ export function Sandbox() {
   // End-of-game overlay (checkmate). Mirrors free play: shows on top of the
   // board with the winning side. Free placement still works underneath.
   const sandboxEnd = useMemo<{ winner: 'w' | 'b' } | null>(() => {
+    // Setup's king-capture rule: once play has begun, a side with no king
+    // left has lost outright (an exposed king may simply be taken).
+    if (variant === 'setup' && setupStage === 'play') {
+      const wK = hasKing(current.board, 'w');
+      const bK = hasKing(current.board, 'b');
+      if (!wK && bK) return { winner: 'b' };
+      if (!bK && wK) return { winner: 'w' };
+    }
     if (inMate(variant, current.board, 'w', current.heroW, current.heroB, jugTiers)) return { winner: 'b' };
     if (inMate(variant, current.board, 'b', current.heroW, current.heroB, jugTiers)) return { winner: 'w' };
     return null;
-  }, [variant, current]);
+  }, [variant, setupStage, current]);
 
   const lastMove = useMemo<{ from: string; to: string } | null>(() => {
     if (viewPly === 0) return null;
@@ -1954,6 +2198,36 @@ export function Sandbox() {
   const legalTargets = useMemo(() => {
     const ringTarget = (i: number) => ({ to: heroIdxToSq(i), isCapture: false, isMerge: true });
 
+    // Setup placement stage: dots on every square the armed tray piece (or
+    // the selected placed piece) may legally land on.
+    if (variant === 'setup' && setupStage === 'place') {
+      let color: 'w' | 'b' | null = null;
+      let letter: string | null = null;
+      if (setupArmed) {
+        color = setupArmed.color;
+        letter = setupArmed.letter;
+      } else if (selectedSq) {
+        const p = current.board[mergeSqToIdx(selectedSq)];
+        if (p) { color = p.color; letter = p.letter.toUpperCase(); }
+      }
+      if (!color || !letter) return [];
+      const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
+      for (let i = 0; i < 64; i++) {
+        if (current.board[i]) continue;
+        if (!setupCanPlaceAt(color, letter, i)) continue;
+        out.push({ to: heroIdxToSq(i), isCapture: false, isMerge: false });
+      }
+      return out;
+    }
+    // Secret designation armed: ring that side's pawns (the candidates).
+    if (variant === 'secret' && secretArm) {
+      const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
+      for (let i = 0; i < 64; i++) {
+        const p = current.board[i];
+        if (p && p.color === secretArm && p.letter.toUpperCase() === 'P') out.push(ringTarget(i));
+      }
+      return out;
+    }
     if (variant === 'cash' && shopArmed) {
       const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
       for (let i = 0; i < 64; i++) {
@@ -1984,7 +2258,7 @@ export function Sandbox() {
     // proper check-filtered legal moves.
     if (!hasKing(current.board, piece.color)) return patternTargets(variant, current.board, selectedSq);
     return engineLegalTargets(variant, current.board, selectedSq, current.heroW, current.heroB, current.enPassant, jugTiers);
-  }, [selectedSq, variant, current, shopArmed, abilityArmed, heroLegalAbilityTargets, sandboxSlimeShiftOpts, jugTierW, jugTierB]);
+  }, [selectedSq, variant, current, shopArmed, abilityArmed, heroLegalAbilityTargets, sandboxSlimeShiftOpts, jugTierW, jugTierB, setupStage, setupArmed, secretArm]);
 
   const frozenSquares = current.frozenIdxs.map((i) => heroIdxToSq(i));
 
@@ -2036,15 +2310,33 @@ export function Sandbox() {
   }, [current, variant, lastMove, kingGlows, frozenSquares, jugTierW, jugTierB]);
 
   const handleExportGame = () => {
+    // Setup exports are only meaningful once play has begun — the placement
+    // strings recorded at Start are what rebuild the starting position.
+    if (variant === 'setup' && (setupStage !== 'play' || !setupPlacementStrings)) return;
+    // Secret exports need both picks on their sides' starting pawn squares
+    // (the importer validates them). Sandbox lets you designate any pawn and
+    // fakes vanish when captured, so fall back to a plain 'normal' export
+    // when the designations can't round-trip.
+    let exportVariant: SandboxVariant = variant;
+    let secretQueens: { w: string; b: string } | undefined;
+    if (variant === 'secret') {
+      const wF = current.secretFakes.w;
+      const bF = current.secretFakes.b;
+      if (wF && bF && isValidSecretPickSquare('w', wF.pickSq) && isValidSecretPickSquare('b', bF.pickSq)) {
+        secretQueens = { w: wF.pickSq, b: bF.pickSq };
+      } else {
+        exportVariant = 'normal';
+      }
+    }
     const moveUcis = history
       .slice(1, viewPly + 1)
       .map((state) => state.moveUci)
       .filter((uci): uci is string => typeof uci === 'string' && uci.length > 0);
     const startedAt = Date.now();
     const exp = buildGameExport({
-      variant,
+      variant: exportVariant,
       gameId: newSandboxGameId(),
-      timeControlId: sandboxTimeControlId(variant),
+      timeControlId: sandboxTimeControlId(exportVariant),
       white: { handle: 'Sandbox White', rating: 0 },
       black: { handle: 'Sandbox Black', rating: 0 },
       startedAt,
@@ -2054,6 +2346,8 @@ export function Sandbox() {
       moves: moveUcis.map(moveFromUci),
       ...(variant === 'hero' ? { heroes: { w: current.heroW, b: current.heroB } } : {}),
       ...(variant === 'hero' ? { heroBackRanks: heroBackRanksFromInitial(history[0]) } : {}),
+      ...(variant === 'setup' && setupPlacementStrings ? { setupPlacements: setupPlacementStrings } : {}),
+      ...(secretQueens ? { secretQueens } : {}),
     });
     downloadGameExport(exp);
     sfx.playSelect();
@@ -2180,6 +2474,14 @@ export function Sandbox() {
                 for (let i = 0; i < 64; i++) if (current.masked[i]) out.push(heroIdxToSq(i));
                 return out;
               })()}
+              // Secret Queen: both unrevealed fakes get the owner-shadow pawn
+              // marker — the editor sees everything, so no opponent masking.
+              maskedSelfPawnSquares={variant === 'secret'
+                ? (['w', 'b'] as const).flatMap((c) => {
+                    const f = current.secretFakes[c];
+                    return f && !f.revealed && current.board[f.idx] ? [heroIdxToSq(f.idx)] : [];
+                  })
+                : undefined}
               slimeBigKings={deriveSlimeGroups(current.board)
                 .map((g) => {
                   const ref = current.board[g.tiles[0]];
@@ -2263,6 +2565,8 @@ export function Sandbox() {
                 { value: 'two',    label: 'Guerrilla' },
                 { value: 'cash',   label: 'Cash Money' },
                 { value: 'hero',   label: 'Hero' },
+                { value: 'setup',  label: 'Setup' },
+                { value: 'secret', label: 'Secret Queen' },
               ]}
               onChange={(next) => {
                 if (next !== variant) {
@@ -2270,6 +2574,8 @@ export function Sandbox() {
                   else if (next === 'two') sfx.playPush();
                   else if (next === 'cash') sfx.playPlace();
                   else if (next === 'hero') sfx.playSlice();
+                  else if (next === 'setup') sfx.playPlace();
+                  else if (next === 'secret') sfx.playTwinJutsu();
                   else sfx.playMove();
                 }
                 setVariant(next);
@@ -2283,18 +2589,63 @@ export function Sandbox() {
             <button className="free-play-btn" type="button" onClick={toggleFullscreen}>
               {isFullscreen ? 'Exit FS' : 'Fullscreen'}
             </button>
-            <button className="free-play-btn" type="button" onClick={handleExportGame} title="Download this position as JSON">Export Game</button>
+            <button
+              className="free-play-btn"
+              type="button"
+              onClick={handleExportGame}
+              disabled={variant === 'setup' && setupStage === 'place'}
+              title={variant === 'setup' && setupStage === 'place'
+                ? 'Start the game first — exports capture the merged position'
+                : 'Download this position as JSON'}
+            >Export Game</button>
             <button className="free-play-btn" type="button" onClick={handleExportPng} title="Download a PNG of the current board">Export PNG</button>
           </div>
 
-          <PiecePalette
-            letters={PALETTE_LETTERS[variant]}
-            armed={paletteArmed}
-            onDragStart={onPaletteDragStart}
-            onClick={togglePaletteArmed}
-          />
+          {variant === 'setup' && setupStage === 'place' ? (
+            <SandboxSetupTray
+              remaining={setupRemaining}
+              armed={setupArmed}
+              leftTotal={setupLeftTotal}
+              onArm={(color, letter) => {
+                setSetupArmed((cur) =>
+                  cur && cur.color === color && cur.letter === letter ? null : { color, letter },
+                );
+                setSelectedSq(null);
+                setPaletteArmed(null);
+                sfx.playSelect();
+              }}
+              onDragStart={(e, color, letter) => {
+                const cased = color === 'w' ? letter.toUpperCase() : letter.toLowerCase();
+                try {
+                  e.dataTransfer.setData('text/plain', `spawn:${cased}`);
+                  e.dataTransfer.effectAllowed = 'copyMove';
+                } catch {}
+              }}
+              onStart={handleSetupStart}
+            />
+          ) : (
+            <PiecePalette
+              letters={PALETTE_LETTERS[variant]}
+              armed={paletteArmed}
+              onDragStart={onPaletteDragStart}
+              onClick={togglePaletteArmed}
+            />
+          )}
 
           <div className="sandbox-extras">
+            {variant === 'secret' && (
+              <SandboxSecretPanel
+                fakes={current.secretFakes}
+                armed={secretArm}
+                onArm={(c) => {
+                  setSecretArm((cur) => (cur === c ? null : c));
+                  setSelectedSq(null);
+                  setPaletteArmed(null);
+                  sfx.playSelect();
+                }}
+                onToggleReveal={toggleSecretReveal}
+              />
+            )}
             {variant === 'cash' && (
               <SandboxCashShop
                 armed={shopArmed}
@@ -2630,6 +2981,118 @@ function SandboxHeroPanel({
           : (!availableW && !availableB)
             ? 'No legal ability targets.'
             : 'Abilities have no cooldown in sandbox.'}
+      </div>
+    </div>
+  );
+}
+
+// Setup placement stage: both sides' army trays plus the Start button.
+// Replaces the freeform palette until play begins.
+function SandboxSetupTray({
+  remaining,
+  armed,
+  leftTotal,
+  onArm,
+  onDragStart,
+  onStart,
+}: {
+  remaining: { w: Record<string, number>; b: Record<string, number> };
+  armed: { color: 'w' | 'b'; letter: string } | null;
+  leftTotal: number;
+  onArm: (color: 'w' | 'b', letter: string) => void;
+  onDragStart: (e: ReactDragEvent<HTMLButtonElement>, color: 'w' | 'b', letter: string) => void;
+  onStart: () => void;
+}) {
+  return (
+    <div className="setup-tray">
+      <div className="setup-tray-title">Deploy both armies</div>
+      {(['w', 'b'] as const).map((color) => (
+        <div key={color}>
+          <div className="setup-tray-side-label">{color === 'w' ? 'White' : 'Black'}</div>
+          <div className="setup-tray-grid">
+            {SETUP_ARMY_ORDER.map((letter) => {
+              const left = remaining[color][letter] ?? 0;
+              const isArmed = armed?.color === color && armed?.letter === letter;
+              return (
+                <button
+                  key={color + letter}
+                  type="button"
+                  className={`setup-tray-piece${isArmed ? ' armed' : ''}${left <= 0 ? ' spent' : ''}`}
+                  disabled={left <= 0}
+                  draggable={left > 0}
+                  onDragStart={(e) => onDragStart(e, color, letter)}
+                  onClick={() => onArm(color, letter)}
+                  aria-label={`${color === 'w' ? 'White' : 'Black'} ${letter}, ${left} left to place`}
+                  data-no-sfx
+                >
+                  <span className="setup-tray-sprite">{renderPiece((color + letter) as PieceKey, 26)}</span>
+                  <span className="setup-tray-count">×{left}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <button type="button" className="primary-btn" onClick={onStart}>
+        {leftTotal > 0 ? `Start (${leftTotal} random)` : 'Start game'}
+      </button>
+      <div className="setup-tray-hint muted small">
+        Place both armies anywhere on their own halves — pawns not on the
+        back rank. Click or drag from the trays; scroll down on a placed
+        piece to remove it. Leftovers are placed at random when you start.
+        Once play begins an exposed king may simply be captured.
+      </div>
+    </div>
+  );
+}
+
+// Secret Queen controls: designate each side's fake pawn (it becomes the
+// queen it secretly is, wearing the owner-shadow pawn marker) and toggle its
+// reveal to observe the unmask moment.
+function SandboxSecretPanel({
+  fakes,
+  armed,
+  onArm,
+  onToggleReveal,
+}: {
+  fakes: { w: SandboxSecretFake | null; b: SandboxSecretFake | null };
+  armed: 'w' | 'b' | null;
+  onArm: (c: 'w' | 'b') => void;
+  onToggleReveal: (c: 'w' | 'b') => void;
+}) {
+  return (
+    <div className="hero-panel compact sandbox-hero">
+      <div className="hero-panel-title">Secret queens</div>
+      {(['w', 'b'] as const).map((c) => {
+        const f = fakes[c];
+        const isArmed = armed === c;
+        return (
+          <div key={c} className="sandbox-hero-actions">
+            <button
+              type="button"
+              className={`${isArmed ? 'secondary-btn' : 'primary-btn'} sandbox-hero-btn`}
+              data-no-sfx
+              onClick={() => onArm(c)}
+              aria-label={`${isArmed ? 'Cancel designating' : 'Designate'} ${c === 'w' ? 'white' : 'black'}'s secret queen`}
+            >
+              <span className="sandbox-hero-btn-king" aria-hidden>{renderPiece(c === 'w' ? 'wP' : 'bP', 20)}</span>
+              <span>{isArmed ? 'Cancel' : f ? 'Move secret' : 'Set secret'}</span>
+            </button>
+            <button
+              type="button"
+              className="secondary-btn sandbox-hero-btn"
+              disabled={!f}
+              onClick={() => onToggleReveal(c)}
+            >
+              {f?.revealed ? 'Hide' : 'Reveal'}
+            </button>
+          </div>
+        );
+      })}
+      <div className="hero-panel-hint muted small">
+        {armed
+          ? 'Click one of that side’s pawns to crown it in secret.'
+          : 'Each fake is really a queen — the shadow pawn marks the disguise. Moving it drops the disguise, like a real game.'}
       </div>
     </div>
   );

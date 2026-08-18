@@ -1,6 +1,6 @@
 # Architecture
 
-Voice Chat Chess (VCC): six chess variants played P2P over WebRTC with optional voice
+Voice Chat Chess (VCC): eight chess variants played P2P over WebRTC with optional voice
 chat. Vite 5 + React 18 + TypeScript, zustand, react-router-dom v6 (hash router),
 peerjs, chess.js, idb-keyval. Front end deploys to Cloudflare Pages; a small Cloudflare
 Worker + D1 handles matchmaking and TURN credential minting.
@@ -12,7 +12,7 @@ engine smoke tests, and Playwright drivers in the gitignored `scripts/` folder
 ## Game modes
 
 `GameVariant` lives in `src/lib/timeControls.ts`:
-`'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper'`.
+`'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret'`.
 
 | Variant id | UI name | Page | Engine |
 | --- | --- | --- | --- |
@@ -22,8 +22,16 @@ engine smoke tests, and Playwright drivers in the gitignored `scripts/` folder
 | `cash` | Cash Money | `src/pages/CashGame.tsx` | `src/lib/cashChess.ts` |
 | `hero` | Hero | `src/pages/HeroGame.tsx` | `src/lib/heroChess.ts` |
 | `sweeper` | Chesssweeper | `src/pages/SweeperGame.tsx` | `src/lib/sweeperChess.ts` |
+| `setup` | Setup | `src/pages/SetupGame.tsx` | `src/lib/setupChess.ts` |
+| `secret` | Secret Queen | `src/pages/SecretGame.tsx` | `src/lib/secretChess.ts` |
 
 Naming skew to remember: variant id `two`, engine file `chess2.ts`, UI name "Guerrilla".
+
+Setup and Secret Queen have a pre-play stage online (60s hidden placement /
+30s secret-pawn pick). In Home free play and the Sandbox they're fully
+playable single-player with nothing hidden: an untimed placement stage for
+both armies (Setup) and picking both fakes, each rendered with the
+owner-shadow pawn marker (Secret Queen).
 
 ### Chess Civilization (not a variant)
 
@@ -55,8 +63,8 @@ Hash router, single `Layout` parent: `/` → Home (lobby + free play for all var
 
 There is no route per variant. `GameRoute` reads the lobby handoff's `timeControlId`
 and dispatches on its prefix (`merge-*`, `two-*`, `cash-*`, `hero-*`, `sweeper-*`,
-else normal). Time-control ids encode variant × control; 3 controls per variant,
-18 total, in `TIME_CONTROLS` (`src/lib/timeControls.ts`).
+`setup-*`, `secret-*`, else normal). Time-control ids encode variant × control;
+3 controls per variant, 24 total, in `TIME_CONTROLS` (`src/lib/timeControls.ts`).
 
 The site has two HTML entries (`vite.config.ts` rollup inputs): root `index.html` is a
 static marketing landing (styles in `landing/landing.css`), `app/index.html` is the real
@@ -78,9 +86,14 @@ Relationships:
 
 - `mergeChess.ts` is the de-facto canonical `Piece`/board shape; `sweeperChess.ts`
   imports and re-exports its types; other engines redeclare compatible locals.
-- `sweeperChess.ts` is the only engine delegating legality to chess.js — it keeps an
-  authoritative FEN and removes mine-blast victims on top. Mines derive
-  deterministically from the gameId (`minesForGame`), 4 mines in ranks 4–5.
+- `sweeperChess.ts`, `setupChess.ts`, and `secretChess.ts` delegate legality to
+  chess.js. Sweeper keeps an authoritative FEN and removes mine-blast victims on
+  top; mines derive deterministically from the gameId (`minesForGame`), 4 mines
+  in ranks 4–5. Setup builds its opening FEN from two placement strings
+  (`placementToString`/`parsePlacement`; no castling) and adds the king-capture
+  rule (`kingCaptured` — an exposed king may be taken outright). Secret
+  substitutes each side's fake pawn as a REAL queen for chess.js and carries
+  the fake squares + revealed flags alongside (extended FEN suffix in `toFen`).
 - `heroChess.ts` is the largest engine (standard chess + all hero state; own castling,
   freeze/stun/missile/slime/earthquake/explosive substate). See "Hero system".
 - `cashChess.ts` adds the economy (`SHOP_PRICES`, `CASH_IN_REWARD`, `buyUci`).
@@ -161,8 +174,10 @@ record → export → replay → snapshot → scene → canvas → WebM:
    effects, music) → `videoRenderer.ts` (`SceneModel`, easing, sprites from
    `pieceSprites.ts`/`tokenSprites.ts`) → `videoExport.ts` (MediaRecorder muxing canvas
    + the SFX master bus).
-4. `sandboxExport.ts` serves only the Sandbox page (5 variants, no sweeper; JSON + PNG
-   export).
+4. `sandboxExport.ts` serves only the Sandbox page (7 variants, no sweeper; JSON + PNG
+   export). v2 added the `setup`/`secret` variants (`setupPlacements` /
+   `secretFakes` fields); there is no sandbox JSON importer, the version stamp
+   just distinguishes shapes.
 
 ## Conventions
 

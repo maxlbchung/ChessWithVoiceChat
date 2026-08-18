@@ -16,13 +16,21 @@ import type { DisplaySnapshot } from './replayView';
 import type { SceneModel } from './videoRenderer';
 import { APP_VERSION } from './version';
 
-export type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero';
+export type SandboxVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'setup' | 'secret';
 
-export const SANDBOX_EXPORT_VERSION = 1;
+// v2: added 'setup' / 'secret' variants with their fields (setupPlacements /
+// secretFakes). There is no sandbox JSON *importer* — the stamp exists so
+// external consumers can tell the shapes apart.
+export const SANDBOX_EXPORT_VERSION = 2;
 
-// Full position snapshot — enough to reconstruct the board exactly. Hero-only
-// fields (heroes / jugTier / frozen / stunned / masked) are omitted for the
-// other variants so a Normal export stays terse.
+// A designated Secret Queen fake: where it was picked, where it stands now
+// (null once captured), and whether the disguise has dropped.
+export type SandboxSecretFake = { pickSq: string; sq: string | null; revealed: boolean };
+
+// Full position snapshot — enough to reconstruct the board exactly.
+// Variant-specific fields (heroes / jugTier / frozen / stunned / masked for
+// Hero, setupPlacements for Setup, secretFakes for Secret Queen) are omitted
+// elsewhere so a Normal export stays terse.
 export type SandboxExport = {
   format: 'voice-chat-chess-sandbox';
   formatVersion: number;
@@ -38,6 +46,11 @@ export type SandboxExport = {
   stunnedIdxs?: number[];
   maskedIdxs?: number[];
   enPassant?: string | null;
+  // Setup (v2): the finalized placement strings (setupChess.ts
+  // `placementToString`) recorded when the placement stage started play.
+  setupPlacements?: { w: string; b: string };
+  // Secret Queen (v2): each side's designated fake, if any.
+  secretFakes?: { w: SandboxSecretFake | null; b: SandboxSecretFake | null };
 };
 
 export type BuildSandboxExportInput = {
@@ -52,6 +65,8 @@ export type BuildSandboxExportInput = {
   stunnedIdxs: number[];
   masked: boolean[];
   enPassant: string | null;
+  setupPlacements?: { w: string; b: string } | null;
+  secretFakes?: { w: SandboxSecretFake | null; b: SandboxSecretFake | null };
 };
 
 export function buildSandboxExport(input: BuildSandboxExportInput): SandboxExport {
@@ -74,6 +89,15 @@ export function buildSandboxExport(input: BuildSandboxExportInput): SandboxExpor
     const maskedIdxs: number[] = [];
     for (let i = 0; i < input.masked.length; i++) if (input.masked[i]) maskedIdxs.push(i);
     if (maskedIdxs.length) exp.maskedIdxs = maskedIdxs;
+  }
+  if (input.variant === 'setup' && input.setupPlacements) {
+    exp.setupPlacements = { ...input.setupPlacements };
+  }
+  if (input.variant === 'secret' && input.secretFakes) {
+    exp.secretFakes = {
+      w: input.secretFakes.w ? { ...input.secretFakes.w } : null,
+      b: input.secretFakes.b ? { ...input.secretFakes.b } : null,
+    };
   }
   if (input.enPassant) exp.enPassant = input.enPassant;
   return exp;

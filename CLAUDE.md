@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Voice Chat Chess (VCC) — six chess variants (Normal, Merge, Guerrilla, Cash Money,
-Hero, Chesssweeper) played P2P over WebRTC with voice chat. Vite + React 18 + TS,
-custom variant engines, Cloudflare Pages + Worker/D1 backend.
+Voice Chat Chess (VCC) — eight chess variants (Normal, Merge, Guerrilla, Cash Money,
+Hero, Chesssweeper, Setup, Secret Queen) played P2P over WebRTC with voice chat.
+Vite + React 18 + TS, custom variant engines, Cloudflare Pages + Worker/D1 backend.
 
 Deep module map: **docs/ARCHITECTURE.md**. Hero rules & cooldowns: **hero.md**.
 README has good product context but its crypto section is stale (Ed25519 move signing
