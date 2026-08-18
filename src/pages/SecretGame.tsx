@@ -59,6 +59,13 @@ type EndState = { outcome: GameOutcome; reason: GameEndReason };
 // are exchanged; 'play' is a normal game of chess with the two fakes live.
 type Phase = 'pick' | 'play';
 
+// Duration of the StartOverlay's CSS animation (board-start-fade in
+// styles.css). Used to anchor the pick deadline to the wall clock without
+// depending on animationend, which never fires in a backgrounded tab.
+const START_OVERLAY_MS = 3500;
+// Slack past the shared pick deadline before a silent opponent forfeits.
+const STALL_GRACE_MS = 30_000;
+
 export function SecretGame() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
@@ -301,13 +308,29 @@ export function SecretGame() {
     sfx.playQueue();
   };
 
-  // Countdown ticker. Armed when the intro overlay finishes; expires into
-  // auto-pick. Deadline is wall-clock so a throttled background tab still
-  // finalizes roughly on time.
+  // The StartOverlay's animationend never fires in a backgrounded tab (CSS
+  // animations pause), which would leave gameStarted stuck false — the same
+  // race the established pages rescue (see SweeperGame). Opponent progress
+  // (their pick arriving, or play having begun) proves the game is underway;
+  // a timeout covers a foregrounded tab whose event was lost.
   useEffect(() => {
-    if (!gameStarted || phase !== 'pick' || myReadyPick) return;
+    if (gameStarted || !partnerReady) return;
+    if (oppReadyPick || phase === 'play') { setGameStarted(true); return; }
+    const t = window.setTimeout(() => setGameStarted(true), START_OVERLAY_MS + 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameStarted, partnerReady, oppReadyPick, phase]);
+
+  // Countdown ticker. The deadline is anchored to the wall clock as soon as
+  // the peer link is up (partnerReady): overlay duration + phase budget.
+  // That way a throttled background tab still auto-picks roughly on time
+  // even if the overlay's animationend never fires; gameStarted arming is
+  // kept as a fallback for edge cases where partnerReady lagged.
+  useEffect(() => {
+    if ((!gameStarted && !partnerReady) || phase !== 'pick' || myReadyPick) return;
     if (pickDeadlineRef.current == null) {
-      pickDeadlineRef.current = Date.now() + SECRET_PHASE_MS;
+      pickDeadlineRef.current =
+        Date.now() + (gameStarted ? 0 : START_OVERLAY_MS) + SECRET_PHASE_MS;
     }
     const id = window.setInterval(() => {
       const left = (pickDeadlineRef.current ?? 0) - Date.now();
@@ -317,11 +340,35 @@ export function SecretGame() {
         finalizeMyPick();
         return;
       }
-      setPickMsLeft(left);
+      setPickMsLeft(Math.min(left, SECRET_PHASE_MS));
     }, 100);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStarted, phase, myReadyPick]);
+  }, [gameStarted, partnerReady, phase, myReadyPick]);
+
+  // Anti-stall backstop: my pick is in, the shared deadline plus a grace
+  // period has passed, and the opponent still hasn't sent theirs — a
+  // stalled/killed tab that never disconnected cleanly, or a peer whose
+  // pick failed validation and was dropped. End it through the same forfeit
+  // path a disconnect uses. The stalled client normally auto-sends once its
+  // own (throttled) timer fires, so this is a rare last resort.
+  useEffect(() => {
+    if (!myReadyPick || oppReadyPick || phase !== 'pick' || end) return;
+    const deadline = pickDeadlineRef.current ?? Date.now() + SECRET_PHASE_MS;
+    const fireAt = Math.max(deadline, Date.now()) + STALL_GRACE_MS;
+    const id = window.setInterval(() => {
+      if (endRef.current || phaseRef.current !== 'pick' || oppFinalRef.current != null) {
+        clearInterval(id);
+        return;
+      }
+      if (Date.now() >= fireAt) {
+        clearInterval(id);
+        finalize({ outcome: myColor, reason: 'disconnect' });
+      }
+    }, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myReadyPick, oppReadyPick, phase, end]);
 
   // The board shown during the pick phase: the ordinary starting position.
   const pickBoard = useMemo<(Piece | null)[]>(() => startingBoard(), []);
@@ -368,8 +415,17 @@ export function SecretGame() {
       }
       if (msg.type === 'move') { await applyRemoteMove(msg.move); return; }
       if (msg.type === 'resign') { finalize({ outcome: myColor, reason: 'resignation' }); return; }
-      if (msg.type === 'draw-offer') { setDrawOfferedByOpp(true); return; }
-      if (msg.type === 'draw-accept') { finalize({ outcome: 'draw', reason: 'draw-agreed' }); return; }
+      // Draw traffic is only meaningful during play — the local buttons are
+      // disabled during the pick phase, so an offer/accept arriving then is
+      // a hostile or buggy peer angling for a 0-move rated draw. Drop it.
+      if (msg.type === 'draw-offer') {
+        if (phaseRef.current === 'play') setDrawOfferedByOpp(true);
+        return;
+      }
+      if (msg.type === 'draw-accept') {
+        if (phaseRef.current === 'play') finalize({ outcome: 'draw', reason: 'draw-agreed' });
+        return;
+      }
       if (msg.type === 'draw-decline') { setDrawOfferedByMe(false); return; }
       if (msg.type === 'timeout-claim') {
         const loser = msg.loserColor;
@@ -545,8 +601,9 @@ export function SecretGame() {
     // The unmask moment: a fake queen dropping its pawn disguise, either by
     // moving or by delivering a check it can no longer hide. Same smoke-bomb
     // cue as Twin-Jutsu's unmask. A capture-reveal keeps the plain capture
-    // sound — the capture strip does the talking there.
-    if (res.reveal && res.reveal.cause !== 'captured') sfx.playTwinJutsu();
+    // sound — the capture strip does the talking there. One move can carry
+    // two reveals (hidden fake takes hidden fake), hence the array.
+    if (res.reveals.some((r) => r.cause !== 'captured')) sfx.playTwinJutsu();
     if (res.check && !res.checkmate) sfx.playCheck();
   };
 
@@ -555,9 +612,11 @@ export function SecretGame() {
   // 'check' it pops where it stands.
   const triggerRevealAnim = (res: MoveResult, state: GameState) => {
     if (!animationsEnabledRef.current) return;
-    if (!res.reveal || res.reveal.cause === 'captured') return;
-    const sq = state.fakes[res.reveal.side].sq;
-    if (sq) setPopAnim({ squares: [sq], key: Date.now() });
+    const squares = res.reveals
+      .filter((r) => r.cause !== 'captured')
+      .map((r) => state.fakes[r.side].sq)
+      .filter((sq): sq is Square => !!sq);
+    if (squares.length > 0) setPopAnim({ squares, key: Date.now() });
   };
 
   const applyLocalMove = async (
@@ -1149,8 +1208,12 @@ export function SecretGame() {
           <button
             className="free-play-btn"
             type="button"
-            disabled={moves.length === 0 || !secretQueensForRecord()}
+            // Enabled only once the game has ENDED: the export JSON contains
+            // both secret picks, so a mid-game export would leak the
+            // opponent's hidden queen.
+            disabled={!end || moves.length === 0 || !secretQueensForRecord()}
             onClick={() => {
+              if (!end) return;
               const picks = secretQueensForRecord();
               if (!picks) return;
               const exp = buildGameExport({

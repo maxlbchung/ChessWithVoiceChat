@@ -115,8 +115,14 @@ export type MoveResult = {
   check: boolean;
   checkmate: boolean;
   stalemate: boolean;
-  // Set when this move flipped a side's fake from hidden to revealed —
-  // drives the unmask moment (sfx + pop) in the UI.
+  // Every fake this move flipped from hidden to revealed, in flip order —
+  // drives the unmask moment (sfx + pop) in the UI. Usually 0 or 1 entries,
+  // but a hidden fake capturing the opponent's hidden fake carries two:
+  // 'captured' for the victim, then 'moved' (or 'check') for the mover.
+  reveals: { side: SecretColor; cause: RevealCause }[];
+  // The last (most significant) entry of `reveals`, or null — the mover's
+  // own reveal when both happened. Kept as a single-slot convenience for
+  // consumers that show one cue (e.g. the Review replay).
   reveal: { side: SecretColor; cause: RevealCause } | null;
   // Side whose fake piece this move captured, or null.
   fakeCaptured: SecretColor | null;
@@ -259,6 +265,13 @@ export function fromFen(extended: string): GameState | null {
     const p = chess.get(info.sq as never) as { type: string; color: string } | null;
     if (!p || p.type !== 'q' || p.color !== color) return null;
   }
+  // LIMITATION: the extended FEN carries no repetition history, so a state
+  // rebuilt here restarts positionHistory at the current position — a
+  // threefold claim after a rebuild would undercount repetitions that
+  // happened before it. fromFen is currently unused by the app (moves carry
+  // extended FENs only for mismatch detection, never for resync); if a real
+  // resync path is ever wired through here, serialize the history (or a
+  // running repetition count) alongside the fake tokens first.
   return {
     board: boardOf(chess),
     turn: chess.turn() as SecretColor,
@@ -387,7 +400,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
   // Track the fakes across the move.
   const myFake: FakeInfo = { ...state.fakes[mover] };
   const oppFake: FakeInfo = { ...state.fakes[opp] };
-  let reveal: { side: SecretColor; cause: RevealCause } | null = null;
+  const reveals: { side: SecretColor; cause: RevealCause }[] = [];
   let fakeCaptured: SecretColor | null = null;
 
   // Capture of the opponent's fake (a queen can't be ep-captured, so a plain
@@ -397,7 +410,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     oppFake.sq = null;
     if (!oppFake.revealed) {
       oppFake.revealed = true;
-      reveal = { side: opp, cause: 'captured' };
+      reveals.push({ side: opp, cause: 'captured' });
     }
   }
 
@@ -406,7 +419,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     myFake.sq = to;
     if (!myFake.revealed) {
       myFake.revealed = true;
-      reveal = { side: mover, cause: 'moved' };
+      reveals.push({ side: mover, cause: 'moved' });
     }
   }
 
@@ -418,7 +431,7 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     const oppKing = kingIdxOf(boardAfter, opp);
     if (oppKing != null && queenAttacks(boardAfter, sqToIdx(myFake.sq), oppKing)) {
       myFake.revealed = true;
-      reveal = { side: mover, cause: 'check' };
+      reveals.push({ side: mover, cause: 'check' });
     }
   }
 
@@ -445,7 +458,8 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     check: chess.isCheck(),
     checkmate: chess.isCheckmate(),
     stalemate: chess.isStalemate(),
-    reveal,
+    reveals,
+    reveal: reveals.length > 0 ? reveals[reveals.length - 1] : null,
     fakeCaptured,
   };
   return { state: next, result };
