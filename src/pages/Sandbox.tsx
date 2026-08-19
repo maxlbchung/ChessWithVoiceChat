@@ -1207,9 +1207,13 @@ export function Sandbox() {
     nextMasked[fromIdx] = false;
     nextMasked[toIdx] = false;
     if (epCapturedIdx != null) nextMasked[epCapturedIdx] = false;
-    // Secret Queen fake tracking: the fake follows its piece (first move
-    // drops the disguise, mirroring the live engine); capturing the
-    // opponent's fake clears it.
+    // Secret Queen fake tracking: the fake follows its piece; capturing the
+    // opponent's fake clears it. Mirroring the live engine's stealth rule,
+    // the disguise survives pawn-shaped moves (1 forward, home-rank
+    // double-step, forward-diagonal capture — not onto the last rank) and
+    // drops on any queen-only move. (Sandbox has no engine legality, so this
+    // is pure geometry against the board; the fake's en-passant lives only
+    // in the real engine — a sandbox queen never triggers the ep path.)
     let nextFakes = current.secretFakes;
     let secretRevealSq: string | null = null;
     if (variant === 'secret') {
@@ -1221,9 +1225,21 @@ export function Sandbox() {
           // Fake captured — record gone, the truth is out.
           nextFakes[c] = null;
         } else if (f.idx === fromIdx && moving.color === c) {
+          const ff = fromIdx % 8, fRow = Math.floor(fromIdx / 8);
+          const tf = toIdx % 8, tRow = Math.floor(toIdx / 8);
+          const fwd = c === 'w' ? -1 : 1; // rows grow downward (0 = rank 8)
+          const homeRow = c === 'w' ? 6 : 1;
+          const lastRow = c === 'w' ? 0 : 7;
+          const midIdx = (fRow + fwd) * 8 + ff;
+          const oneFwd = tf === ff && tRow === fRow + fwd && !target;
+          const twoFwd = tf === ff && fRow === homeRow && tRow === fRow + 2 * fwd
+            && !target && !current.board[midIdx];
+          const diagCap = Math.abs(tf - ff) === 1 && tRow === fRow + fwd
+            && !!target && target.color !== c;
+          const pawnShaped = (oneFwd || twoFwd || diagCap) && tRow !== lastRow;
           const wasHidden = !f.revealed;
-          nextFakes[c] = { ...f, idx: toIdx, revealed: true };
-          if (wasHidden) secretRevealSq = to;
+          nextFakes[c] = { ...f, idx: toIdx, revealed: f.revealed || !pawnShaped };
+          if (wasHidden && !pawnShaped) secretRevealSq = to;
         }
       }
     }
@@ -2219,15 +2235,9 @@ export function Sandbox() {
       }
       return out;
     }
-    // Secret designation armed: ring that side's pawns (the candidates).
-    if (variant === 'secret' && secretArm) {
-      const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
-      for (let i = 0; i < 64; i++) {
-        const p = current.board[i];
-        if (p && p.color === secretArm && p.letter.toUpperCase() === 'P') out.push(ringTarget(i));
-      }
-      return out;
-    }
+    // Secret designation armed: the candidates get green pick circles via
+    // secretPickSquares on the board instead of target rings.
+    if (variant === 'secret' && secretArm) return [];
     if (variant === 'cash' && shopArmed) {
       const out: { to: string; isCapture: boolean; isMerge: boolean }[] = [];
       for (let i = 0; i < 64; i++) {
@@ -2482,6 +2492,23 @@ export function Sandbox() {
                     return f && !f.revealed && current.board[f.idx] ? [heroIdxToSq(f.idx)] : [];
                   })
                 : undefined}
+              // Designation armed: green circles on that side's candidate
+              // pawns, grey on its currently designated fake (if any).
+              secretPickSquares={variant === 'secret' && secretArm
+                ? (() => {
+                    const out: string[] = [];
+                    for (let i = 0; i < 64; i++) {
+                      const p = current.board[i];
+                      if (p && p.color === secretArm && p.letter.toUpperCase() === 'P') out.push(heroIdxToSq(i));
+                    }
+                    return out;
+                  })()
+                : undefined}
+              secretPickedSquares={(() => {
+                if (variant !== 'secret' || !secretArm) return undefined;
+                const f = current.secretFakes[secretArm];
+                return f && current.board[f.idx] ? [heroIdxToSq(f.idx)] : undefined;
+              })()}
               slimeBigKings={deriveSlimeGroups(current.board)
                 .map((g) => {
                   const ref = current.board[g.tiles[0]];
@@ -3092,7 +3119,7 @@ function SandboxSecretPanel({
       <div className="hero-panel-hint muted small">
         {armed
           ? 'Click one of that side’s pawns to crown it in secret.'
-          : 'Each fake is really a queen — the shadow pawn marks the disguise. Moving it drops the disguise, like a real game.'}
+          : 'Each fake is really a queen — the shadow pawn marks the disguise. It stays hidden while it moves like a pawn; a queen-only move drops the disguise, like a real game.'}
       </div>
     </div>
   );

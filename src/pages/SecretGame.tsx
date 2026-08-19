@@ -373,13 +373,13 @@ export function SecretGame() {
   // The board shown during the pick phase: the ordinary starting position.
   const pickBoard = useMemo<(Piece | null)[]>(() => startingBoard(), []);
 
-  // My 8 pawns, highlighted as pick candidates until I confirm. isCapture
-  // deliberately: occupied squares draw the ring marker (the plain dot would
-  // hide behind the pawn sprite).
-  const pickTargets = useMemo<{ to: Square; isCapture: boolean; isMerge: boolean }[]>(() => {
+  // My 8 pawns, circled green as pick candidates until I confirm. The
+  // currently selected pawn drops out of the list — it wears the grey
+  // "picked" circle instead (secretPickedSquares below).
+  const pickCandidates = useMemo<Square[]>(() => {
     if (phase !== 'pick' || myReadyPick) return [];
-    return pawnSquaresFor(myEngineColor).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
-  }, [phase, myReadyPick, myEngineColor]);
+    return pawnSquaresFor(myEngineColor).filter((sq) => sq !== myPick);
+  }, [phase, myReadyPick, myEngineColor, myPick]);
 
   const onPickSquareClick = (sq: Square) => {
     if (!gameStarted || myReadyPick) return;
@@ -598,11 +598,13 @@ export function SecretGame() {
   const playMoveFeedback = (res: MoveResult) => {
     if (res.captured) sfx.playCapture();
     else sfx.playMove();
-    // The unmask moment: a fake queen dropping its pawn disguise, either by
-    // moving or by delivering a check it can no longer hide. Same smoke-bomb
-    // cue as Twin-Jutsu's unmask. A capture-reveal keeps the plain capture
-    // sound — the capture strip does the talking there. One move can carry
-    // two reveals (hidden fake takes hidden fake), hence the array.
+    // The unmask moment: a fake queen dropping its pawn disguise — by making
+    // a move a pawn couldn't, stepping onto the promotion rank, or giving a
+    // check a pawn couldn't be giving (pawn-shaped moves, en passant
+    // included, stay masked). Same smoke-bomb cue as Twin-Jutsu's unmask. A
+    // capture-reveal keeps the plain capture sound — the capture strip does
+    // the talking there. One move can carry two reveals (hidden fake takes
+    // hidden fake queen-style), hence the array.
     if (res.reveals.some((r) => r.cause !== 'captured')) sfx.playTwinJutsu();
     if (res.check && !res.checkmate) sfx.playCheck();
   };
@@ -846,8 +848,8 @@ export function SecretGame() {
   //     shared state, hidden by the UI);
   //   - my own unrevealed fake renders as the queen it is, with a ghost-pawn
   //     marker showing the disguise the opponent sees.
-  // During the pick phase there are no masks yet — the selection ring marks
-  // the chosen pawn.
+  // During the pick phase there are no masks yet — the green/grey pick
+  // circles mark the candidates and the chosen pawn.
   const { maskedAsPawnSqs, maskedSelfPawnSqs } = useMemo(() => {
     if (inPick) {
       return { maskedAsPawnSqs: [] as Square[], maskedSelfPawnSqs: [] as Square[] };
@@ -879,11 +881,11 @@ export function SecretGame() {
     : null;
 
   const legalTargets = useMemo(() => {
-    if (inPick) return pickTargets;
+    if (inPick) return [];
     if (!atPresent || !selectedSquare || !game) return [];
     return legalMovesFrom(game, selectedSquare);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inPick, pickTargets, selectedSquare, game, atPresent]);
+  }, [inPick, selectedSquare, game, atPresent]);
 
   const lastMove = useMemo(() => {
     if (inPick || viewPly <= 0) return null;
@@ -1063,9 +1065,10 @@ export function SecretGame() {
               <div className="setup-tray-hint muted small">
                 One of your 8 pawns secretly becomes a queen. It moves like a
                 queen from the first move, but your opponent sees an ordinary
-                pawn — until it moves (or gives check), when the disguise
-                drops for good. If the clock runs out, a random pawn is
-                picked for you.
+                pawn — and it stays disguised while it moves like one (single
+                steps, double-step, captures, even en passant). The moment it
+                makes a move a pawn couldn't, the disguise drops for good. If
+                the clock runs out, a random pawn is picked for you.
               </div>
             </div>
           </div>
@@ -1074,7 +1077,7 @@ export function SecretGame() {
           <MergeBoard
             board={displayBoard}
             orientation={handoff.iAmWhite ? 'white' : 'black'}
-            selectedSquare={inPick ? myPick : (atPresent ? selectedSquare : null)}
+            selectedSquare={inPick ? null : (atPresent ? selectedSquare : null)}
             legalTargets={legalTargets}
             onSquareClick={onSquareClick}
             onPieceDrop={onPieceDrop}
@@ -1088,6 +1091,8 @@ export function SecretGame() {
             popKey={popAnim?.key}
             maskedAsPawnSquares={maskedAsPawnSqs}
             maskedSelfPawnSquares={maskedSelfPawnSqs}
+            secretPickSquares={inPick ? pickCandidates : undefined}
+            secretPickedSquares={inPick && myPick ? [myPick] : undefined}
             emojiBubble={emojiBubble}
           />
           {pendingPromo && game && (

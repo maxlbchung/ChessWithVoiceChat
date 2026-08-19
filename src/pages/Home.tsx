@@ -129,7 +129,7 @@ import * as sfx from '../lib/sfx';
 // shows everything: Setup runs an untimed placement stage for BOTH armies
 // before the merged game, and Secret Queen has you pick both fakes (each
 // rendered with the owner-shadow pawn marker; the reveal still fires on the
-// fake's first move so the moment previews).
+// fake's first non-pawn-shaped move so the moment previews).
 type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret';
 
 type Mode = 'idle' | 'searching' | 'hosting';
@@ -234,7 +234,8 @@ export function Home() {
 
   // Secret Queen — pick white's secret pawn, then black's, then play. Both
   // fakes render with the owner-shadow marker (single player sees all); the
-  // reveal still flips on the fake's first move / hidden check.
+  // reveal still flips when the fake makes a move a pawn couldn't (or gives
+  // a check a pawn couldn't) — pawn-shaped moves keep the disguise.
   const [secretStage, setSecretStage] = useState<'pickW' | 'pickB' | 'play'>('pickW');
   const [secretPicks, setSecretPicks] = useState<{ w: string | null; b: string | null }>({ w: null, b: null });
   const [secretStates, setSecretStates] = useState<SecretState[]>([]);
@@ -589,14 +590,19 @@ export function Home() {
     [],
   );
 
-  // The 8 candidate pawns of whichever side is currently picking. isCapture
-  // deliberately: occupied squares draw the ring marker (the plain dot would
-  // hide behind the pawn sprite) — same trick SecretGame uses.
-  const secretPickTargets = useMemo<{ to: string; isCapture: boolean; isMerge: boolean }[]>(() => {
+  // The 8 candidate pawns of whichever side is currently picking, circled
+  // green — same treatment SecretGame uses. A side's already-chosen pawn
+  // drops out of the candidates; it wears the grey "picked" circle instead.
+  const secretPickCandidates = useMemo<string[]>(() => {
     if (freeVariant !== 'secret' || secretStage === 'play') return [];
     const color = secretStage === 'pickB' ? 'b' : 'w';
-    return secretPawnSquaresFor(color).map((sq) => ({ to: sq, isCapture: true, isMerge: false }));
-  }, [freeVariant, secretStage]);
+    const chosen = secretPicks[color];
+    return secretPawnSquaresFor(color).filter((sq) => sq !== chosen);
+  }, [freeVariant, secretStage, secretPicks]);
+  const secretPickedSqs = useMemo<string[]>(() => {
+    if (freeVariant !== 'secret' || secretStage === 'play') return [];
+    return [secretPicks.w, secretPicks.b].filter((s): s is string => !!s);
+  }, [freeVariant, secretStage, secretPicks]);
 
   const secretLegalTargets = useMemo(() => {
     if (freeVariant !== 'secret' || secretStage !== 'play' || !freeSelected || !secretViewState) return [];
@@ -2827,7 +2833,8 @@ export function Home() {
                 <div className="setup-tray-hint muted small">
                   One pawn per side secretly moves like a queen. Free play
                   shows both with the owner’s shadow marker — the disguise
-                  still drops for good on the fake’s first move.
+                  still drops for good when the fake makes a move a pawn
+                  couldn’t.
                 </div>
               </div>
             </div>
@@ -3056,20 +3063,17 @@ export function Home() {
                     ? (secretViewState?.board ?? secretPickBoard)
                     : secretPickBoard) as (MergePiece | null)[]}
                   orientation={freeOrientation}
-                  selectedSquare={secretStage === 'play'
-                    ? freeSelected
-                    : (secretStage === 'pickB' ? secretPicks.b : secretPicks.w)}
-                  legalTargets={secretStage === 'play' ? secretLegalTargets : secretPickTargets}
+                  selectedSquare={secretStage === 'play' ? freeSelected : null}
+                  legalTargets={secretStage === 'play' ? secretLegalTargets : []}
                   onSquareClick={onFreeSquareClick}
                   onPieceDrop={handleSecretDrop}
                   onDragStartSquare={onFreeDragStart}
-                  // While black picks, White's confirmed pick keeps a tint so
-                  // it stays visible without any mask machinery.
-                  lastMove={secretStage === 'play'
-                    ? freeLastMove
-                    : (secretStage === 'pickB' && secretPicks.w
-                        ? { from: secretPicks.w, to: secretPicks.w }
-                        : null)}
+                  lastMove={secretStage === 'play' ? freeLastMove : null}
+                  // Pick phase: green circles on the candidates, grey on any
+                  // already-confirmed pick (White's stays marked while Black
+                  // chooses).
+                  secretPickSquares={secretStage !== 'play' ? secretPickCandidates : undefined}
+                  secretPickedSquares={secretStage !== 'play' ? secretPickedSqs : undefined}
                   slideMoves={slideAnim?.moves}
                   slideKey={slideAnim?.key}
                   popSquares={popAnim?.squares}
