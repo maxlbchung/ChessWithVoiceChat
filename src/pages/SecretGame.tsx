@@ -598,11 +598,13 @@ export function SecretGame() {
   const playMoveFeedback = (res: MoveResult) => {
     if (res.captured) sfx.playCapture();
     else sfx.playMove();
-    // The unmask moment: a fake queen dropping its pawn disguise, either by
-    // moving or by delivering a check it can no longer hide. Same smoke-bomb
-    // cue as Twin-Jutsu's unmask. A capture-reveal keeps the plain capture
-    // sound — the capture strip does the talking there. One move can carry
-    // two reveals (hidden fake takes hidden fake), hence the array.
+    // The unmask moment: a fake queen dropping its pawn disguise — by making
+    // a move a pawn couldn't, stepping onto the promotion rank, or giving a
+    // check a pawn couldn't be giving (pawn-shaped moves, en passant
+    // included, stay masked). Same smoke-bomb cue as Twin-Jutsu's unmask. A
+    // capture-reveal keeps the plain capture sound — the capture strip does
+    // the talking there. One move can carry two reveals (hidden fake takes
+    // hidden fake queen-style), hence the array.
     if (res.reveals.some((r) => r.cause !== 'captured')) sfx.playTwinJutsu();
     if (res.check && !res.checkmate) sfx.playCheck();
   };
@@ -1063,9 +1065,10 @@ export function SecretGame() {
               <div className="setup-tray-hint muted small">
                 One of your 8 pawns secretly becomes a queen. It moves like a
                 queen from the first move, but your opponent sees an ordinary
-                pawn — until it moves (or gives check), when the disguise
-                drops for good. If the clock runs out, a random pawn is
-                picked for you.
+                pawn — and it stays disguised while it moves like one (single
+                steps, double-step, captures, even en passant). The moment it
+                makes a move a pawn couldn't, the disguise drops for good. If
+                the clock runs out, a random pawn is picked for you.
               </div>
             </div>
           </div>

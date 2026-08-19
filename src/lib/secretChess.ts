@@ -4,15 +4,22 @@
 // moves are a superset of pawn moves — but the opponent's UI renders it as an
 // ordinary pawn until it is revealed.
 //
-// Reveal is a UI/state flag, never a rules change: for attack, check,
-// checkmate and stalemate purposes the fake piece is ALWAYS a queen. The
+// THE STEALTH RULE: the fake stays hidden as long as every move it makes is
+// also a legal pawn move. While hidden it can advance one square, double-step
+// from its home rank, capture diagonally forward, and capture EN PASSANT —
+// all without revealing. Reveal is a UI/state flag, never a rules change (for
+// attack, check, checkmate and stalemate the fake is ALWAYS a queen); the
 // flag flips when:
-//   - the fake makes its first move ('moved' — a pawn sliding like a queen
-//     can't stay secret);
-//   - the fake delivers check while still unmoved ('check' — lines can open
-//     via a discovered position, and a check cannot stay secret: without the
-//     reveal the opponent would unknowingly ignore a hidden attacker for
-//     check/mate purposes);
+//   - the fake makes a move a pawn could not make ('moved' — backward,
+//     sideways, a long slide, a non-capture diagonal…);
+//   - the fake steps onto the promotion rank ('moved' — a pawn there would
+//     have to promote, so the disguise is impossible; it simply IS the queen
+//     it always was, no promotion picker);
+//   - the fake attacks the enemy king in a way a pawn on its square could not
+//     ('check' — a discovered line opening behind it, or a pawn-shaped move
+//     that lands it on a queen line to the king; a diagonal capture landing
+//     forward-diagonal-adjacent to the king is a legitimate PAWN check and
+//     stays hidden);
 //   - the fake is captured ('captured' — the capture strip shows the truth).
 //
 // Engine design: legality is delegated to chess.js (like sweeperChess /
@@ -23,11 +30,26 @@
 // serialized FEN (`toFen`) swaps the letter back to F/f plus appends the
 // fake metadata so state round-trips deterministically.
 //
-// Consequences that fall out for free from the queen substitution:
-//   - no en passant for the fake (queens don't double-step or get ep-captured);
-//   - reaching the last rank needs no promotion (it already is a queen);
-//   - the enemy king can never step adjacent-diagonal to an unrevealed fake
-//     "thinking it's a pawn" — chess.js forbids moving into a queen's attack.
+// Execution split (applyMove): a hidden fake's pawn-shaped move is executed
+// in chess.js AS A PAWN (substitute queen→pawn, move, substitute the landed
+// piece back to queen in the FEN string). That yields honest pawn SAN
+// ("e4", "exd6" — no "Qe4" leak), makes the fake's own en-passant capture a
+// native chess.js move, and sets the en-passant square naturally after a
+// double-step so an adjacent enemy pawn can ep-capture the fake right back
+// (chess.js generates and executes that capture off the ep field even though
+// the piece standing there is a queen — verified against chess.js 1.4.0).
+// Every other move — any non-pawn-shaped fake move, a revealed fake's move,
+// and all normal pieces — executes on the queen position as before.
+//
+// One wrinkle chess.js can't carry: its fen() only emits the ep square when
+// a REAL enemy pawn could capture, so an enemy double-step past our hidden
+// fake (a queen in chess.js) would silently drop the fake's ep right.
+// applyMove re-inserts the ep square into the stored chessFen in that case,
+// and hiddenFakeEpMove() surfaces the capture to legality/mate/stalemate
+// queries via the same pawn substitution.
+//
+// The fake's legal-move set is queen moves ∪ {en passant while hidden}. A
+// revealed fake is an honest queen — no ep for it.
 //
 // One information leak chess.js SAN would create: with two same-color queens
 // on the board (real + unrevealed fake), SAN disambiguates the real queen's
@@ -87,7 +109,8 @@ export function idxToSq(idx: number): Square {
 export type FakeInfo = {
   // Current square of the fake piece, or null once it has been captured.
   sq: Square | null;
-  // True once the disguise has dropped (moved / gave check / was captured).
+  // True once the disguise has dropped (made a non-pawn move / reached the
+  // last rank / gave a non-pawn check / was captured).
   revealed: boolean;
 };
 
@@ -104,6 +127,13 @@ export type GameState = {
   fakes: { w: FakeInfo; b: FakeInfo };
 };
 
+// 'moved'    — the fake made a move a pawn could not make, or stepped onto
+//              the promotion rank (where a pawn could not stay a pawn).
+// 'check'    — the fake attacks the enemy king in a way a pawn on its square
+//              could not (discovered line, or a pawn-shaped move landing on a
+//              queen line). A pawn-pattern check (king forward-diagonal-
+//              adjacent) does NOT reveal.
+// 'captured' — the fake was captured (including en passant).
 export type RevealCause = 'moved' | 'check' | 'captured';
 
 export type MoveResult = {
@@ -240,6 +270,18 @@ function replaceInFenRow(row: string, file: number, letter: string): string {
   return out;
 }
 
+// Replaces the piece letter at `sq` in a full FEN string (placement field
+// only; the other five fields ride along untouched).
+function substPieceInFen(fen: string, sq: Square, letter: string): string {
+  const fields = fen.split(' ');
+  const rows = fields[0].split('/');
+  const file = sq.charCodeAt(0) - 97;
+  const rowIdx = 7 - (sq.charCodeAt(1) - 49);
+  rows[rowIdx] = replaceInFenRow(rows[rowIdx], file, letter);
+  fields[0] = rows.join('/');
+  return fields.join(' ');
+}
+
 export function fromFen(extended: string): GameState | null {
   const [fenPart, fakePart] = extended.split(' | ');
   if (!fenPart || !fakePart) return null;
@@ -304,6 +346,81 @@ export function queenAttacks(board: (Piece | null)[], fromIdx: number, toIdx: nu
   return true;
 }
 
+// True when a queen on fromIdx attacks kingIdx the way a `color` PAWN on
+// fromIdx would: king forward-diagonal-adjacent. Such a check keeps the
+// disguise; any other queen attack on the king reveals.
+function isPawnCheckSquare(fromIdx: number, kingIdx: number, color: SecretColor): boolean {
+  const df = (kingIdx % 8) - (fromIdx % 8);
+  const dr = Math.floor(kingIdx / 8) - Math.floor(fromIdx / 8);
+  // Rows grow downward (row 0 = rank 8): white pawns attack row-1, black row+1.
+  return Math.abs(df) === 1 && dr === (color === 'w' ? -1 : 1);
+}
+
+// Executes `from`→`to` as a PAWN move for `mover` in a copy of `chessFen`
+// with the fake (a queen there) substituted to a real pawn. Returns null when
+// the move is not a legal pawn move — the caller falls back to the queen
+// path. On success the returned FEN has the landed piece substituted back to
+// a queen; the ep field is whatever chess.js emitted for the pawn position
+// (i.e. after a double-step, set exactly when a real enemy pawn could
+// capture — the enemy hidden-fake case is patched up by the caller).
+// Legality is identical under either substitution: only the mover's own
+// square changes, and a piece's own type never bears on its own king's
+// safety after it moves away.
+function tryPawnExec(
+  chessFen: string,
+  mover: SecretColor,
+  from: Square,
+  to: Square,
+): {
+  chessFenAfter: string;
+  sanBase: string;
+  captured: boolean;
+  epCapturedSq: Square | null;
+  doubleStep: boolean;
+} | null {
+  let chess: Chess;
+  try {
+    chess = new Chess(substPieceInFen(chessFen, from, mover === 'w' ? 'P' : 'p'));
+  } catch {
+    return null;
+  }
+  let mv;
+  try {
+    mv = chess.move({ from, to });
+  } catch {
+    return null;
+  }
+  if (!mv) return null;
+  return {
+    chessFenAfter: substPieceInFen(chess.fen(), to, mover === 'w' ? 'Q' : 'q'),
+    // Check/mate suffix is re-derived from the queen truth by the caller.
+    sanBase: mv.san.replace(/[+#]+$/, ''),
+    captured: !!mv.captured,
+    // En passant removes the pawn BEHIND the landing square (same rank the
+    // capturer came from).
+    epCapturedSq: mv.flags.includes('e') ? ((to[0] + from[1]) as Square) : null,
+    doubleStep: mv.flags.includes('b'),
+  };
+}
+
+// The side-to-move's hidden fake's en-passant capture, if one exists — the
+// one legal move of the fake that is NOT a queen move, so chess.js's queen
+// position can't see it. Validated (self-check included) via the same
+// pawn substitution applyMove executes it with.
+function hiddenFakeEpMove(state: GameState): { from: Square; to: Square } | null {
+  const f = state.fakes[state.turn];
+  if (!f.sq || f.revealed) return null;
+  const ep = state.chessFen.split(' ')[3];
+  if (!ep || ep === '-') return null;
+  // Geometry: capture one file over onto the ep square, moving forward.
+  const dir = state.turn === 'w' ? 1 : -1;
+  if (Number(f.sq[1]) + dir !== Number(ep[1])) return null;
+  if (Math.abs(f.sq.charCodeAt(0) - ep.charCodeAt(0)) !== 1) return null;
+  return tryPawnExec(state.chessFen, state.turn, f.sq, ep as Square)
+    ? { from: f.sq, to: ep as Square }
+    : null;
+}
+
 // ----------------------------------------------------------------------
 // Moves
 // ----------------------------------------------------------------------
@@ -326,6 +443,16 @@ export function legalMovesFrom(
       seen.add(m.to);
       out.push({ to: m.to, isCapture: !!m.captured, isMerge: false });
     }
+    // The hidden fake's en-passant capture is invisible to the queen position.
+    // The same from→to may also exist as a queen slide onto the empty square;
+    // applyMove prefers the pawn execution, so the move IS the ep capture —
+    // flag it as one (the queen-slide reading is unreachable that turn).
+    const ep = hiddenFakeEpMove(state);
+    if (ep && ep.from === from) {
+      const existing = out.find((m) => m.to === ep.to);
+      if (existing) existing.isCapture = true;
+      else out.push({ to: ep.to, isCapture: true, isMerge: false });
+    }
     return out;
   } catch {
     return [];
@@ -336,7 +463,10 @@ export function allLegalMoves(state: GameState): { from: Square; to: Square }[] 
   try {
     const chess = new Chess(state.chessFen);
     const moves = chess.moves({ verbose: true }) as Array<{ from: string; to: string }>;
-    return moves.map((m) => ({ from: m.from, to: m.to }));
+    const out = moves.map((m) => ({ from: m.from, to: m.to }));
+    const ep = hiddenFakeEpMove(state);
+    if (ep && !out.some((m) => m.from === ep.from && m.to === ep.to)) out.push(ep);
+    return out;
   } catch {
     return [];
   }
@@ -350,15 +480,15 @@ function kingIdxOf(board: (Piece | null)[], color: SecretColor): number | null {
   return null;
 }
 
-// SAN with the mover's unrevealed fake queen removed, so queen-move
-// disambiguation ("Qad1") can't leak that a second queen exists. Falls back
-// to the real SAN when the fake-less position rejects the move (e.g. the
-// fake was shielding its own king). Check/mate suffixes are re-applied from
-// the real position — the fake still participates in checks.
+// SAN base (no check/mate suffix — the caller appends the truth's) with the
+// mover's unrevealed fake queen removed, so queen-move disambiguation
+// ("Qad1") can't leak that a second queen exists. Falls back to the real SAN
+// base when the fake-less position rejects the move (e.g. the fake was
+// shielding its own king).
 function sanitizedSan(
   chessFenBefore: string,
   uci: string,
-  realSan: string,
+  realSanBase: string,
   fakeSq: Square,
 ): string {
   try {
@@ -369,43 +499,87 @@ function sanitizedSan(
       to: uci.slice(2, 4),
       promotion: uci.length >= 5 ? uci[4] : undefined,
     });
-    if (!mv) return realSan;
-    const base = mv.san.replace(/[+#]+$/, '');
-    const suffix = /[+#]+$/.exec(realSan)?.[0] ?? '';
-    return base + suffix;
+    if (!mv) return realSanBase;
+    return mv.san.replace(/[+#]+$/, '');
   } catch {
-    return realSan;
+    return realSanBase;
   }
 }
 
 export function applyMove(state: GameState, uci: string): { state: GameState; result: MoveResult } | null {
-  const from = uci.slice(0, 2);
-  const to = uci.slice(2, 4);
+  const from = uci.slice(0, 2) as Square;
+  const to = uci.slice(2, 4) as Square;
   const promotion = uci.length >= 5 ? uci[4] : undefined;
   const mover = state.turn;
   const opp: SecretColor = mover === 'w' ? 'b' : 'w';
 
-  const chess = new Chess(state.chessFen);
-  let mv;
-  try {
-    mv = chess.move({ from, to, promotion: promotion ?? 'q' });
-  } catch {
-    return null;
-  }
-  if (!mv) return null;
-
-  const chessFenAfter = chess.fen();
-  const boardAfter = boardOf(chess);
-
-  // Track the fakes across the move.
   const myFake: FakeInfo = { ...state.fakes[mover] };
   const oppFake: FakeInfo = { ...state.fakes[opp] };
+  const isHiddenFakeMove = !!myFake.sq && myFake.sq === from && !myFake.revealed;
+  const lastRank = mover === 'w' ? '8' : '1';
+
+  // Execution split. A hidden fake's pawn-shaped move runs through chess.js
+  // AS A PAWN — pawn SAN, native en passant in both directions. Everything
+  // else (queen-only fake moves, which reveal; a step onto the promotion
+  // rank, which reveals; revealed fakes; every normal piece) runs on the
+  // queen position. A move that both paths reject is illegal.
+  let chessFenAfter: string;
+  let sanBase: string;
+  let captured: boolean;
+  let epCapturedSq: Square | null = null;
+  let doubleStep = false;
+  let executedAsPawn = false;
+  let queenPiece: string | null = null;
+
+  const pawnExec = isHiddenFakeMove && to[1] !== lastRank
+    ? tryPawnExec(state.chessFen, mover, from, to)
+    : null;
+  if (pawnExec) {
+    ({ chessFenAfter, sanBase, captured, epCapturedSq, doubleStep } = pawnExec);
+    executedAsPawn = true;
+  } else {
+    const chess = new Chess(state.chessFen);
+    let mv;
+    try {
+      mv = chess.move({ from, to, promotion: promotion ?? 'q' });
+    } catch {
+      return null;
+    }
+    if (!mv) return null;
+    chessFenAfter = chess.fen();
+    sanBase = mv.san.replace(/[+#]+$/, '');
+    captured = !!mv.captured;
+    queenPiece = mv.piece;
+    // A real pawn's ep capture can remove the opponent's hidden fake — the
+    // fake double-steps like a pawn, so it dies like one too.
+    if (mv.flags.includes('e')) epCapturedSq = (to[0] + from[1]) as Square;
+    doubleStep = mv.piece === 'p' && mv.flags.includes('b');
+  }
+
+  // Preserve the ep right chess.js drops: fen() only emits the ep square
+  // when a REAL enemy pawn could capture, but the opponent's hidden fake is
+  // a queen in chess.js — its ep right would silently vanish. Re-insert the
+  // square whenever a double-step lands beside a hidden enemy fake.
+  if (doubleStep && oppFake.sq && !oppFake.revealed) {
+    const fields = chessFenAfter.split(' ');
+    const sameRank = oppFake.sq[1] === to[1];
+    const adjFile = Math.abs(oppFake.sq.charCodeAt(0) - to.charCodeAt(0)) === 1;
+    if (fields[3] === '-' && sameRank && adjFile) {
+      fields[3] = to[0] + (mover === 'w' ? '3' : '6');
+      chessFenAfter = fields.join(' ');
+    }
+  }
+
+  // Queen-truth position after the move (the fake is a queen for every
+  // check/mate/stalemate purpose regardless of how the move executed).
+  const after = new Chess(chessFenAfter);
+  const boardAfter = boardOf(after);
+
   const reveals: { side: SecretColor; cause: RevealCause }[] = [];
   let fakeCaptured: SecretColor | null = null;
 
-  // Capture of the opponent's fake (a queen can't be ep-captured, so a plain
-  // destination check suffices).
-  if (oppFake.sq && oppFake.sq === to) {
+  // Capture of the opponent's fake — on its square, or en passant behind it.
+  if (oppFake.sq && (oppFake.sq === to || oppFake.sq === epCapturedSq)) {
     fakeCaptured = opp;
     oppFake.sq = null;
     if (!oppFake.revealed) {
@@ -414,50 +588,65 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
     }
   }
 
-  // The fake follows its piece; its first move drops the disguise.
+  // The fake follows its piece. A queen-path move by a hidden fake is by
+  // construction one a pawn could not make (or a step onto the promotion
+  // rank) — the disguise drops. Pawn-shaped moves keep it.
   if (myFake.sq && myFake.sq === from) {
     myFake.sq = to;
-    if (!myFake.revealed) {
+    if (!myFake.revealed && !executedAsPawn) {
       myFake.revealed = true;
       reveals.push({ side: mover, cause: 'moved' });
     }
   }
 
-  // Hidden-check auto-reveal: an unmoved fake whose line to the enemy king
-  // just opened (discovered position) cannot stay secret. Only the mover's
-  // fake can newly attack the enemy king — the opponent's fake attacking the
-  // mover's king would have made this move illegal (moving into check).
+  // Hidden-check auto-reveal: after any move by this side, a hidden fake
+  // attacking the enemy king in a way a pawn on its square could not (a
+  // discovered line opening behind it, or its own pawn-shaped move landing
+  // it on a queen line) cannot stay secret — without the reveal the opponent
+  // would unknowingly ignore a hidden attacker for check/mate purposes. A
+  // pawn-pattern check (king forward-diagonal-adjacent) keeps the disguise.
+  // Only the mover's fake can newly attack the enemy king — the opponent's
+  // fake attacking the mover's king would have made this move illegal.
   if (myFake.sq && !myFake.revealed) {
     const oppKing = kingIdxOf(boardAfter, opp);
-    if (oppKing != null && queenAttacks(boardAfter, sqToIdx(myFake.sq), oppKing)) {
+    if (
+      oppKing != null &&
+      queenAttacks(boardAfter, sqToIdx(myFake.sq), oppKing) &&
+      !isPawnCheckSquare(sqToIdx(myFake.sq), oppKing, mover)
+    ) {
       myFake.revealed = true;
       reveals.push({ side: mover, cause: 'check' });
     }
   }
 
   // SAN sanitization: only needed when the mover moved their REAL queen
-  // while their fake was still hidden (fake moves reveal themselves).
-  let san = mv.san;
-  const movedRealQueen = mv.piece === 'q' && state.fakes[mover].sq !== from;
+  // while their fake was still hidden (pawn-shaped fake moves already carry
+  // pawn SAN, and queen-path fake moves reveal themselves).
+  const movedRealQueen = queenPiece === 'q' && state.fakes[mover].sq !== from;
   if (movedRealQueen && state.fakes[mover].sq && !state.fakes[mover].revealed) {
-    san = sanitizedSan(state.chessFen, uci, mv.san, state.fakes[mover].sq!);
+    sanBase = sanitizedSan(state.chessFen, uci, sanBase, state.fakes[mover].sq!);
   }
 
   const next: GameState = {
     board: boardAfter,
-    turn: chess.turn() as SecretColor,
+    turn: after.turn() as SecretColor,
     chessFen: chessFenAfter,
     positionHistory: [...state.positionHistory, positionKey(chessFenAfter)],
     fakes: mover === 'w' ? { w: myFake, b: oppFake } : { w: oppFake, b: myFake },
   };
+  // Mate/stalemate through the exported queries so a hidden fake's ep escape
+  // counts as a legal reply; the check/mate suffix follows the same truth.
+  const checkmate = isCheckmate(next);
+  const stalemate = isStalemate(next);
+  const check = after.isCheck();
   const result: MoveResult = {
     uci,
     fenAfter: toFen(next),
-    san,
-    captured: !!mv.captured,
-    check: chess.isCheck(),
-    checkmate: chess.isCheckmate(),
-    stalemate: chess.isStalemate(),
+    san: sanBase + (checkmate ? '#' : check ? '+' : ''),
+    captured,
+    check,
+    checkmate,
+    stalemate,
     reveals,
     reveal: reveals.length > 0 ? reveals[reveals.length - 1] : null,
     fakeCaptured,
@@ -469,12 +658,14 @@ export function applyMove(state: GameState, uci: string): { state: GameState; re
 // Terminal-state queries (mirror sweeperChess / setupChess)
 // ----------------------------------------------------------------------
 
+// Both no-legal-move verdicts must also consider the one legal move the
+// queen position can't see: the hidden fake's en-passant capture.
 export function isCheckmate(state: GameState): boolean {
-  return new Chess(state.chessFen).isCheckmate();
+  return new Chess(state.chessFen).isCheckmate() && !hiddenFakeEpMove(state);
 }
 
 export function isStalemate(state: GameState): boolean {
-  return new Chess(state.chessFen).isStalemate();
+  return new Chess(state.chessFen).isStalemate() && !hiddenFakeEpMove(state);
 }
 
 export function isInCheck(state: GameState): boolean {

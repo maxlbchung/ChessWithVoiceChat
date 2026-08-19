@@ -93,7 +93,11 @@ Relationships:
   (`placementToString`/`parsePlacement`; no castling) and adds the king-capture
   rule (`kingCaptured` — an exposed king may be taken outright). Secret
   substitutes each side's fake pawn as a REAL queen for chess.js and carries
-  the fake squares + revealed flags alongside (extended FEN suffix in `toFen`).
+  the fake squares + revealed flags alongside (extended FEN suffix in `toFen`);
+  a hidden fake's pawn-shaped moves (incl. en passant, both directions) are
+  executed with a temporary queen→pawn substitution so they keep pawn SAN and
+  the disguise — it reveals only on a move (or check) a pawn couldn't make,
+  on reaching the last rank, or on capture.
 - `heroChess.ts` is the largest engine (standard chess + all hero state; own castling,
   freeze/stun/missile/slime/earthquake/explosive substate). See "Hero system".
 - `cashChess.ts` adds the economy (`SHOP_PRICES`, `CASH_IN_REWARD`, `buyUci`).

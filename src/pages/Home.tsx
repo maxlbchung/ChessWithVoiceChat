@@ -129,7 +129,7 @@ import * as sfx from '../lib/sfx';
 // shows everything: Setup runs an untimed placement stage for BOTH armies
 // before the merged game, and Secret Queen has you pick both fakes (each
 // rendered with the owner-shadow pawn marker; the reveal still fires on the
-// fake's first move so the moment previews).
+// fake's first non-pawn-shaped move so the moment previews).
 type FreeVariant = 'normal' | 'merge' | 'two' | 'cash' | 'hero' | 'sweeper' | 'setup' | 'secret';
 
 type Mode = 'idle' | 'searching' | 'hosting';
@@ -234,7 +234,8 @@ export function Home() {
 
   // Secret Queen — pick white's secret pawn, then black's, then play. Both
   // fakes render with the owner-shadow marker (single player sees all); the
-  // reveal still flips on the fake's first move / hidden check.
+  // reveal still flips when the fake makes a move a pawn couldn't (or gives
+  // a check a pawn couldn't) — pawn-shaped moves keep the disguise.
   const [secretStage, setSecretStage] = useState<'pickW' | 'pickB' | 'play'>('pickW');
   const [secretPicks, setSecretPicks] = useState<{ w: string | null; b: string | null }>({ w: null, b: null });
   const [secretStates, setSecretStates] = useState<SecretState[]>([]);
@@ -2832,7 +2833,8 @@ export function Home() {
                 <div className="setup-tray-hint muted small">
                   One pawn per side secretly moves like a queen. Free play
                   shows both with the owner’s shadow marker — the disguise
-                  still drops for good on the fake’s first move.
+                  still drops for good when the fake makes a move a pawn
+                  couldn’t.
                 </div>
               </div>
             </div>

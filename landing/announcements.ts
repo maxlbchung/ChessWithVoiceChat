@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-08-19',
+    kind: 'update',
+    title: 'Secret Queen: deep cover',
+    body: 'The disguise just got better. Your secret queen now stays hidden as long as it moves like a pawn — single steps, the double-step, diagonal captures, even en passant. Only a move a pawn could never make blows its cover. March it up the board in plain sight, then strike.',
+  },
+  {
     date: '2026-08-18',
     kind: 'update',
     title: 'Setup & Secret Queen, now solo too',

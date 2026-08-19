@@ -114,8 +114,8 @@ export function TimeModeSelector({ selectedId, onSelect, disabled, activityCount
       <Section title="Secret Queen" open={open.secret} onToggle={() => toggle('secret')}>
         <div className="muted small time-mode-blurb">
           Secretly pick one of your pawns to be a hidden queen. It looks like
-          a pawn to your opponent until it makes its first move — then the
-          disguise drops.
+          a pawn to your opponent as long as it moves like one — the moment
+          it makes a move a pawn couldn&apos;t, the disguise drops.
         </div>
         {renderGrid(timeControlsForVariant('secret'))}
       </Section>
