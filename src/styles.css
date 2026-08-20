@@ -100,6 +100,13 @@ input[type="number"], textarea, [contenteditable="true"] {
 .sandbox-palette-btn:active {
   cursor: var(--cursor-grabbing) !important;
 }
+/* Touch: long-pressing a piece must not pop the text-selection callout or
+   highlight the square's coordinate label. Taps (click-to-move) still work. */
+[data-sq], [data-sq] * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 * {
   box-sizing: border-box;
@@ -206,6 +213,20 @@ textarea::-webkit-scrollbar-track:vertical {
 }
 .vid-timeline-scroll::-webkit-scrollbar-track:horizontal {
   border-top: 1px solid var(--rule);
+}
+
+/* ── Mobile hardening ───────────────────────────────────────────────────
+   The app is a fixed sheet, not a zoomable document.
+   - overflow-x: clip kills sideways scroll without creating a new scroll
+     container (position: sticky on the masthead keeps working).
+   - touch-action: manipulation removes double-tap-to-zoom everywhere; pinch
+     is blocked by the viewport meta (and main.tsx's gesture guard on iOS).
+   - text-size-adjust stops phone browsers inflating text on rotation. */
+html, body {
+  overflow-x: clip;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 html, body, #root {
@@ -387,6 +408,47 @@ a { color: inherit; text-decoration: none; }
   border-left: 1px solid var(--rule);
 }
 
+/* Phone / portrait-tablet masthead. The single nameplate row (brand + nav
+   links + chip, fixed gaps) needs ~800px — below that it used to blow the
+   layout viewport open, so the whole app rendered zoomed-out with the chip
+   cut off. Wrap it instead: brand + chip share the top row, the nav drops
+   to its own full-width row underneath (sideways-scrollable if it still
+   can't fit, with the scrollbar hidden — the underline affordance
+   survives). */
+@media (max-width: 900px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0 0.75rem;
+    padding: 0.55rem 0.9rem 0.15rem;
+  }
+  .brand { font-size: 1.15rem; }
+  .brand-mark { font-size: 1.3rem; }
+  .topnav {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topnav::-webkit-scrollbar { display: none; }
+  .topnav a { padding: 0.5rem 0.4rem; font-size: 0.66rem; letter-spacing: 0.1em; }
+  .topnav a::after { left: 0.4rem; right: 0.4rem; }
+  .user-chip { margin-left: auto; gap: 0.45rem; padding: 0.28rem 0.45rem 0.28rem 0.32rem; }
+  .user-chip-avatar { width: 1.6rem; height: 1.6rem; }
+  /* A long handle must never push the rating (or itself) off-screen. The
+     signed-out placeholder ("not signed in") is short and has no rating next
+     to it — let it breathe. */
+  .user-chip .handle {
+    max-width: 6.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .user-chip .handle.muted { max-width: none; }
+}
+
 .main {
   flex: 1;
   padding: 1.9rem;
@@ -422,6 +484,21 @@ a { color: inherit; text-decoration: none; }
   pointer-events: none;
   user-select: none;
   z-index: 50;
+}
+
+/* Phone: the shell's generous print margins read as dead space, and the
+   fixed bottom-left version tag lands on top of the (now full-width) centred
+   colophon — put the tag in flow underneath it instead. (This block must
+   stay AFTER the base .main/.footer/.version-tag rules: equal specificity,
+   cascade order decides.) */
+@media (max-width: 900px) {
+  .main { padding: 1rem 0.85rem 1.5rem; }
+  .footer { padding: 0.75rem 0.9rem 0.85rem; }
+  .version-tag {
+    position: static;
+    text-align: center;
+    padding: 0.35rem 0 0.6rem;
+  }
 }
 
 /* ── Pages ──────────────────────────────────────────────────────────────
@@ -732,11 +809,9 @@ a { color: inherit; text-decoration: none; }
   .free-play-header {
     align-self: center;
   }
-  .free-play-shop-col {
-    /* Shop anchored to the (now centered) board's left edge instead of the
-       column's right edge. */
-    right: calc((100% + var(--max-board)) / 2 + 0.7rem);
-  }
+  /* The shop column stacks above the board in single-column mode — the
+     media block on .free-play-shop-col further down (it must come after
+     the base absolute-position rule) handles it. */
 }
 .free-play-turn-group {
   display: flex;
@@ -1905,7 +1980,10 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
   padding: 2rem 2.2rem 1.9rem;
-  min-width: 21rem;
+  /* Phones narrower than the plate's natural width get a margin instead of
+     a sideways-clipped modal. */
+  min-width: min(21rem, calc(100vw - 2.5rem));
+  max-width: calc(100vw - 1.5rem);
   text-align: center;
   overflow: hidden;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 60px -12px rgba(0, 0, 0, 0.8);
@@ -2037,6 +2115,18 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.78rem;
   min-width: 2.8rem;
   text-align: right;
+}
+/* Phone: the fixed-width slider was crushing its label into a one-word-per-
+   line column. Stack the row instead — label on top, slider stretched below. */
+@media (max-width: 560px) {
+  .settings-row:has(.volume-control) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.8rem;
+  }
+  .volume-control input[type='range'] { width: 100%; flex: 1; }
+  .settings-card { padding: 0.3rem 1rem; }
+  .settings-row:hover { box-shadow: -1rem 0 0 var(--glass), 1rem 0 0 var(--glass); }
 }
 /* Squared-off switch — a mechanical toggle on a panel, not an iOS pill. */
 .settings-toggle {
@@ -2281,13 +2371,16 @@ a { color: inherit; text-decoration: none; }
 .setup-side-rail {
   right: calc(min(var(--max-board), 100% - 212px) + 12px);
 }
-@media (max-width: 600px) {
+@media (max-width: 900px) {
   /* Rail is static/stacked here — release the cap. */
   .board-column.with-setup-tray .board-wrap {
     max-width: var(--max-board);
   }
 }
-@media (max-width: 600px) {
+/* 900px, not just phones: on a portrait tablet the board fills the whole
+   column, the gutter the rails anchor into is gone, and an absolute rail
+   ends up stranded off-screen left. Stack instead. */
+@media (max-width: 900px) {
   .cash-side-shop,
   .mine-side-rail,
   .setup-side-rail {
@@ -2318,12 +2411,17 @@ a { color: inherit; text-decoration: none; }
   flex-direction: column;
   gap: 0.7rem;
 }
-@media (max-width: 600px) {
+/* Whole single-column range, not just phones: the absolute gutter anchor
+   assumes free space left of the board, but with the board centered in one
+   column the gutter is (viewport - board) / 2 — on tablets that's less than
+   the shop's width, which used to strand the hero pickers half off-screen.
+   Stack the shop above the header + board instead, centered like them. */
+@media (max-width: 1100px) {
   .free-play-shop-col {
     position: static;
     width: 100%;
     max-width: var(--max-board);
-    align-self: flex-end;
+    align-self: center;
   }
 }
 

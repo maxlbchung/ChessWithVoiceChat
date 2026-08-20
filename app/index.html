@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The app is a fixed sheet, not a zoomable document: pinch/double-tap
+         zoom would fight board drags and leave players stuck zoomed-in.
+         iOS Safari ignores user-scalable=no — main.tsx blocks its gesture
+         events as the backstop. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="theme-color" content="#08151f" />
     <title>VCC</title>
     <!-- Type system ("Bulletin"): Newsreader = display/editorial, Archivo = UI

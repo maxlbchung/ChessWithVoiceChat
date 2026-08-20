@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-08-20',
+    kind: 'update',
+    title: 'Better on your phone',
+    body: 'VCC now fits your phone properly. The header reflows instead of spilling off the edge, nothing scrolls sideways any more, and the page no longer pinch-zooms out from under you mid-game. Boards, menus and settings all reshape themselves for small screens — tablets included.',
+  },
+  {
     date: '2026-08-19',
     kind: 'update',
     title: 'Secret Queen: deep cover',
