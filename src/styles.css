@@ -246,22 +246,35 @@ html, body, #root {
 }
 
 body {
-  background:
-    radial-gradient(circle at 15% 10%, var(--bg-grad-1) 0%, transparent 45%),
-    radial-gradient(circle at 85% 85%, var(--bg-grad-3) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%),
-    var(--bg);
-  background-attachment: fixed;
+  background: var(--bg);
   /* Archivo's default figures are proportional; the app is full of numbers
      that sit in columns (clocks, ratings, counts) so line them up globally. */
   font-variant-numeric: tabular-nums;
 }
 
-/* Fine noise over the whole app so the large flat gradients don't band, and
-   so the app shares the landing page's paper texture. A ::before on <body>
-   rather than a DOM node — no markup change, and it can't catch pointers.
-   Fixed + inset -50% keeps it stable while the page scrolls. */
+/* The ocean gradient wash, pinned to the viewport on a fixed pseudo-element
+   rather than background-attachment: fixed — mobile Safari ignores fixed
+   attachment and tiles the wash down the page in viewport-height bands
+   (visible seams mid-scroll). z-index: -1 keeps it above the ink base but
+   below all in-flow content. */
 body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 15% 10%, var(--bg-grad-1) 0%, transparent 45%),
+    radial-gradient(circle at 85% 85%, var(--bg-grad-3) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%);
+}
+
+/* Fine noise over the whole app so the large flat gradients don't band, and
+   so the app shares the landing page's paper texture. A ::after on <body>
+   rather than a DOM node — no markup change, and it can't catch pointers.
+   (::after, not ::before: the wash owns ::before, and the grain must paint
+   above it.) Fixed + inset -50% keeps it stable while the page scrolls. */
+body::after {
   content: "";
   position: fixed;
   inset: -50%;
@@ -749,13 +762,30 @@ a { color: inherit; text-decoration: none; }
    space on the left and right of the board in the viewport is symmetric
    and shrinks at the same rate as the window narrows. */
 @media (max-width: 1100px) {
-  .home-play-area { grid-template-columns: 1fr; }
+  .home-play-area {
+    grid-template-columns: 1fr;
+    /* The desktop cap (34rem, minus 22rem of chrome the two-column page
+       keeps on screen) left the board floating in side dead space on
+       portrait tablets. Single-column pages scroll, so reserve much less
+       height and let the board take the column's width; the height term
+       still shrinks it on short landscape windows. */
+    --max-board: max(15rem, min(48rem, calc(100dvh - 16rem)));
+  }
   .home-play-area:has(> .hero) {
     grid-template-rows: auto auto auto;
   }
   .home-play-area:has(> .hero) > .home-controls {
     grid-column: 1;
     grid-row: 3;
+  }
+  /* The variant index + play buttons were full-column while the board
+     centered at --max-board, so the plate stuck out to the right of the
+     board ("off center"). Give the whole controls stack the board's width
+     and centering so every edge lines up. */
+  .home-controls {
+    width: 100%;
+    max-width: var(--max-board);
+    margin-inline: auto;
   }
 }
 .free-play-board {

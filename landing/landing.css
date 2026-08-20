@@ -114,13 +114,24 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   line-height: 1.65;
+  background: var(--bg);
+  overflow-x: hidden;
+}
+/* The ocean gradient wash, pinned to the viewport on a fixed pseudo-element
+   rather than background-attachment: fixed — mobile Safari ignores fixed
+   attachment and tiles the wash down the page in viewport-height bands.
+   z-index: -1 keeps it above the ink base but below all content. Mirrors
+   the same fix in src/styles.css. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
   background:
     radial-gradient(circle at 15% 8%, var(--bg-grad-1) 0%, transparent 45%),
     radial-gradient(circle at 88% 78%, var(--bg-grad-3) 0%, transparent 52%),
-    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%),
-    var(--bg);
-  background-attachment: fixed;
-  overflow-x: hidden;
+    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%);
 }
 
 /* Fine noise over the whole page so the large flat gradients don't band. */
