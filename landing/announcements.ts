@@ -57,30 +57,6 @@ export const ANNOUNCEMENTS: Announcement[] = [
     body: 'A new variant where the opening is yours to invent. Both players get 60 secret seconds to arrange their army anywhere on their own half of the board — castle your king in a corner, stack the center, fan your pawns out wide. When the clock runs out the two halves are revealed and a normal game begins. No castling, no book lines, no mercy for a badly hidden king.',
   },
   {
-    date: '2026-08-03',
-    kind: 'update',
-    title: 'Chess Civilization: long live the king',
-    body: "Every civilization now starts with exactly one king — and dies with it, or with its last city. The king fights like a pawn, but it can rally everyone beside it: +1 hp and a fresh turn, at the cost of its own. Settling no longer consumes it; the city rises underfoot and the king steps aside. Health is now readable at a glance too: every hit point is its own pip under the piece.",
-  },
-  {
-    date: '2026-08-03',
-    kind: 'update',
-    title: 'Chess Civilization: momentum, anchors, and pocket-change armies',
-    body: 'Units now carry properties. Pawns and knights have momentum — move, then still strike the same turn. Bishops are ranged: step one hex or fire across three. Kings and bases are anchors, taking half damage in forest, mountains, or a city — and kings alone can climb the peaks. Basic units now cost pocket change: pawns 1g, knights and bishops 3g.',
-  },
-  {
-    date: '2026-08-03',
-    kind: 'update',
-    title: 'Chess Civilization: fog of war on a massive map',
-    body: "The map is now four times the land, and almost all of it starts dark. Each piece clears fog exactly as far as it can move or shoot, ground you've scouted stays mapped but goes dim, and the horde comes out of the black with a groan. Drag to pan, scroll to zoom, and click anything you can see — including the enemy — for its details.",
-  },
-  {
-    date: '2026-08-03',
-    kind: 'new',
-    title: 'Chess Civilization: a whole new game',
-    body: 'Not a variant — a small civilization game wearing the pieces, on its own page. A procedurally generated hex map, a rook for a home base, knights that leap over anything, bishops that fire across three hexes, kings that settle new bases. Survive the zombie horde, out-expand an AI rival, or fight it out hotseat.',
-  },
-  {
     date: '2026-07-29',
     kind: 'update',
     title: 'A new look, everywhere',

@@ -33,27 +33,6 @@ playable single-player with nothing hidden: an untimed placement stage for
 both armies (Setup) and picking both fakes, each rendered with the
 owner-shadow pawn marker (Secret Queen).
 
-### Chess Civilization (not a variant)
-
-A standalone hex-grid strategy game at `/app/#/civilization`, reached from the
-landing page — deliberately outside the base game: no `GameVariant` id, no lobby,
-no recordings/replays/ratings, and it renders outside `Layout` (own topbar) via a
-lazy top-level route in `router.tsx`. Engine: `src/lib/civEngine.ts` (axial hex
-math, seeded procedural terrain, per-unit turns with a named property system
-(`UNIT_PROPS`: momentum = move-then-attack, ranged, anchor = half damage on
-forest/mountain/city and mountain-climbing), one non-buyable king per
-civilization (lose it or your last city and you're out; it boosts adjacent
-allies via `boostKing` and settles cities without being consumed),
-zombie-horde and rival-AI brains, and fog of war — per-faction `explored` sets plus computed
-`visibleTiles`, view range = each piece's move/attack reach); page:
-`src/pages/Civilization.tsx` (menu + SVG board + HUD; tiles carry
-`data-hex="q,r"` for Playwright). The board is a camera: drag-pan/wheel-zoom
-mutate the svg viewBox directly (no React re-render per frame), and enemy
-steps hidden in fog apply instantly while visible ones animate. Civ-specific
-procedural sfx (terrain-aware footsteps, horde groans, bullet impacts) live at
-the bottom of `src/lib/sfx.ts`. Three modes: zombie survival, AI conquest,
-hotseat versus.
-
 ### Routing (`src/router.tsx`)
 
 Hash router, single `Layout` parent: `/` → Home (lobby + free play for all variants),

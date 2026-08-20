@@ -277,30 +277,6 @@ a {
   transform: translateX(120%);
   transition: transform 720ms ease;
 }
-/* Ghost sibling to the primary CTA — carries the Civilization link without
-   competing with "Start playing". Brass mark so it reads as an expedition. */
-.btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  font: inherit;
-  font-weight: 600;
-  padding: 0.85rem 1.4rem;
-  border-radius: 3px;
-  border: 1px solid var(--rule-strong);
-  white-space: nowrap;
-  color: var(--text);
-  background: var(--glass-soft);
-  box-shadow: var(--plate);
-  transition: transform 140ms ease, border-color 160ms ease, background 160ms ease;
-}
-.btn-ghost:hover {
-  transform: translateY(-2px);
-  background: var(--glass);
-  border-color: var(--brass);
-}
-.btn-ghost-mark { color: var(--brass); font-size: 1.05em; line-height: 1; }
-
 /* ── Hero board motif ─────────────────────────────────────────────────── */
 .hero-board {
   position: relative;
@@ -388,76 +364,6 @@ a {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-}
-
-/* ── Chess Civilization promo ───────────────────────────────────────────
-   One wide plate linking to the standalone game at app/#/civilization.
-   Whole card is the anchor; hex glyphs on the right echo the game's map. */
-.civ-promo {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 12rem;
-  gap: 1.5rem;
-  align-items: center;
-  padding: 1.6rem 1.8rem;
-  border: 1px solid var(--rule);
-  border-radius: 3px;
-  background: var(--glass-soft);
-  box-shadow: var(--plate);
-  color: inherit;
-  text-decoration: none;
-  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
-}
-.civ-promo:hover {
-  transform: translateY(-2px);
-  background: var(--glass);
-  border-color: var(--brass);
-}
-.civ-promo-copy p {
-  margin: 0 0 0.9rem;
-  color: var(--muted);
-  line-height: 1.6;
-  max-width: 42rem;
-}
-.civ-promo-modes {
-  margin: 0 0 1.1rem;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-.civ-promo-modes strong { color: var(--accent); font-weight: 600; }
-.civ-promo-cta {
-  font-family: var(--font-mono);
-  font-size: 0.74rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--brass);
-}
-.civ-promo:hover .civ-promo-cta { text-decoration: underline; text-underline-offset: 4px; }
-.civ-promo-hexes {
-  position: relative;
-  height: 10rem;
-  user-select: none;
-}
-.civ-hex-glyph {
-  position: absolute;
-  line-height: 1;
-  color: var(--brass);
-  opacity: 0.32;
-}
-.civ-hex-glyph.a { font-size: 6.2rem; right: 22%; top: 4%; }
-.civ-hex-glyph.b { font-size: 4rem; right: 2%; bottom: 12%; opacity: 0.2; }
-.civ-hex-glyph.c { font-size: 2.6rem; right: 58%; bottom: 4%; opacity: 0.16; }
-.civ-hex-glyph.rook {
-  font-size: 3.4rem;
-  right: 34%;
-  top: 22%;
-  color: var(--accent);
-  opacity: 0.95;
-  text-shadow: 0 0 24px rgba(168, 216, 185, 0.4);
 }
 
 /* ── Announcements ──────────────────────────────────────────────────────
@@ -621,20 +527,13 @@ a {
     justify-self: center;
     width: min(20rem, 72vw);
   }
-  .civ-promo {
-    grid-template-columns: 1fr;
-  }
-  .civ-promo-hexes {
-    display: none;
-  }
 }
 @media (max-width: 560px) {
   .cta-row {
     flex-direction: column;
     align-items: stretch;
   }
-  .btn-primary,
-  .btn-ghost {
+  .btn-primary {
     justify-content: center;
   }
   .news-latest {
