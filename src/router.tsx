@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { createHashRouter } from 'react-router-dom';
+import { createHashRouter, Navigate } from 'react-router-dom';
 import { Home } from './pages/Home';
 import { GameRoute } from './pages/GameRoute';
 import { Profile } from './pages/Profile';
@@ -16,13 +16,6 @@ import { Layout } from './components/Layout';
 const VideoEditor = import.meta.env.DEV
   ? lazy(() => import('./pages/VideoEditor').then((m) => ({ default: m.VideoEditor })))
   : null;
-
-// Chess Civilization is a separate game, not a variant: it renders outside the
-// Layout chrome (own topbar, no lobby/profile nav) and is lazy-loaded so the
-// base game's bundle doesn't carry the hex engine.
-const Civilization = lazy(() =>
-  import('./pages/Civilization').then((m) => ({ default: m.Civilization })),
-);
 
 const devRoutes = VideoEditor
   ? [
@@ -50,14 +43,9 @@ export const router = createHashRouter([
       { path: 'profile', element: <Profile /> },
       { path: 'settings', element: <Settings /> },
       ...devRoutes,
+      // Unknown routes (including retired ones, e.g. the old /civilization
+      // game) fall back to Home instead of react-router's error screen.
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
-  },
-  {
-    path: '/civilization',
-    element: (
-      <Suspense fallback={<div className="page muted">Charting the map…</div>}>
-        <Civilization />
-      </Suspense>
-    ),
   },
 ]);
