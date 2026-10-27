@@ -23,16 +23,17 @@
       // wild. Forward those to /app/ instead of showing them this page.
       if (location.hash.startsWith('#/')) location.replace('app/' + location.hash);
     </script>
-    <!-- Same three faces as the app (see app/index.html): Caveat display,
-         Nunito body, Courier Prime for dates/data. Fonts are the only network
-         request on this page — it still ships with no JS. -->
+    <!-- Same face as the app (see app/index.html): Shantell Sans for display,
+         body and data, varied by its informality axis. The only script is the
+         watercolor painter (landing/wash.ts). -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Courier+Prime:wght@400;700&family=Nunito:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Shantell+Sans:wght,BNCE,INFM,SPAC@300..800,-100..100,0..100,0..100&display=swap"
     />
     <link rel="stylesheet" href="./landing/landing.css" />
+    <script type="module" src="./landing/wash.ts"></script>
   </head>
   <body>
     <div class="grain" aria-hidden="true"></div>

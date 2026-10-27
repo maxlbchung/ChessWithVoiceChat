@@ -65,11 +65,13 @@ Playwright screenshots you actually look at.
   and cash purchases travel as pseudo-UCI strings (`!F<sq>`, buy codes).
 - One monolithic `src/styles.css`; kebab-case BEM-ish classes; per-instance color via
   inline CSS vars. Buttons get a global click SFX — opt out with `data-no-sfx`.
-- **Type system is three faces, not one** (see "Design system" in docs/ARCHITECTURE.md):
-  `--font-display` for titles, `--font-body` for UI, `--font-mono` for anything read as
+- **Type system is three roles** (one family today — Shantell Sans — varied by axes;
+  see "Design system" in docs/ARCHITECTURE.md): `--font-display` for titles, `--font-body` for UI, `--font-mono` for anything read as
   a number (clocks, ratings, coordinates, move lists) and for tracked micro-caps
   labels. Never hardcode a font stack — and don't reintroduce a system-sans default.
   Use `--rule`/`--plate` for panel edges. `landing/landing.css` mirrors these tokens.
+  Watercolor washes are runtime CSS vars (`--wash-*`, `src/lib/watercolor.ts`) —
+  reference them with a fallback, don't hardcode wash images.
 - Per-hero behavior is wired through copy-pasted `if/else` chains in multiple files
   (picker preview SFX, ability SFX, animation whitelists). When you touch one chain,
   grep for its siblings — they drift. Full map in the `add-hero` skill.

@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useIdentityStore } from '../store/identityStore';
 import { APP_VERSION } from '../lib/version';
 import * as sfx from '../lib/sfx';
+import { paintWashes } from '../lib/watercolor';
 
 export function Layout() {
   const { identity, rating, avatar, loaded, load } = useIdentityStore();
@@ -11,6 +12,12 @@ export function Layout() {
   useEffect(() => {
     if (!loaded) load();
   }, [loaded, load]);
+
+  // A fresh watercolor painting (page splotches + button/panel washes) on
+  // every open and every route change.
+  useEffect(() => {
+    paintWashes();
+  }, [location.pathname]);
 
   // Global click SFX for any interactive control — buttons + router links
   // (the nav <Link>s render as <a>). Anything that opts out via data-no-sfx

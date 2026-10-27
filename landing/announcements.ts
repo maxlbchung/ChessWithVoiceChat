@@ -36,7 +36,7 @@ export const ANNOUNCEMENTS: Announcement[] = [
     date: '2026-10-27',
     kind: 'update',
     title: 'A fresh coat of paint',
-    body: 'VCC has a new look: watercolor washes on warm paper, hand-drawn ink lines and a hand-lettered title face. The board is painted too — same pieces, softer squares.',
+    body: 'VCC has a new look: watercolor on warm paper, hand-drawn ink lines and hand-lettered type. The washes are painted fresh every time you open a page — buttons included — so it never looks quite the same twice.',
   },
   {
     date: '2026-08-20',

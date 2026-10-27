@@ -41,15 +41,15 @@
   --sketch-radius: 255px 12px 225px 10px / 10px 225px 12px 255px;
   --sketch-radius-sm: 18px 4px 16px 5px / 5px 16px 4px 18px;
 
-  /* Type: hand-lettered display / rounded humanist UI / typewriter for
-     notation. Loaded in app/index.html; the local stacks below are the
-     offline fallback. Caveat is a brush-pen script — keep it at heading
-     sizes (it runs small: ~1.25x the size a serif would need). */
-  --font-display: "Caveat", "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
-  --font-body: "Nunito", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+  /* Type: one hand-lettered family (Shantell Sans) in three roles, so the
+     faces read as one hand. Display turns the informality/bounce axes up
+     (Sketchbook overrides, end of file); UI body is tamer; data relies on the
+     global tabular-nums. Loaded in app/index.html; the local stacks below are
+     the offline fallback. */
+  --font-display: "Shantell Sans", "Segoe Print", "Comic Sans MS", cursive;
+  --font-body: "Shantell Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Courier Prime", "Courier New", ui-monospace, "SF Mono", Menlo, Consolas,
-    monospace;
+  --font-mono: "Shantell Sans", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* Tracked-out mono micro-caps: eyebrows, table headers, panel labels. */
   --track-label: 0.16em;
 
@@ -250,7 +250,7 @@ html, body, #root {
 
 body {
   background: var(--bg);
-  /* Nunito's default figures are proportional; the app is full of numbers
+  /* Tabular figures everywhere; the app is full of numbers
      that sit in columns (clocks, ratings, counts) so line them up globally. */
   font-variant-numeric: tabular-nums;
 }
@@ -270,7 +270,7 @@ body::before {
      gradients, so the corners still carry color on very wide windows where
      the SVG's slice crop pushes its blobs off-screen. */
   background:
-    url("./textures/wash.svg") center / cover no-repeat,
+    var(--wash-page, url("./textures/wash.svg")) center / cover no-repeat,
     radial-gradient(circle at 12% 8%, var(--bg-grad-1) 0%, transparent 40%),
     radial-gradient(circle at 90% 90%, var(--bg-grad-3) 0%, transparent 45%),
     radial-gradient(circle at 88% 10%, var(--bg-grad-2) 0%, transparent 35%);
@@ -5587,21 +5587,32 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Sketchbook overrides ───────────────────────────────────────────────
    The watercolor/line-art layer, kept in one place so it reads as a theme
-   rather than being smeared across every component block above.
+   rather than being smeared across every component block above. The
+   --wash-* variables are painted at runtime by src/lib/watercolor.ts (fresh
+   on every load and route change); each use carries a fallback so nothing
+   breaks before the first paint.
 
-   1. Hand-lettered display. Caveat has a small x-height, so font-size-adjust
-      scales it up to the optical size the serif-tuned clamps expect, and the
-      wide caps tracking those rules set (made for a serif nameplate) is
-      pulled back in — tracked-out script falls apart. */
+   1. One hand. Body text runs Shantell Sans slightly informal; display text
+      turns informality and bounce all the way up, so titles look lettered
+      by the same pen, just looser. The wide caps tracking the display rules
+      above set is pulled back in. */
+html, body { font-variation-settings: "INFM" 35; }
 .brand, .user-chip-avatar, .page-title, .start-divider, .start-handle,
 .board-finish-overlay .victor, .finish-avatar, .result-avatar,
 .game-result-strip .result-line .title, .player-avatar-initial, .modal h2,
 .profile-value.big, .history-section h2 {
-  font-size-adjust: 0.46;
-  letter-spacing: 0.005em;
+  font-variation-settings: "INFM" 100, "BNCE" 45;
+  letter-spacing: 0;
   font-weight: 700;
 }
-.brand { font-size: 1.45rem; }
+.brand { font-size: 1.25rem; }
+
+/* Each repaint fades the page splotches in, like a wash soaking in. */
+@keyframes wash-soak {
+  from { opacity: 0; }
+  to   { opacity: 0.85; }
+}
+.wash-fresh body::before { animation: wash-soak 700ms ease-out both; }
 
 /* 2. Hand-drawn corners. Every plate, button and control gets the wobbly
       elliptical radius — the pen line that didn't quite close square. */
@@ -5617,19 +5628,72 @@ a { color: inherit; text-decoration: none; }
   border-radius: 6px 3px 7px 4px / 4px 7px 3px 6px;
 }
 
-/* 3. Ink, not glow. Primary actions are a pooled indigo wash with paper
-      lettering and a pencil offset instead of a colored halo. */
+/* 3. Watercolor controls. Buttons are painted swatches (ragged edges,
+      pooled rims) stretched to the box; the ink outline stays put and the
+      wash is nudged off it, colored a little outside the lines. Three swatch
+      variants rotate by position so a row of buttons doesn't repeat. */
 .primary-btn {
-  color: #fbf6ea;
-  border-color: var(--accent-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 2px 3px 0 -0.5px rgba(52, 42, 34, 0.28);
+  color: #fffaf0;
+  text-shadow: 0 1px 1px rgba(30, 50, 80, 0.45);
+  border-color: transparent;
+  background: var(--wash-primary-1, linear-gradient(180deg, var(--accent), var(--accent-strong)))
+    -2px 1px / calc(100% + 4px) calc(100% + 2px) no-repeat;
+  box-shadow: none;
 }
 .primary-btn:hover:not(:disabled) {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 3px 4px 0 -0.5px rgba(52, 42, 34, 0.3);
+  filter: saturate(1.2) brightness(0.96);
+  box-shadow: none;
 }
-.secondary-btn { border-color: var(--border); }
-.secondary-btn:hover:not(:disabled) { border-color: var(--border-strong); }
+.primary-btn:active:not(:disabled) { box-shadow: none; filter: brightness(0.9); }
+.secondary-btn, .free-play-btn, .time-mode-btn, .free-play-select, .user-chip {
+  background: var(--wash-secondary-1, var(--glass))
+    2px 2px / calc(100% + 2px) calc(100% + 2px) no-repeat, var(--glass-soft);
+  border-color: var(--border);
+}
+.secondary-btn:hover:not(:disabled), .free-play-btn:hover:not(:disabled),
+.time-mode-btn:hover:not(:disabled), .free-play-select:hover {
+  background-color: var(--glass);
+  border-color: var(--border-strong);
+  filter: saturate(1.4);
+}
+.free-play-btn { color: var(--text); }
+:nth-child(3n+2) > .primary-btn, .primary-btn:nth-child(3n+2) {
+  background-image: var(--wash-primary-2, linear-gradient(180deg, var(--accent), var(--accent-strong)));
+}
+:nth-child(3n) > .primary-btn, .primary-btn:nth-child(3n) {
+  background-image: var(--wash-primary-3, linear-gradient(180deg, var(--accent), var(--accent-strong)));
+}
+.secondary-btn:nth-child(3n+2), .free-play-btn:nth-child(3n+2),
+.time-mode-cell:nth-child(3n+2) .time-mode-btn {
+  background-image: var(--wash-secondary-2, none);
+}
+.secondary-btn:nth-child(3n), .free-play-btn:nth-child(3n),
+.time-mode-cell:nth-child(3n) .time-mode-btn {
+  background-image: var(--wash-secondary-3, none);
+}
+/* Selected / "on" states take a stronger indigo swatch instead of a fill. */
+.time-mode-btn.selected,
+.time-mode-cell .time-mode-btn.selected {
+  background-image: var(--wash-select, none);
+  color: var(--accent-strong);
+  box-shadow: none;
+}
+.settings-toggle.on {
+  background: var(--wash-primary-1, var(--accent)) center / 120% 140% no-repeat;
+  box-shadow: none;
+}
 .brand-mark { text-shadow: none; }
+
+/* Panels: a sheet given a faint, uneven wash (tileable, so it never
+   stretches). Layered over each plate's own ground color. */
+.user-chip, .free-play-header, .time-mode-box, .lobby-panel, .game-result-strip,
+.player-card, .game-meta, .moves-panel, .chat-panel, .settings-card,
+.profile-card, .history-table, .cash-shop, .mine-panel, .setup-tray,
+.sandbox-controls, .sandbox-palette, .sandbox-tips-card, .review-import-card,
+.modal {
+  background-image: var(--wash-panel, none);
+  background-size: 360px 360px;
+}
 
 /* 4. Pen rules. Title underlines are a drawn stroke (src/textures/ink-rule.svg,
       stretched to the measure) rather than a ruled hairline. */

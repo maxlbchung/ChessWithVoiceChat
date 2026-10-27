@@ -189,23 +189,30 @@ record → export → replay → snapshot → scene → canvas → WebM:
   (`['--hero-color' as any]`). Landing page has its own `landing/landing.css`, which
   **mirrors the app's tokens** — change one, change both.
 - **Design system ("Sketchbook")** — a light watercolor + line-art look: cold-press
-  paper ground, sepia-ink structure, transparent watercolor washes for color. Three
-  faces, loaded via Google Fonts `<link>` in *both* HTML entries (`app/index.html`,
-  `index.html`), each with a local fallback stack baked into the token:
-  - `--font-display` (Caveat) — page titles, section heads, outcome announcements,
-    avatar initials, big stats. A brush-pen script with a small x-height: display
-    selectors get `font-size-adjust: 0.46` and near-zero tracking (tracked-out
-    script falls apart) — see the "Sketchbook overrides" block at the end of
-    `src/styles.css`. Keep it at heading sizes.
-  - `--font-body` (Nunito) — all UI and prose. The app default on `html, body`.
-  - `--font-mono` (Courier Prime) — **anything read as data**: clocks, ratings, board
-    coordinates, move lists, dates, counts, peer ids, version tag. Also the
-    tracked micro-caps idiom (`--track-label`, `.label-caps`) used for nav, panel
-    captions, table headers and small control strips.
-- **Textures** live in `src/textures/` as SVG filters (no bitmaps) and are referenced
-  by relative `url()` from both stylesheets so Vite fingerprints them: `wash.svg`
-  (page washes, `body::before`), `paper.svg` (paper tooth, `body::after` /
-  landing `.grain`, multiplied), `board.svg` (pigment mottle over the board,
+  paper ground, sepia-ink structure, transparent watercolor washes for color.
+  **One type family, three roles**: Shantell Sans (variable, loaded via Google Fonts
+  `<link>` in *both* HTML entries) backs `--font-display`, `--font-body` and
+  `--font-mono`, so the faces read as one hand. Keep using the right token anyway —
+  the roles differ by variation axes and each token has its own offline fallback:
+  - `--font-display` — page titles, section heads, outcome announcements, avatar
+    initials, big stats. Display selectors get `font-variation-settings: "INFM" 100,
+    "BNCE" 45` (fully informal, bouncy) and zero tracking — the list is in the
+    "Sketchbook overrides" block at the end of `src/styles.css`.
+  - `--font-body` — all UI and prose; `html, body` run `"INFM" 35`.
+  - `--font-mono` — **anything read as data** (clocks, ratings, coordinates, move
+    lists, dates, counts) and the tracked micro-caps idiom (`--track-label`,
+    `.label-caps`). Shantell has real tabular figures, which `body` turns on
+    globally, so columns of numbers still line up.
+- **Procedural watercolor** — `src/lib/watercolor.ts` `paintWashes()` builds random
+  SVG-filter paintings and publishes them as CSS variables on `<html>`:
+  `--wash-page` (the page splotches, `body::before`), `--wash-primary-{1,2,3}` /
+  `--wash-secondary-{1,2,3}` (button swatches, rotated by `:nth-child` so neighbours
+  differ), `--wash-select` (selected/"on" controls) and `--wash-panel` (tileable
+  mottle on plates). The app repaints on every route change (`Layout.tsx`); the
+  landing paints once per load (`landing/wash.ts`, its only script). Every CSS use has
+  a fallback for the moment before the first paint. Static textures in
+  `src/textures/`: `wash.svg` (fallback page wash), `paper.svg` (paper tooth,
+  `body::after` / landing `.grain`), `board.svg` (pigment mottle over the board,
   `.board-wrap::after`, z 4 — under the start/finish overlays) and `ink-rule.svg`
   (hand-drawn underline on `.page-title`). Board square colors are inline in
   `MergeBoard.tsx` and mirrored in `videoRenderer.ts`.
