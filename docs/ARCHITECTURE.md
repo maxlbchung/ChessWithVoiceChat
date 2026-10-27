@@ -206,13 +206,15 @@ record → export → replay → snapshot → scene → canvas → WebM:
 - **Procedural watercolor** — `src/lib/watercolor.ts` `paintWashes()` builds random
   SVG-filter paintings and publishes them as CSS variables on `<html>`:
   `--wash-page` (the page splotches, `body::before`), `--wash-primary-{1,2,3}` /
-  `--wash-secondary-{1,2,3}` (button swatches, rotated by `:nth-child` so neighbours
-  differ), `--wash-select` (selected/"on" controls) and `--wash-panel` (tileable
-  mottle on plates). The app repaints on every route change (`Layout.tsx`); the
+  `--wash-secondary-{1,2,3}` (fill swatches covering a button/dropdown face, inset a
+  few px inside the ink outline), `--wash-ring-{1,2,3}` (the inverse — paint only
+  round the edge — for selected states: `.selected`, `.active`), all rotated by
+  `:nth-child` so neighbours differ, and `--wash-panel` (tileable mottle on plates). The app repaints on every route change (`Layout.tsx`); the
   landing paints once per load (`landing/wash.ts`, its only script). Every CSS use has
   a fallback for the moment before the first paint. Static textures in
-  `src/textures/`: `wash.svg` (fallback page wash), `paper.svg` (paper tooth,
-  `body::after` / landing `.grain`), `board.svg` (pigment mottle over the board,
+  `src/textures/`: `wash.svg` (fallback page wash), `paper.svg` (cold-press paper:
+  lit tooth + pulp cloudiness + fibres; `body::after` / landing `.grain`, and
+  multiplied into every plate), `board.svg` (pigment mottle over the board,
   `.board-wrap::after`, z 4 — under the start/finish overlays) and `ink-rule.svg`
   (hand-drawn underline on `.page-title`). Board square colors are inline in
   `MergeBoard.tsx` and mirrored in `videoRenderer.ts`.

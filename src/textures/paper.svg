@@ -1,8 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">
-  <!-- Cold-press paper tooth: fine fibres + a coarse mottle, as sepia speckle. -->
-  <filter id="p">
-    <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" seed="4" stitchTiles="stitch"/>
-    <feColorMatrix type="matrix" values="0 0 0 0 0.32  0 0 0 0 0.25  0 0 0 0 0.18  0 0 0 -1.6 1.05"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480">
+  <!-- Cold-press watercolor paper, multiplied over the page:
+       1. tooth — fractal noise lit from the top-left as a height map, so the
+          surface reads as tiny raised bumps with shadowed pits;
+       2. cloudiness — very low-frequency density variation, as in real
+          pulp, where the sheet is a touch thicker in places;
+       3. fibres — stretched high-frequency noise thresholded into short,
+          faint strands.
+       Everything is mapped to warm grey so multiply only ever darkens toward
+       sepia, never toward cold grey. -->
+  <filter id="p" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="4" seed="17" stitchTiles="stitch" result="height"/>
+    <feDiffuseLighting in="height" surfaceScale="1.4" diffuseConstant="1.05" lighting-color="#fffaf0" result="lit">
+      <feDistantLight azimuth="225" elevation="52"/>
+    </feDiffuseLighting>
+    <feColorMatrix in="lit" type="matrix" values="0.24 0 0 0 0.77  0.24 0 0 0 0.755  0.24 0 0 0 0.73  0 0 0 0 1" result="tooth"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.006" numOctaves="2" seed="4" stitchTiles="stitch" result="cloud"/>
+    <feColorMatrix in="cloud" type="matrix" values="0 0 0 0 0.62  0 0 0 0 0.52  0 0 0 0 0.4  0 0 0 0.32 -0.12" result="cloudTint"/>
+    <feTurbulence type="turbulence" baseFrequency="0.02 0.11" numOctaves="2" seed="29" stitchTiles="stitch" result="fib"/>
+    <feColorMatrix in="fib" type="matrix" values="0 0 0 0 0.5  0 0 0 0 0.42  0 0 0 0 0.32  0 0 0 -20 0.5" result="fibres"/>
+    <feMerge><feMergeNode in="tooth"/><feMergeNode in="cloudTint"/><feMergeNode in="fibres"/></feMerge>
   </filter>
-  <rect width="240" height="240" filter="url(#p)" opacity="0.5"/>
+  <rect width="480" height="480" filter="url(#p)"/>
 </svg>

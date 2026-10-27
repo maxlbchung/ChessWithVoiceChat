@@ -3,9 +3,9 @@
 // stylesheets only ever reference the variables:
 //
 //   --wash-page                 the splotches behind the whole page
-//   --wash-primary-{1,2,3}      indigo swatches for primary buttons
-//   --wash-secondary-{1,2,3}    pale swatches for secondary/control buttons
-//   --wash-select               indigo swatch for selected/"on" controls
+//   --wash-primary-{1,2,3}      indigo fill swatches for primary buttons
+//   --wash-secondary-{1,2,3}    pale fill swatches for other buttons/dropdowns
+//   --wash-ring-{1,2,3}         indigo ring swatches — the selected state
 //   --wash-panel                tileable pigment mottle for plates
 //
 // Three swatch variants per button kind so neighbouring buttons don't share a
@@ -54,7 +54,7 @@ function washFilter(r: Rng, id: string, warpFreq: number, warpScale: number, rim
 <feMorphology in="shape" operator="erode" radius="${f(rim)}" result="inner"/>
 <feGaussianBlur in="inner" stdDeviation="${f(rim * 1.5)}" result="innerSoft"/>
 <feComposite in="crisp" in2="innerSoft" operator="arithmetic" k2="1" k3="-0.5" result="pooled"/>
-<feTurbulence type="fractalNoise" baseFrequency="${f(warpFreq * 3)}" numOctaves="3" seed="${seedInt(r)}" result="bloom"/>
+<feTurbulence type="fractalNoise" baseFrequency="${(warpFreq * 3).toFixed(4)}" numOctaves="3" seed="${seedInt(r)}" result="bloom"/>
 <feColorMatrix in="bloom" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.8 -0.25" result="bloomMask"/>
 <feComposite in="crisp" in2="bloomMask" operator="in" result="mottle"/>
 <feComposite in="pooled" in2="mottle" operator="arithmetic" k2="1" k3="0.45" result="body"/>
@@ -108,14 +108,22 @@ function pageWash(r: Rng): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice"><defs>${washFilter(r, 'p', 0.006, 200, 14)}</defs><g filter="url(#p)">${shapes}</g></svg>`;
 }
 
-// Button swatch: one brushed stroke filling most of the box, ragged at the
-// ends. Stretched to the button with preserveAspectRatio="none", so the noise
-// is tuned for a ~3:1 box.
-function swatch(r: Rng, fill: string, opacity: number): string {
+// Control swatches, stretched over the control with
+// preserveAspectRatio="none" (tuned for a ~3:1 box). Two shapes:
+//   fill — paint covering the whole face, edges ragged just inside the
+//          outline (the normal state);
+//   ring — the inverse: paint only in a ragged band around the edge, bare
+//          paper in the middle (the selected state).
+// The ring is one even-odd path (outer rect minus inner rect), so the warp
+// roughens both its edges and the pooled rim darkens both.
+function swatch(r: Rng, fill: string, opacity: number, shape: 'fill' | 'ring'): string {
   const W = 240, H = 80;
-  const inset = 7;
-  const skew = between(r, -3, 3);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${washFilter(r, 's', 0.035, 14, 4, [0.6, 1.2])}</defs><g filter="url(#s)"><rect x="${inset}" y="${inset}" width="${W - inset * 2}" height="${H - inset * 2}" rx="10" transform="skewX(${f(skew)})" fill="${fill}" opacity="${opacity}"/></g></svg>`;
+  const o = 3;
+  const outer = `M${o} ${o + 4}Q${o} ${o} ${o + 6} ${o}H${W - o - 6}Q${W - o} ${o} ${W - o} ${o + 6}V${H - o - 6}Q${W - o} ${H - o} ${W - o - 6} ${H - o}H${o + 6}Q${o} ${H - o} ${o} ${H - o - 6}Z`;
+  const ix = between(r, 13, 17), iy = between(r, 12, 15);
+  const inner = `M${f(ix)} ${f(iy)}H${f(W - ix)}V${f(H - iy)}H${f(ix)}Z`;
+  const d = shape === 'ring' ? outer + inner : outer;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${washFilter(r, 's', 0.04, 7, shape === 'ring' ? 2.5 : 4, [0.6, 1.2])}</defs><g filter="url(#s)"><path d="${d}" fill-rule="evenodd" fill="${fill}" opacity="${opacity}"/></g></svg>`;
 }
 
 // Panel ground: a seamless tile of faint pigment mottle (no outline), so a
@@ -130,10 +138,10 @@ export function paintWashes(root: HTMLElement = document.documentElement): void 
   const s = root.style;
   s.setProperty('--wash-page', dataUrl(pageWash(r)));
   for (let i = 1; i <= 3; i++) {
-    s.setProperty(`--wash-primary-${i}`, dataUrl(swatch(r, pick(r, INDIGO), 1)));
-    s.setProperty(`--wash-secondary-${i}`, dataUrl(swatch(r, pick(r, PALE_PIGMENTS), 0.5)));
+    s.setProperty(`--wash-primary-${i}`, dataUrl(swatch(r, pick(r, INDIGO), 1, 'fill')));
+    s.setProperty(`--wash-secondary-${i}`, dataUrl(swatch(r, pick(r, PALE_PIGMENTS), 0.5, 'fill')));
+    s.setProperty(`--wash-ring-${i}`, dataUrl(swatch(r, pick(r, INDIGO), 0.85, 'ring')));
   }
-  s.setProperty('--wash-select', dataUrl(swatch(r, '#7ea4c8', 0.6)));
   s.setProperty('--wash-panel', dataUrl(panelTile(r)));
   // Restart the fade-in on the page layer (see .wash-fresh in styles.css).
   root.classList.remove('wash-fresh');

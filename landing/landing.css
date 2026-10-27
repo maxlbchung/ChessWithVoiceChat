@@ -142,7 +142,7 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.55;
+  opacity: 0.9;
   mix-blend-mode: multiply;
   background-image: url("../src/textures/paper.svg");
 }
@@ -577,14 +577,15 @@ body { font-variation-settings: "INFM" 35; }
 .btn-primary {
   color: #fffaf0;
   text-shadow: 0 1px 1px rgba(30, 50, 80, 0.45);
-  border-color: transparent;
+  border-color: var(--accent-strong);
   background: var(--wash-primary-1, linear-gradient(180deg, var(--accent), var(--accent-strong)))
-    -2px 1px / calc(100% + 4px) calc(100% + 2px) no-repeat;
+    center / calc(100% - 5px) calc(100% - 5px) no-repeat;
   box-shadow: none;
 }
 .btn-primary:hover { filter: saturate(1.2) brightness(0.96); }
 .news {
   box-shadow: var(--plate);
-  background-image: var(--wash-panel, none);
-  background-size: 360px 360px;
+  background-image: var(--wash-panel, none), url("../src/textures/paper.svg");
+  background-size: 360px 360px, 480px 480px;
+  background-blend-mode: normal, multiply;
 }

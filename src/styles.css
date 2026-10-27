@@ -277,7 +277,8 @@ body::before {
   opacity: 0.85;
 }
 
-/* Paper tooth over the whole app, so flat fills read as cold-press stock. A
+/* Cold-press paper over the whole app — lit tooth, pulp cloudiness and
+   stray fibres (see the notes in src/textures/paper.svg). A
    ::after on <body> rather than a DOM node — no markup change, and it can't
    catch pointers. (::after, not ::before: the wash owns ::before, and the
    tooth must paint above it.) multiply keeps the speckle sitting *in* the
@@ -288,7 +289,7 @@ body::after {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.55;
+  opacity: 0.9;
   mix-blend-mode: multiply;
   background-image: url("./textures/paper.svg");
 }
@@ -5628,16 +5629,24 @@ html, body { font-variation-settings: "INFM" 35; }
   border-radius: 6px 3px 7px 4px / 4px 7px 3px 6px;
 }
 
-/* 3. Watercolor controls. Buttons are painted swatches (ragged edges,
-      pooled rims) stretched to the box; the ink outline stays put and the
-      wash is nudged off it, colored a little outside the lines. Three swatch
-      variants rotate by position so a row of buttons doesn't repeat. */
+/* 3. Watercolor controls. Every button and dropdown is a painted swatch
+      covering its whole face, inset a few px so a sliver of paper shows
+      inside the ink outline and the ragged paint edge stays visible.
+      Selected states invert it: a ring of indigo paint around the edge with
+      bare paper in the middle. Three variants of each rotate by position so
+      a row of controls doesn't repeat. */
+.primary-btn, .secondary-btn, .free-play-btn, .time-mode-btn, .free-play-select,
+.sandbox-palette-btn {
+  background-position: center;
+  background-size: calc(100% - 5px) calc(100% - 5px);
+  background-repeat: no-repeat;
+}
 .primary-btn {
   color: #fffaf0;
   text-shadow: 0 1px 1px rgba(30, 50, 80, 0.45);
-  border-color: transparent;
-  background: var(--wash-primary-1, linear-gradient(180deg, var(--accent), var(--accent-strong)))
-    -2px 1px / calc(100% + 4px) calc(100% + 2px) no-repeat;
+  border-color: var(--accent-strong);
+  background-color: transparent;
+  background-image: var(--wash-primary-1, linear-gradient(180deg, var(--accent), var(--accent-strong)));
   box-shadow: none;
 }
 .primary-btn:hover:not(:disabled) {
@@ -5645,16 +5654,18 @@ html, body { font-variation-settings: "INFM" 35; }
   box-shadow: none;
 }
 .primary-btn:active:not(:disabled) { box-shadow: none; filter: brightness(0.9); }
-.secondary-btn, .free-play-btn, .time-mode-btn, .free-play-select, .user-chip {
-  background: var(--wash-secondary-1, var(--glass))
-    2px 2px / calc(100% + 2px) calc(100% + 2px) no-repeat, var(--glass-soft);
+.secondary-btn, .free-play-btn, .time-mode-btn, .free-play-select,
+.sandbox-palette-btn {
+  background-color: var(--glass-soft);
+  background-image: var(--wash-secondary-1, none);
   border-color: var(--border);
 }
 .secondary-btn:hover:not(:disabled), .free-play-btn:hover:not(:disabled),
-.time-mode-btn:hover:not(:disabled), .free-play-select:hover {
+.time-mode-btn:hover:not(:disabled), .free-play-select:hover,
+.sandbox-palette-btn:hover {
   background-color: var(--glass);
   border-color: var(--border-strong);
-  filter: saturate(1.4);
+  filter: saturate(1.5);
 }
 .free-play-btn { color: var(--text); }
 :nth-child(3n+2) > .primary-btn, .primary-btn:nth-child(3n+2) {
@@ -5664,35 +5675,51 @@ html, body { font-variation-settings: "INFM" 35; }
   background-image: var(--wash-primary-3, linear-gradient(180deg, var(--accent), var(--accent-strong)));
 }
 .secondary-btn:nth-child(3n+2), .free-play-btn:nth-child(3n+2),
-.time-mode-cell:nth-child(3n+2) .time-mode-btn {
+.sandbox-palette-btn:nth-child(3n+2), .time-mode-cell:nth-child(3n+2) .time-mode-btn {
   background-image: var(--wash-secondary-2, none);
 }
 .secondary-btn:nth-child(3n), .free-play-btn:nth-child(3n),
-.time-mode-cell:nth-child(3n) .time-mode-btn {
+.sandbox-palette-btn:nth-child(3n), .time-mode-cell:nth-child(3n) .time-mode-btn {
   background-image: var(--wash-secondary-3, none);
 }
-/* Selected / "on" states take a stronger indigo swatch instead of a fill. */
-.time-mode-btn.selected,
-.time-mode-cell .time-mode-btn.selected {
-  background-image: var(--wash-select, none);
+/* Selected: the inverse swatch — paint round the edge, paper in the middle. */
+.time-mode-btn.selected, .time-mode-cell .time-mode-btn.selected,
+.secondary-btn.active, .custom-select-option.selected, .cash-shop-item.selected {
+  background-color: rgba(255, 252, 245, 0.7);
+  background-image: var(--wash-ring-1, none);
+  background-position: center;
+  background-size: calc(100% - 3px) calc(100% - 3px);
+  background-repeat: no-repeat;
+  border-color: var(--accent-strong);
   color: var(--accent-strong);
   box-shadow: none;
 }
+.time-mode-cell:nth-child(3n+2) .time-mode-btn.selected,
+.secondary-btn.active:nth-child(3n+2) {
+  background-image: var(--wash-ring-2, none);
+}
+.time-mode-cell:nth-child(3n) .time-mode-btn.selected,
+.secondary-btn.active:nth-child(3n) {
+  background-image: var(--wash-ring-3, none);
+}
+.custom-select-option.selected { border-radius: var(--sketch-radius-sm); }
 .settings-toggle.on {
   background: var(--wash-primary-1, var(--accent)) center / 120% 140% no-repeat;
   box-shadow: none;
 }
 .brand-mark { text-shadow: none; }
 
-/* Panels: a sheet given a faint, uneven wash (tileable, so it never
-   stretches). Layered over each plate's own ground color. */
+/* Panels: a sheet of the same cold-press paper (src/textures/paper.svg,
+   multiplied into the plate's ground) given a faint, uneven wash. Both
+   layers tile, so neither ever stretches. */
 .user-chip, .free-play-header, .time-mode-box, .lobby-panel, .game-result-strip,
 .player-card, .game-meta, .moves-panel, .chat-panel, .settings-card,
 .profile-card, .history-table, .cash-shop, .mine-panel, .setup-tray,
 .sandbox-controls, .sandbox-palette, .sandbox-tips-card, .review-import-card,
 .modal {
-  background-image: var(--wash-panel, none);
-  background-size: 360px 360px;
+  background-image: var(--wash-panel, none), url("./textures/paper.svg");
+  background-size: 360px 360px, 480px 480px;
+  background-blend-mode: normal, multiply;
 }
 
 /* 4. Pen rules. Title underlines are a drawn stroke (src/textures/ink-rule.svg,
