@@ -1,54 +1,57 @@
 :root {
-  /* ── "Bulletin" ────────────────────────────────────────────────────────
-     Deep ocean, printed. The palette keeps the cool ocean bones (the board
-     and the brand are tuned to them) but drops a stop darker and inkier so
-     hairline rules and pale-green type read as ink on a plate rather than
-     frosted glass. Brass (--brass) is the warm counter-accent: it carries
-     dates, meta, secondary tags — anything that shouldn't compete with the
-     green primary. Mirrored in landing/landing.css. */
-  --bg: #08151f;            /* ink — deep cool ocean base */
-  --bg-grad-1: #0d2333;     /* lifted ocean band */
-  --bg-grad-2: #071823;     /* mid ocean */
-  --bg-grad-3: #122c3e;     /* cool daylight on water */
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-strong: rgba(255, 255, 255, 0.085);
-  --glass-soft: rgba(255, 255, 255, 0.025);
-  --border: rgba(168, 216, 185, 0.16);
-  --border-strong: rgba(168, 216, 185, 0.34);
-  /* Hairline: the structural rule of the whole UI. Thinner and cooler than
-     --border, for dividers that should read as printed rules, not edges. */
-  --rule: rgba(168, 216, 185, 0.13);
-  --rule-strong: rgba(168, 216, 185, 0.26);
-  --text: #e6f0ea;          /* pale green-tinted off-white */
-  --muted: #85a3af;         /* cool muted blue-green */
-  --accent: #a8d8b9;        /* pale green highlight */
-  --accent-strong: #7ec39a; /* slightly deeper pale green */
-  --accent-soft: rgba(168, 216, 185, 0.15);
-  --brass: #dcb87e;         /* warm counter-accent */
-  --brass-soft: rgba(220, 184, 126, 0.13);
-  --good: #7ec39a;
-  --bad: #d68b8b;           /* light muted red, visible on dark */
-  --warn: #e0c08a;          /* warm sand on dark */
-  --secret-mask: #bda0ff;   /* Secret Queen violet — mask glow, shadow, readouts */
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.30);
-  /* Letterpress: the 1px top highlight + deep drop that makes a card read as
-     a physical plate lifted off the page. Used by every panel. */
-  --plate: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 1px 2px rgba(0, 0, 0, 0.3),
-    0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  /* ── "Sketchbook" ──────────────────────────────────────────────────────
+     Watercolor + line art. The page is cold-press paper; structure is drawn
+     in sepia ink (--rule, --border, --text) and color arrives as transparent
+     washes that pool at their edges. Indigo (--accent) is the primary wash,
+     burnt sienna (--brass) the warm counter-accent for dates/meta/secondary
+     tags, sap green (--good) and madder (--bad) for outcomes. Panels use
+     --sketch-radius (a wobbly, hand-drawn corner) and --plate (an offset
+     pencil shadow). Mirrored in landing/landing.css. */
+  --bg: #f4ecdc;            /* cold-press paper */
+  --bg-grad-1: rgba(110, 150, 190, 0.30);  /* indigo wash */
+  --bg-grad-2: rgba(226, 184, 120, 0.26);  /* raw sienna wash */
+  --bg-grad-3: rgba(196, 120, 128, 0.18);  /* madder wash */
+  --glass: rgba(255, 251, 241, 0.62);
+  --glass-strong: rgba(255, 252, 245, 0.86);
+  --glass-soft: rgba(255, 251, 241, 0.38);
+  --border: rgba(52, 42, 34, 0.30);
+  --border-strong: rgba(52, 42, 34, 0.62);
+  /* Ink line: the structural rule of the whole UI — a pen stroke, not a
+     glow. */
+  --rule: rgba(52, 42, 34, 0.24);
+  --rule-strong: rgba(52, 42, 34, 0.5);
+  --text: #2d2620;          /* sepia ink */
+  --muted: #685c4f;         /* diluted ink */
+  --accent: #3f6e9a;        /* indigo wash */
+  --accent-strong: #2c557d; /* indigo, pooled */
+  --accent-soft: rgba(63, 110, 154, 0.14);
+  --brass: #a8642a;         /* burnt sienna */
+  --brass-soft: rgba(168, 100, 42, 0.13);
+  --good: #4f8a4a;          /* sap green */
+  --bad: #b5443f;           /* madder red */
+  --warn: #b07d22;          /* yellow ochre */
+  --secret-mask: #7a5bc4;   /* Secret Queen violet — mask glow, shadow, readouts */
+  --shadow: 0 8px 26px rgba(70, 52, 34, 0.18);
+  --shadow-soft: 0 4px 14px rgba(70, 52, 34, 0.12);
+  /* Pencil plate: a hard offset ink shadow (the double line of a quick
+     sketch) plus a soft warm drop, so a card reads as a sheet laid on paper. */
+  --plate: 2px 3px 0 -0.5px rgba(52, 42, 34, 0.16), 0 10px 24px -14px rgba(70, 52, 34, 0.28);
+  /* Hand-drawn corners: unequal elliptical radii read as a pen line that
+     didn't quite close square. */
+  --sketch-radius: 255px 12px 225px 10px / 10px 225px 12px 255px;
+  --sketch-radius-sm: 18px 4px 16px 5px / 5px 16px 4px 18px;
 
-  /* Type: editorial serif display / grotesque UI / mono for notation. Loaded
-     in app/index.html; the local stacks below are the offline fallback.
-     Newsreader is a *reading* serif — moderate stroke contrast, tall x-height.
-     A didone was tried here first and read as too thin at heading sizes. */
-  --font-display: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino,
-    "Book Antiqua", Georgia, "Times New Roman", serif;
-  --font-body: "Archivo", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+  /* Type: hand-lettered display / rounded humanist UI / typewriter for
+     notation. Loaded in app/index.html; the local stacks below are the
+     offline fallback. Caveat is a brush-pen script — keep it at heading
+     sizes (it runs small: ~1.25x the size a serif would need). */
+  --font-display: "Caveat", "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+  --font-body: "Nunito", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+  --font-mono: "Courier Prime", "Courier New", ui-monospace, "SF Mono", Menlo, Consolas,
     monospace;
   /* Tracked-out mono micro-caps: eyebrows, table headers, panel labels. */
-  --track-label: 0.18em;
+  --track-label: 0.16em;
 
   /* Custom cursors — chess-piece-styled (white fill, black outline) SVGs
      served from /cursors. The fallback system cursor follows the URL so we
@@ -162,7 +165,7 @@ textarea {
   html {
     scrollbar-width: thin;
     /* scrollbar-color inherits in Firefox, so the root covers every panel. */
-    scrollbar-color: rgba(168, 216, 185, 0.34) transparent;
+    scrollbar-color: rgba(63, 110, 154, 0.34) transparent;
   }
 }
 
@@ -186,14 +189,14 @@ textarea {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(168, 216, 185, 0.26);
+  background-color: rgba(63, 110, 154, 0.26);
   background-clip: content-box;
   border: 3px solid transparent;
   border-radius: 2px;
   transition: background-color 140ms ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(168, 216, 185, 0.5);
+  background-color: rgba(63, 110, 154, 0.5);
 }
 ::-webkit-scrollbar-thumb:active {
   background-color: var(--accent-strong);
@@ -247,15 +250,15 @@ html, body, #root {
 
 body {
   background: var(--bg);
-  /* Archivo's default figures are proportional; the app is full of numbers
+  /* Nunito's default figures are proportional; the app is full of numbers
      that sit in columns (clocks, ratings, counts) so line them up globally. */
   font-variant-numeric: tabular-nums;
 }
 
-/* The ocean gradient wash, pinned to the viewport on a fixed pseudo-element
+/* The watercolor wash, pinned to the viewport on a fixed pseudo-element
    rather than background-attachment: fixed — mobile Safari ignores fixed
    attachment and tiles the wash down the page in viewport-height bands
-   (visible seams mid-scroll). z-index: -1 keeps it above the ink base but
+   (visible seams mid-scroll). z-index: -1 keeps it above the paper base but
    below all in-flow content. */
 body::before {
   content: "";
@@ -263,25 +266,31 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: -1;
+  /* Painted watercolor washes (src/textures/wash.svg) over faint tinted
+     gradients, so the corners still carry color on very wide windows where
+     the SVG's slice crop pushes its blobs off-screen. */
   background:
-    radial-gradient(circle at 15% 10%, var(--bg-grad-1) 0%, transparent 45%),
-    radial-gradient(circle at 85% 85%, var(--bg-grad-3) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%);
+    url("./textures/wash.svg") center / cover no-repeat,
+    radial-gradient(circle at 12% 8%, var(--bg-grad-1) 0%, transparent 40%),
+    radial-gradient(circle at 90% 90%, var(--bg-grad-3) 0%, transparent 45%),
+    radial-gradient(circle at 88% 10%, var(--bg-grad-2) 0%, transparent 35%);
+  opacity: 0.85;
 }
 
-/* Fine noise over the whole app so the large flat gradients don't band, and
-   so the app shares the landing page's paper texture. A ::after on <body>
-   rather than a DOM node — no markup change, and it can't catch pointers.
-   (::after, not ::before: the wash owns ::before, and the grain must paint
-   above it.) Fixed + inset -50% keeps it stable while the page scrolls. */
+/* Paper tooth over the whole app, so flat fills read as cold-press stock. A
+   ::after on <body> rather than a DOM node — no markup change, and it can't
+   catch pointers. (::after, not ::before: the wash owns ::before, and the
+   tooth must paint above it.) multiply keeps the speckle sitting *in* the
+   paper rather than floating on it. */
 body::after {
   content: "";
   position: fixed;
-  inset: -50%;
+  inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.5;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity: 0.55;
+  mix-blend-mode: multiply;
+  background-image: url("./textures/paper.svg");
 }
 /* Everything real sits above the grain. */
 .app-shell { position: relative; z-index: 1; }
@@ -295,19 +304,19 @@ a { color: inherit; text-decoration: none; }
   min-height: 100%;
 }
 
-/* Masthead. A broadsheet nameplate, not a chrome bar: near-black ground, a
-   double rule at the base (hairline + a brighter 1px via box-shadow) and type
+/* Masthead. A broadsheet nameplate, not a chrome bar: a paper strip, a
+   double rule at the base (hairline + a soft drop via box-shadow) and type
    that sits on the baseline instead of inside pills. */
 .topbar {
   display: flex;
   align-items: center;
   gap: 1.5rem;
   padding: 0.8rem 1.7rem;
-  background: linear-gradient(180deg, rgba(6, 16, 24, 0.92), rgba(8, 21, 31, 0.82));
+  background: linear-gradient(180deg, rgba(250, 245, 233, 0.94), rgba(246, 239, 224, 0.88));
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   border-bottom: 1px solid var(--rule);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5), 0 12px 28px -20px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 1px 0 rgba(60, 45, 30, 0.225), 0 12px 28px -20px rgba(60, 45, 30, 0.3);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -329,12 +338,12 @@ a { color: inherit; text-decoration: none; }
   line-height: 1;
   color: var(--accent);
   align-self: center;
-  text-shadow: 0 0 18px rgba(168, 216, 185, 0.4);
+  text-shadow: 0 0 18px rgba(63, 110, 154, 0.4);
   transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .brand:hover .brand-mark { transform: translateY(-2px) rotate(-8deg); }
 .brand-text {
-  background: linear-gradient(135deg, var(--accent), #5fa8c4);
+  background: linear-gradient(135deg, var(--accent-strong), #6a9a5b);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
@@ -631,7 +640,7 @@ a { color: inherit; text-decoration: none; }
    Inputs read as ruled fields: recessed ground, hairline box, and a bright
    accent rule that lights along the bottom edge on focus. */
 .text-input {
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(60, 45, 30, 0.099);
   border: 1px solid var(--rule);
   color: var(--text);
   padding: 0.68rem 0.9rem;
@@ -640,7 +649,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.95rem;
   width: 100%;
   outline: none;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px 3px rgba(60, 45, 30, 0.135);
   transition: border-color 140ms, box-shadow 140ms, background 140ms;
 }
 .text-input::placeholder {
@@ -649,8 +658,8 @@ a { color: inherit; text-decoration: none; }
 }
 .text-input:focus {
   border-color: var(--rule-strong);
-  background: rgba(0, 0, 0, 0.3);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3), inset 0 -2px 0 var(--accent-strong);
+  background: rgba(60, 45, 30, 0.135);
+  box-shadow: inset 0 1px 3px rgba(60, 45, 30, 0.135), inset 0 -2px 0 var(--accent-strong);
 }
 
 .signup-form {
@@ -677,16 +686,16 @@ a { color: inherit; text-decoration: none; }
 .primary-btn {
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   color: #06131c;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(168, 216, 185, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(63, 110, 154, 0.2);
 }
 .primary-btn:hover:not(:disabled) {
   filter: brightness(1.07);
   transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 7px 20px rgba(168, 216, 185, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 7px 20px rgba(63, 110, 154, 0.3);
 }
 .primary-btn:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 2px 5px rgba(60, 45, 30, 0.135);
 }
 .primary-btn:disabled { opacity: 0.4; cursor: var(--cursor-disabled); transform: none; }
 .secondary-btn {
@@ -702,7 +711,7 @@ a { color: inherit; text-decoration: none; }
 }
 .secondary-btn:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 2px 5px rgba(60, 45, 30, 0.135);
 }
 .secondary-btn:disabled { opacity: 0.4; cursor: var(--cursor-disabled); }
 /* The one place the UI shouts: primary CTAs get didone small-caps at scale. */
@@ -808,7 +817,7 @@ a { color: inherit; text-decoration: none; }
   aspect-ratio: 1 / 1;
   border-radius: 4px;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 24px rgba(60, 45, 30, 0.09);
 }
 .free-play-header {
   align-self: flex-end;
@@ -869,7 +878,7 @@ a { color: inherit; text-decoration: none; }
   text-align: left;
   padding: 0.4rem 1.65rem 0.4rem 0.7rem;
   border-radius: 2px;
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: rgba(60, 45, 30, 0.09);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2388a8b3' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
@@ -893,7 +902,7 @@ a { color: inherit; text-decoration: none; }
   box-shadow: inset 0 -2px 0 var(--accent-strong);
 }
 .free-play-select option {
-  background-color: #0d2333;
+  background-color: #fbf6ea;
   color: var(--text);
 }
 
@@ -913,10 +922,10 @@ a { color: inherit; text-decoration: none; }
   overflow-y: auto;
   /* Near-opaque plate rather than the old lifted-ocean fill, so options stay
      legible over a busy board. */
-  background: linear-gradient(180deg, #10222f, #0b1a26);
+  background: linear-gradient(180deg, #fffaf0, #f6eedd);
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(60, 45, 30, 0.3);
   padding: 0.25rem;
   display: flex;
   flex-direction: column;
@@ -992,7 +1001,7 @@ a { color: inherit; text-decoration: none; }
   background: #ffffff;
 }
 .turn-swatch.black {
-  background: #102025;
+  background: #2b2621;
 }
 .free-play-header-actions {
   display: flex;
@@ -1009,7 +1018,7 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase;
   padding: 0.42rem 0.7rem;
   border-radius: 2px;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(60, 45, 30, 0.09);
   border: 1px solid var(--rule);
   color: var(--muted);
   cursor: var(--cursor-pointer);
@@ -1063,7 +1072,7 @@ a { color: inherit; text-decoration: none; }
    edge — the one selected entry in the index. TimeModeSelector already emits
    an .open / .closed class, so use that rather than :has() on the chevron. */
 .time-mode-section.open {
-  background: linear-gradient(180deg, rgba(168, 216, 185, 0.055), transparent 70%);
+  background: linear-gradient(180deg, rgba(63, 110, 154, 0.055), transparent 70%);
   box-shadow: inset 2px 0 0 var(--accent-strong);
 }
 .time-mode-section-header {
@@ -1123,7 +1132,7 @@ a { color: inherit; text-decoration: none; }
    figures, and let the selected one carry the accent as a solid bottom rule. */
 .time-mode-btn {
   position: relative;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(60, 45, 30, 0.081);
   border: 1px solid var(--rule);
   color: var(--text);
   padding: 0.72rem 0.3rem;
@@ -1144,8 +1153,8 @@ a { color: inherit; text-decoration: none; }
 .time-mode-btn.selected {
   border-color: var(--rule-strong);
   color: var(--accent);
-  background: linear-gradient(180deg, rgba(168, 216, 185, 0.14), rgba(168, 216, 185, 0.03));
-  box-shadow: inset 0 -2px 0 var(--accent-strong), 0 4px 16px -6px rgba(168, 216, 185, 0.3);
+  background: linear-gradient(180deg, rgba(63, 110, 154, 0.14), rgba(63, 110, 154, 0.03));
+  box-shadow: inset 0 -2px 0 var(--accent-strong), 0 4px 16px -6px rgba(63, 110, 154, 0.3);
 }
 .time-mode-btn:disabled {
   cursor: var(--cursor-disabled);
@@ -1276,8 +1285,23 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
   /* Seated in the page rather than floating: a hairline frame plus a deeper,
      tighter drop than the old soft 24px blur. */
-  box-shadow: 0 0 0 1px var(--rule-strong), 0 14px 36px -10px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px var(--rule-strong), 0 14px 36px -10px rgba(60, 45, 30, 0.27);
   transition: box-shadow 220ms;
+}
+/* Watercolor over the painted squares: mottled pigment + paper tooth,
+   multiplied in so pieces and squares share the same stock. Under the
+   start/finish overlays (z 5/6), never catches pointers. */
+.board-wrap::after,
+.free-play-board-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.6;
+  background: url("./textures/board.svg") center / 400px 400px;
+  border-radius: inherit;
 }
 @keyframes board-finish-fade {
   0%   { opacity: 0; }
@@ -1300,14 +1324,14 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(8, 12, 24, 0.78);
-  color: #f5f7ff;
+  background: rgba(43, 36, 30, 0.78);
+  color: #fbf6ea;
   border-radius: 4px;
   text-align: center;
   pointer-events: none;
   opacity: 0;
   animation: board-start-fade 3.5s ease-in-out forwards;
-  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+  text-shadow: 0 2px 16px rgba(60, 45, 30, 0.248);
   z-index: 6;
 }
 .start-vs {
@@ -1364,12 +1388,12 @@ a { color: inherit; text-decoration: none; }
 }
 .start-color-banner.white-banner {
   background: rgba(255, 255, 255, 0.88);
-  color: #102025;
+  color: #2b2621;
   border-color: rgba(255, 255, 255, 0.7);
 }
 .start-color-banner.black-banner {
   background: rgba(16, 32, 37, 0.92);
-  color: #f5f7ff;
+  color: #fbf6ea;
 }
 
 .board-finish-overlay {
@@ -1380,14 +1404,14 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(8, 12, 24, 0.62);
-  color: #f5f7ff;
+  background: rgba(43, 36, 30, 0.62);
+  color: #fbf6ea;
   border-radius: 4px;
   text-align: center;
   pointer-events: none;
   opacity: 0;
   animation: board-finish-fade 4s ease-in-out forwards;
-  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.55);
+  text-shadow: 0 2px 16px rgba(60, 45, 30, 0.248);
   z-index: 5;
 }
 /* The result announcement — the single most dramatic moment in the app, so it
@@ -1431,8 +1455,8 @@ a { color: inherit; text-decoration: none; }
   font-family: var(--font-display);
   font-size: clamp(24px, 3.8vw, 40px);
   font-weight: 600;
-  color: #f5f7ff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  color: #fbf6ea;
+  box-shadow: 0 4px 14px rgba(60, 45, 30, 0.203);
 }
 .result-avatar {
   width: 32px;
@@ -1534,8 +1558,8 @@ a { color: inherit; text-decoration: none; }
    glance without recolouring the whole card. */
 .player-card.active {
   border-color: var(--rule-strong);
-  background: linear-gradient(180deg, rgba(168, 216, 185, 0.13), rgba(168, 216, 185, 0.03));
-  box-shadow: inset 3px 0 0 var(--accent-strong), 0 4px 16px -6px rgba(168, 216, 185, 0.25);
+  background: linear-gradient(180deg, rgba(63, 110, 154, 0.13), rgba(63, 110, 154, 0.03));
+  box-shadow: inset 3px 0 0 var(--accent-strong), 0 4px 16px -6px rgba(63, 110, 154, 0.25);
 }
 .player-card.low.active {
   border-color: var(--bad);
@@ -1681,7 +1705,7 @@ a { color: inherit; text-decoration: none; }
   width: 4.95rem;
   height: 0.55rem;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(60, 45, 30, 0.036);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -1772,9 +1796,9 @@ a { color: inherit; text-decoration: none; }
 .voice-btn.primary {
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   border-color: var(--accent-strong);
-  color: #0c1e2c;
+  color: #fbf6ea;
   flex: 1;
-  box-shadow: 0 2px 10px rgba(168, 216, 185, 0.22);
+  box-shadow: 0 2px 10px rgba(63, 110, 154, 0.22);
 }
 .voice-btn.on { border-color: var(--good); }
 .voice-btn.off { border-color: var(--bad); color: var(--muted); }
@@ -1885,8 +1909,8 @@ a { color: inherit; text-decoration: none; }
   padding: 0.42rem;
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
-  background: linear-gradient(180deg, #10222f, #0b1a26);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(0, 0, 0, 0.8);
+  background: linear-gradient(180deg, #fffaf0, #f6eedd);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -12px rgba(60, 45, 30, 0.3);
 }
 .chat-emoji-option {
   width: 2rem;
@@ -1921,7 +1945,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: calc(var(--bubble-size) * 0.18);
   background: var(--bubble-bg);
   box-shadow:
-    0 0.35rem 0.9rem rgba(10, 22, 35, 0.28),
+    0 0.35rem 0.9rem rgba(60, 45, 30, 0.28),
     inset 0 0 0.55rem rgba(255, 255, 255, 0.68);
   display: grid;
   place-items: center;
@@ -1967,7 +1991,7 @@ a { color: inherit; text-decoration: none; }
   stroke: rgba(255, 255, 255, 0.86);
   stroke-width: 1.2;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0.25rem 0.45rem rgba(10, 22, 35, 0.16));
+  filter: drop-shadow(0 0.25rem 0.45rem rgba(60, 45, 30, 0.16));
 }
 @keyframes king-emoji-bubble-above {
   0%   { opacity: 0; transform: translateY(0.25rem) scale(0.72); }
@@ -2006,7 +2030,7 @@ a { color: inherit; text-decoration: none; }
    hairline, and a thin accent rule across the very top edge. */
 .modal {
   position: relative;
-  background: linear-gradient(180deg, #10222f, #0a1a25);
+  background: linear-gradient(180deg, #fffaf0, #f6eedd);
   border: 1px solid var(--rule-strong);
   border-radius: 3px;
   padding: 2rem 2.2rem 1.9rem;
@@ -2016,7 +2040,7 @@ a { color: inherit; text-decoration: none; }
   max-width: calc(100vw - 1.5rem);
   text-align: center;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 60px -12px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 60px -12px rgba(60, 45, 30, 0.3);
 }
 .modal::before {
   content: "";
@@ -2099,15 +2123,15 @@ a { color: inherit; text-decoration: none; }
   background: linear-gradient(
     90deg,
     var(--accent-strong) 0 var(--fill, 0%),
-    rgba(0, 0, 0, 0.4) var(--fill, 0%) 100%
+    rgba(60, 45, 30, 0.18) var(--fill, 0%) 100%
   );
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 1px 2px rgba(60, 45, 30, 0.225);
 }
 .volume-control input[type='range']::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: rgba(0, 0, 0, 0.4);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  background: rgba(60, 45, 30, 0.18);
+  box-shadow: inset 0 1px 2px rgba(60, 45, 30, 0.225);
 }
 .volume-control input[type='range']::-moz-range-progress {
   height: 4px;
@@ -2122,8 +2146,8 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc((4px - 1.15rem) / 2);
   border-radius: 1px;
   border: 1px solid var(--accent-strong);
-  background: linear-gradient(180deg, #f6fbf8, #cfe2d7);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, #fffdf7, #efe4cf);
+  box-shadow: 0 1px 4px rgba(60, 45, 30, 0.225);
   transition: transform 120ms ease;
 }
 .volume-control input[type='range']::-moz-range-thumb {
@@ -2131,8 +2155,8 @@ a { color: inherit; text-decoration: none; }
   height: 1.15rem;
   border-radius: 1px;
   border: 1px solid var(--accent-strong);
-  background: linear-gradient(180deg, #f6fbf8, #cfe2d7);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, #fffdf7, #efe4cf);
+  box-shadow: 0 1px 4px rgba(60, 45, 30, 0.225);
 }
 .volume-control input[type='range']:hover::-webkit-slider-thumb { transform: scaleY(1.1); }
 .volume-control input[type='range']:focus-visible { outline: none; }
@@ -2165,17 +2189,17 @@ a { color: inherit; text-decoration: none; }
   height: 1.5rem;
   border-radius: 2px;
   border: 1px solid var(--rule-strong);
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(60, 45, 30, 0.135);
   cursor: var(--cursor-pointer);
   padding: 0;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1px 3px rgba(60, 45, 30, 0.18);
   transition: background 180ms, border-color 180ms, box-shadow 180ms;
 }
 .settings-toggle.on {
-  background: linear-gradient(180deg, var(--accent-strong), #5fa480);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   border-color: var(--accent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 0 14px -2px rgba(168, 216, 185, 0.45);
+    0 0 14px -2px rgba(63, 110, 154, 0.45);
 }
 /* top/bottom rather than a fixed height so the knob stays optically centred
    in the track at every root font size. */
@@ -2186,8 +2210,8 @@ a { color: inherit; text-decoration: none; }
   left: 2px;
   width: 1.15rem;
   border-radius: 1px;
-  background: linear-gradient(180deg, #f6fbf8, #d3e3da);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, #fffdf7, #efe4cf);
+  box-shadow: 0 1px 3px rgba(60, 45, 30, 0.225);
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 /* Track 2.85rem − knob 1.15rem − 2×2px border/inset ≈ 1.5rem of travel. */
@@ -2302,7 +2326,7 @@ a { color: inherit; text-decoration: none; }
   border-bottom: 1px solid var(--rule);
 }
 .history-table th {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(60, 45, 30, 0.113);
   color: var(--muted);
   font-family: var(--font-mono);
   font-weight: 500;
@@ -2543,7 +2567,7 @@ a { color: inherit; text-decoration: none; }
   height: 0.7rem;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #ffe7a0, #b88836 70%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset, 0 1px 2px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 1px rgba(60, 45, 30, 0.18) inset, 0 1px 2px rgba(60, 45, 30, 0.203);
 }
 
 .cash-shop-grid {
@@ -2634,7 +2658,7 @@ a { color: inherit; text-decoration: none; }
 .hero-picker-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(8, 12, 24, 0.86);
+  background: rgba(43, 36, 30, 0.86);
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -2848,7 +2872,7 @@ a { color: inherit; text-decoration: none; }
   z-index: 1;
   opacity: 0.92;
   transform: translateY(-14%);
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(0 1px 3px rgba(60, 45, 30, 0.18));
 }
 
 /* Frost: encase a frozen piece in a translucent ice block with a soft cyan
@@ -3031,9 +3055,9 @@ a { color: inherit; text-decoration: none; }
   height: 14%;
   border-radius: 50%;
   background: radial-gradient(ellipse at center,
-    rgba(0, 0, 0, 0.46) 0%,
-    rgba(0, 0, 0, 0.28) 44%,
-    rgba(0, 0, 0, 0) 76%);
+    rgba(60, 45, 30, 0.207) 0%,
+    rgba(60, 45, 30, 0.126) 44%,
+    rgba(60, 45, 30, 0.0) 76%);
   transform-origin: 50% 50%;
   pointer-events: none;
   z-index: 0;
@@ -3231,7 +3255,7 @@ a { color: inherit; text-decoration: none; }
     rgba(58, 34, 18, 0.0) 100%
   );
   box-shadow:
-    0 -2px 4px rgba(0, 0, 0, 0.4) inset,
+    0 -2px 4px rgba(60, 45, 30, 0.18) inset,
     0 2px 3px rgba(255, 255, 255, 0.08) inset;
   filter: blur(0.6px);
   /* Extended past the 750ms pawn animation so the mound dissipates
@@ -3443,7 +3467,7 @@ a { color: inherit; text-decoration: none; }
     drop-shadow(-2px  0  0 #1a0e04)
     drop-shadow( 0   2px 0 #1a0e04)
     drop-shadow( 0  -2px 0 #1a0e04)
-    drop-shadow( 0   3px 2px rgba(0, 0, 0, 0.45));
+    drop-shadow( 0   3px 2px rgba(60, 45, 30, 0.203));
   opacity: 0;
   /* Faster swing with a pronounced ease-in-out — the blade snaps into the
      strike at the apex. Symmetric bezier means rotation hits `bearing` at
@@ -3802,7 +3826,7 @@ a { color: inherit; text-decoration: none; }
   font-variant-numeric: tabular-nums;
   text-shadow:
     0 0 0.12em rgba(255, 255, 255, 0.75),
-    0 1px 1px rgba(0, 0, 0, 0.35);
+    0 1px 1px rgba(60, 45, 30, 0.158);
   animation: sweeper-count-in 260ms ease-out both;
 }
 .sweeper-count.n0 { color: rgba(30, 40, 60, 0.42); text-shadow: none; }
@@ -3815,7 +3839,7 @@ a { color: inherit; text-decoration: none; }
 .sweeper-count.on-dark {
   text-shadow:
     0 0 0.16em rgba(255, 255, 255, 0.95),
-    0 1px 1px rgba(0, 0, 0, 0.45);
+    0 1px 1px rgba(60, 45, 30, 0.203);
 }
 .sweeper-count.n0.on-dark { color: rgba(232, 238, 248, 0.62); text-shadow: none; }
 .sweeper-count.n4.on-dark { color: #8a49d0; }
@@ -3836,7 +3860,7 @@ a { color: inherit; text-decoration: none; }
   pointer-events: none;
   z-index: 0;
   line-height: 1;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 1px 2px rgba(60, 45, 30, 0.203));
   animation: sweeper-count-in 260ms ease-out both;
 }
 .sweeper-flag.corner {
@@ -3943,7 +3967,7 @@ a { color: inherit; text-decoration: none; }
 .setup-tray-sprite {
   display: block;
   line-height: 0;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 2px 3px rgba(60, 45, 30, 0.203));
 }
 /* Remaining count reads as data → mono micro-caps. */
 .setup-tray-count {
@@ -3996,7 +4020,7 @@ a { color: inherit; text-decoration: none; }
 .mine-rail-bomb {
   font-size: 1.45rem;
   line-height: 1;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 2px 3px rgba(60, 45, 30, 0.203));
   transition: filter 320ms ease, opacity 320ms ease, transform 320ms ease;
 }
 /* Detonated: no colour left, just the silhouette pressed flat into the rail. */
@@ -4238,7 +4262,7 @@ a { color: inherit; text-decoration: none; }
      the merge row (9 pieces) wraps to a second line. */
   flex: 0 0 2.4rem;
   height: 2.4rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(60, 45, 30, 0.09);
   border: 1px solid var(--rule);
   border-radius: 2px;
   cursor: var(--cursor-grab);
@@ -4315,7 +4339,7 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   /* Counterweight for the bright glow around white kings so they read well
      against the green primary button. Black kings get a subtle outline. */
-  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 0 1px rgba(60, 45, 30, 0.248));
 }
 .sandbox-king-label {
   display: inline-flex;
@@ -4379,7 +4403,7 @@ a { color: inherit; text-decoration: none; }
 .promotion-picker-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(60, 45, 30, 0.203);
   z-index: 25;
   cursor: var(--cursor-pointer);
 }
@@ -4651,8 +4675,8 @@ a { color: inherit; text-decoration: none; }
   aspect-ratio: 1;
   transform: rotate(45deg);
   border-radius: 20%;
-  background: rgba(0, 0, 0, 0.18);
-  border: 1px solid rgba(0, 0, 0, 0.55);
+  background: rgba(60, 45, 30, 0.081);
+  border: 1px solid rgba(60, 45, 30, 0.248);
   box-sizing: border-box;
 }
 .jug-pip.filled {
@@ -4689,7 +4713,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 14px;
   line-height: 1;
   color: #ffd84d;
-  text-shadow: 0 0 4px rgba(255, 190, 30, 0.95), 0 1px 1px rgba(0, 0, 0, 0.55);
+  text-shadow: 0 0 4px rgba(255, 190, 30, 0.95), 0 1px 1px rgba(60, 45, 30, 0.248);
   animation: stun-orbit 1300ms linear infinite;
 }
 .stun-star.s2 { animation-delay: -433ms; }
@@ -4793,7 +4817,7 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+  filter: drop-shadow(0 4px 8px rgba(60, 45, 30, 0.203));
   animation: jug-absorb-piece 880ms cubic-bezier(0.33, 1, 0.68, 1) both;
   --dx: 0px;
   --dy: 0px;
@@ -5455,7 +5479,7 @@ a { color: inherit; text-decoration: none; }
 .vid-lane {
   position: relative;
   height: 30px;
-  border-bottom: 1px dashed rgba(168, 216, 185, 0.12);
+  border-bottom: 1px dashed rgba(63, 110, 154, 0.12);
 }
 .vid-lane-label {
   position: absolute;
@@ -5475,9 +5499,9 @@ a { color: inherit; text-decoration: none; }
   position: absolute;
   left: 0;
   right: 0;
-  border-bottom: 1px dashed rgba(168, 216, 185, 0.12);
+  border-bottom: 1px dashed rgba(63, 110, 154, 0.12);
 }
-.vid-elane.empty { background: rgba(168, 216, 185, 0.05); }
+.vid-elane.empty { background: rgba(63, 110, 154, 0.05); }
 .vid-marquee {
   position: absolute;
   border: 1px solid var(--accent);
@@ -5501,7 +5525,7 @@ a { color: inherit; text-decoration: none; }
   height: 10px;
   border-radius: 50%;
   background: var(--accent-strong);
-  border: 1px solid rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(60, 45, 30, 0.18);
 }
 .vid-move-num { font-size: 0.6rem; color: var(--muted); margin-top: 1px; white-space: nowrap; }
 .vid-move-handle.selected .vid-move-dot {
@@ -5511,7 +5535,7 @@ a { color: inherit; text-decoration: none; }
 .vid-move-type {
   font-size: 0.55rem;
   font-weight: 700;
-  color: #0c1e2c;
+  color: #fbf6ea;
   background: var(--accent-strong);
   border-radius: 4px;
   padding: 0 3px;
@@ -5526,17 +5550,17 @@ a { color: inherit; text-decoration: none; }
   padding: 0 0.4rem;
   cursor: grab;
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(60, 45, 30, 0.135);
 }
 .vid-effect-bar.selected { outline: 2px solid #ffd34d; outline-offset: -1px; z-index: 3; }
-.vid-effect-bar-label { font-size: 0.65rem; color: #0c1e2c; white-space: nowrap; pointer-events: none; }
+.vid-effect-bar-label { font-size: 0.65rem; color: #fbf6ea; white-space: nowrap; pointer-events: none; }
 .vid-effect-resize {
   position: absolute;
   top: 0;
   width: 8px;
   height: 100%;
   cursor: ew-resize;
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(60, 45, 30, 0.126);
   z-index: 1;
 }
 .vid-effect-resize.left { left: 0; border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
@@ -5559,4 +5583,57 @@ a { color: inherit; text-decoration: none; }
 .vid-floating-error {
   position: sticky;
   bottom: 0.5rem;
+}
+
+/* ── Sketchbook overrides ───────────────────────────────────────────────
+   The watercolor/line-art layer, kept in one place so it reads as a theme
+   rather than being smeared across every component block above.
+
+   1. Hand-lettered display. Caveat has a small x-height, so font-size-adjust
+      scales it up to the optical size the serif-tuned clamps expect, and the
+      wide caps tracking those rules set (made for a serif nameplate) is
+      pulled back in — tracked-out script falls apart. */
+.brand, .user-chip-avatar, .page-title, .start-divider, .start-handle,
+.board-finish-overlay .victor, .finish-avatar, .result-avatar,
+.game-result-strip .result-line .title, .player-avatar-initial, .modal h2,
+.profile-value.big, .history-section h2 {
+  font-size-adjust: 0.46;
+  letter-spacing: 0.005em;
+  font-weight: 700;
+}
+.brand { font-size: 1.45rem; }
+
+/* 2. Hand-drawn corners. Every plate, button and control gets the wobbly
+      elliptical radius — the pen line that didn't quite close square. */
+.user-chip, .secondary-btn, .primary-btn, .free-play-header, .time-mode-box,
+.lobby-panel, .game-result-strip, .player-card, .game-meta, .moves-panel,
+.chat-panel, .settings-card, .profile-card, .history-table, .cash-shop,
+.mine-panel, .setup-tray, .sandbox-controls, .sandbox-palette,
+.sandbox-tips-card, .review-import-card, .modal, .custom-select-popover,
+.chat-emoji-popover {
+  border-radius: var(--sketch-radius-sm);
+}
+.free-play-board-wrap, .board-wrap {
+  border-radius: 6px 3px 7px 4px / 4px 7px 3px 6px;
+}
+
+/* 3. Ink, not glow. Primary actions are a pooled indigo wash with paper
+      lettering and a pencil offset instead of a colored halo. */
+.primary-btn {
+  color: #fbf6ea;
+  border-color: var(--accent-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 2px 3px 0 -0.5px rgba(52, 42, 34, 0.28);
+}
+.primary-btn:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 3px 4px 0 -0.5px rgba(52, 42, 34, 0.3);
+}
+.secondary-btn { border-color: var(--border); }
+.secondary-btn:hover:not(:disabled) { border-color: var(--border-strong); }
+.brand-mark { text-shadow: none; }
+
+/* 4. Pen rules. Title underlines are a drawn stroke (src/textures/ink-rule.svg,
+      stretched to the measure) rather than a ruled hairline. */
+.page-title {
+  border-bottom: 0;
+  background: url("./textures/ink-rule.svg") left bottom / 100% 12px no-repeat;
 }

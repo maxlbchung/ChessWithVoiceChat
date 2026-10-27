@@ -875,8 +875,8 @@ export function MergeBoard({
 
           const style: CSSProperties = {
             background: isLight
-              ? (inMineZone ? '#a1aecb' : '#dfe5f0')
-              : (inMineZone ? '#36425a' : '#5d6c89'),
+              ? (inMineZone ? '#e3cfae' : '#f8f0de')
+              : (inMineZone ? '#6d87a3' : '#93aec7'),
             position: 'relative',
             display: 'flex',
             alignItems: 'center',
@@ -1856,7 +1856,7 @@ export function MergeBoard({
                     top: 1,
                     fontFamily: 'var(--font-mono)',
                     fontSize: Math.max(9, squarePx * 0.17),
-                    color: isLight ? '#5d6c89' : '#dfe5f0',
+                    color: isLight ? '#4f6f90' : '#f8f0de',
                     fontWeight: 500,
                     pointerEvents: 'none',
                   }}
@@ -1872,7 +1872,7 @@ export function MergeBoard({
                     bottom: 0,
                     fontFamily: 'var(--font-mono)',
                     fontSize: Math.max(9, squarePx * 0.17),
-                    color: isLight ? '#5d6c89' : '#dfe5f0',
+                    color: isLight ? '#4f6f90' : '#f8f0de',
                     fontWeight: 500,
                     pointerEvents: 'none',
                   }}

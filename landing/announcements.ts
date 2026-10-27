@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-10-27',
+    kind: 'update',
+    title: 'A fresh coat of paint',
+    body: 'VCC has a new look: watercolor washes on warm paper, hand-drawn ink lines and a hand-lettered title face. The board is painted too — same pieces, softer squares.',
+  },
+  {
     date: '2026-08-20',
     kind: 'update',
     title: 'Better on your phone',

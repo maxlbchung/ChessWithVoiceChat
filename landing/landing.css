@@ -8,43 +8,44 @@
    ====================================================================== */
 
 :root {
-  /* Deep ocean — mirrored from the app's palette (src/styles.css). */
-  --bg: #08151f;
-  --bg-grad-1: #0d2333;
-  --bg-grad-2: #071823;
-  --bg-grad-3: #122c3e;
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-strong: rgba(255, 255, 255, 0.085);
-  --glass-soft: rgba(255, 255, 255, 0.025);
-  --border: rgba(168, 216, 185, 0.16);
-  --border-strong: rgba(168, 216, 185, 0.34);
-  --rule: rgba(168, 216, 185, 0.13);
-  --rule-strong: rgba(168, 216, 185, 0.26);
-  --text: #e6f0ea;
-  --muted: #85a3af;
-  --accent: #a8d8b9;
-  --accent-strong: #7ec39a;
-  --accent-soft: rgba(168, 216, 185, 0.15);
-  --brass: #dcb87e;
-  --warn: #e0c08a;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  --plate: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 1px 2px rgba(0, 0, 0, 0.3),
-    0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  /* "Sketchbook" — mirrored from the app's palette (src/styles.css):
+     cold-press paper, sepia ink lines, transparent watercolor washes. */
+  --bg: #f4ecdc;
+  --bg-grad-1: rgba(110, 150, 190, 0.30);
+  --bg-grad-2: rgba(226, 184, 120, 0.26);
+  --bg-grad-3: rgba(196, 120, 128, 0.18);
+  --glass: rgba(255, 251, 241, 0.62);
+  --glass-strong: rgba(255, 252, 245, 0.86);
+  --glass-soft: rgba(255, 251, 241, 0.38);
+  --border: rgba(52, 42, 34, 0.30);
+  --border-strong: rgba(52, 42, 34, 0.62);
+  --rule: rgba(52, 42, 34, 0.24);
+  --rule-strong: rgba(52, 42, 34, 0.5);
+  --text: #2d2620;
+  --muted: #685c4f;
+  --accent: #3f6e9a;
+  --accent-strong: #2c557d;
+  --accent-soft: rgba(63, 110, 154, 0.14);
+  --brass: #a8642a;
+  --warn: #b07d22;
+  --shadow: 0 8px 26px rgba(70, 52, 34, 0.18);
+  --plate: 2px 3px 0 -0.5px rgba(52, 42, 34, 0.16), 0 10px 24px -14px rgba(70, 52, 34, 0.28);
+  --sketch-radius: 255px 12px 225px 10px / 10px 225px 12px 255px;
+  --sketch-radius-sm: 18px 4px 16px 5px / 5px 16px 4px 18px;
 
   /* Board squares for the hero motif. */
-  --sq-light: rgba(230, 240, 234, 0.09);
-  --sq-dark: rgba(230, 240, 234, 0.02);
+  --sq-light: rgba(255, 251, 241, 0.7);
+  --sq-dark: rgba(111, 152, 194, 0.32);
 
-  /* Same three faces as the app, loaded in index.html: an editorial reading
-     serif for display (the page is about a 1500-year-old game), a grotesque
-     for body copy, and mono for dates and data. Offline falls back locally. */
-  --font-display: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino,
-    "Book Antiqua", Georgia, "Times New Roman", serif;
-  --font-body: "Archivo", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+  /* Same three faces as the app, loaded in index.html: a hand-lettered
+     brush script for display, a rounded humanist for body copy, and a
+     typewriter for dates and data. Offline falls back locally. */
+  --font-display: "Caveat", "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+  --font-body: "Nunito", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+  --font-mono: "Courier Prime", "Courier New", ui-monospace, "SF Mono", Menlo, Consolas,
     monospace;
-  --track-label: 0.18em;
+  --track-label: 0.16em;
 
   --edge: clamp(1.25rem, 5vw, 5.5rem);
   --measure: 78rem;
@@ -75,7 +76,7 @@ html {
 @supports not selector(::-webkit-scrollbar) {
   html {
     scrollbar-width: thin;
-    scrollbar-color: rgba(168, 216, 185, 0.34) transparent;
+    scrollbar-color: rgba(63, 110, 154, 0.34) transparent;
   }
 }
 
@@ -95,14 +96,14 @@ html {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(168, 216, 185, 0.26);
+  background-color: rgba(63, 110, 154, 0.26);
   background-clip: content-box;
   border: 3px solid transparent;
   border-radius: 2px;
   transition: background-color 140ms ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(168, 216, 185, 0.5);
+  background-color: rgba(63, 110, 154, 0.5);
 }
 ::-webkit-scrollbar-thumb:active {
   background-color: var(--accent-strong);
@@ -117,10 +118,10 @@ body {
   background: var(--bg);
   overflow-x: hidden;
 }
-/* The ocean gradient wash, pinned to the viewport on a fixed pseudo-element
+/* The watercolor wash, pinned to the viewport on a fixed pseudo-element
    rather than background-attachment: fixed — mobile Safari ignores fixed
    attachment and tiles the wash down the page in viewport-height bands.
-   z-index: -1 keeps it above the ink base but below all content. Mirrors
+   z-index: -1 keeps it above the paper base but below all content. Mirrors
    the same fix in src/styles.css. */
 body::before {
   content: "";
@@ -128,20 +129,24 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: -1;
+  /* Same painted washes as the app (src/textures/wash.svg). */
   background:
-    radial-gradient(circle at 15% 8%, var(--bg-grad-1) 0%, transparent 45%),
-    radial-gradient(circle at 88% 78%, var(--bg-grad-3) 0%, transparent 52%),
-    radial-gradient(circle at 50% 50%, var(--bg-grad-2) 0%, transparent 70%);
+    url("../src/textures/wash.svg") center / cover no-repeat,
+    radial-gradient(circle at 12% 8%, var(--bg-grad-1) 0%, transparent 40%),
+    radial-gradient(circle at 90% 90%, var(--bg-grad-3) 0%, transparent 45%),
+    radial-gradient(circle at 88% 10%, var(--bg-grad-2) 0%, transparent 35%);
+  opacity: 0.85;
 }
 
-/* Fine noise over the whole page so the large flat gradients don't band. */
+/* Paper tooth over the whole page, multiplied into the stock. */
 .grain {
   position: fixed;
-  inset: -50%;
+  inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.5;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity: 0.55;
+  mix-blend-mode: multiply;
+  background-image: url("../src/textures/paper.svg");
 }
 
 main,
@@ -202,7 +207,7 @@ a {
   color: var(--accent);
 }
 
-/* Newsreader at display scale: sturdy strokes, so it carries real weight at
+/* Caveat at display scale: a brush-pen script, so it carries real weight at
    size. Only a light negative track — the tight -0.03em a didone wanted
    closes this face's counters up too far. */
 .hero-title {
@@ -220,7 +225,7 @@ a {
      so the two words read as one hand-set block. */
   margin-top: 0.04em;
   margin-left: 0.08em;
-  background: linear-gradient(112deg, var(--accent) 8%, #5fa8c4 92%);
+  background: linear-gradient(112deg, var(--accent-strong) 8%, #6a9a5b 92%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -254,9 +259,9 @@ a {
     border-color 160ms ease, box-shadow 160ms ease;
   position: relative;
   overflow: hidden;
-  color: #0c1e2c;
+  color: #fbf6ea;
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  box-shadow: 0 6px 20px rgba(168, 216, 185, 0.22);
+  box-shadow: 0 6px 20px rgba(63, 110, 154, 0.22);
 }
 .btn-primary svg {
   width: 1.05em;
@@ -271,7 +276,7 @@ a {
 .btn-primary:hover {
   filter: brightness(1.07);
   transform: translateY(-2px);
-  box-shadow: 0 10px 26px rgba(168, 216, 185, 0.3);
+  box-shadow: 0 10px 26px rgba(63, 110, 154, 0.3);
 }
 .btn-primary:hover svg {
   transform: translateX(4px);
@@ -301,15 +306,17 @@ a {
   border-radius: 4px;
   border: 1px solid var(--rule-strong);
   /* 8×8 checker: one conic tile covers a 2×2 block of squares. */
-  background-image: conic-gradient(
+  /* Painted, not printed: the board wash texture over the checker. */
+  background-image: url("../src/textures/board.svg"), conic-gradient(
     from 90deg at 50% 50%,
     var(--sq-light) 0 25%,
     var(--sq-dark) 0 50%,
     var(--sq-light) 0 75%,
     var(--sq-dark) 0
   );
-  background-size: 25% 25%;
-  box-shadow: var(--shadow), inset 0 0 60px rgba(12, 30, 44, 0.6);
+  background-size: 400px 400px, 25% 25%;
+  background-blend-mode: multiply, normal;
+  box-shadow: var(--shadow), 3px 4px 0 -1px rgba(52, 42, 34, 0.2);
   transform: perspective(1200px) rotateX(6deg) rotateY(-11deg) rotateZ(1.5deg);
   transform-style: preserve-3d;
 }
@@ -324,7 +331,6 @@ a {
   position: absolute;
   line-height: 1;
   color: var(--accent);
-  text-shadow: 0 0 26px rgba(168, 216, 185, 0.45);
   user-select: none;
 }
 /* Squares are 12.5% each — these sit on d5, g7 and c3-ish. */
@@ -337,8 +343,8 @@ a {
   right: 12%;
   top: 46%;
   font-size: clamp(2.2rem, 6vw, 4.4rem);
-  color: #5fa8c4;
-  text-shadow: 0 0 22px rgba(95, 168, 196, 0.4);
+  color: #b5443f;
+  text-shadow: none;
   opacity: 0.9;
 }
 .glyph.pawn {
@@ -400,7 +406,7 @@ a {
   background: linear-gradient(160deg, var(--glass), var(--glass-soft));
   border-color: var(--rule-strong);
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 16px 44px -18px rgba(0, 0, 0, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 16px 44px -18px rgba(60, 45, 30, 0.3);
 }
 .news-latest::before {
   content: "";
@@ -551,3 +557,20 @@ a {
     padding: 1.4rem 1.3rem;
   }
 }
+
+/* ── Sketchbook overrides (mirrors the block at the end of src/styles.css) ──
+   Caveat runs small and falls apart when tracked out, so display text gets
+   font-size-adjust and near-zero tracking; plates get hand-drawn corners. */
+.wordmark, .hero-title, .section-title, .news h3 {
+  font-size-adjust: 0.46;
+  letter-spacing: 0.005em;
+  font-weight: 700;
+}
+.btn-primary, .news, .tag {
+  border-radius: var(--sketch-radius-sm);
+}
+.btn-primary {
+  border-color: var(--accent-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 2px 3px 0 -0.5px rgba(52, 42, 34, 0.28);
+}
+.news { box-shadow: var(--plate); }

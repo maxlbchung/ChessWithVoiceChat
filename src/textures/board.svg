@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+  <!-- Board wash: uneven pigment density (blooms where the wash pooled) plus
+       paper tooth, multiplied over the flat square colors so the board reads
+       as painted rather than filled. -->
+  <filter id="b" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="3" seed="9" stitchTiles="stitch" result="bloom"/>
+    <feColorMatrix in="bloom" type="matrix" values="0 0 0 0 0.25  0 0 0 0 0.2  0 0 0 0 0.16  0 0 0 0.9 -0.32" result="m"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="3" stitchTiles="stitch" result="g"/>
+    <feColorMatrix in="g" type="matrix" values="0 0 0 0 0.3  0 0 0 0 0.24  0 0 0 0 0.18  0 0 0 -1.5 0.95" result="tooth"/>
+    <feMerge><feMergeNode in="m"/><feMergeNode in="tooth"/></feMerge>
+  </filter>
+  <rect width="400" height="400" filter="url(#b)"/>
+</svg>

@@ -188,18 +188,27 @@ record → export → replay → snapshot → scene → canvas → WebM:
   BEM-ish kebab-case classes, per-instance color via inline CSS vars
   (`['--hero-color' as any]`). Landing page has its own `landing/landing.css`, which
   **mirrors the app's tokens** — change one, change both.
-- **Design system ("Bulletin")** — a dark chess-broadsheet look. Three faces, loaded via
-  Google Fonts `<link>` in *both* HTML entries (`app/index.html`, `index.html`), each
-  with a local fallback stack baked into the token:
-  - `--font-display` (Newsreader) — page titles, section heads, outcome
-    announcements, avatar initials, big stats. An editorial *reading* serif: weight
-    600 at heading sizes, light negative tracking (~-0.01em). A didone (Bodoni Moda)
-    was tried first and rejected — its hairlines went thin and hard to read.
-  - `--font-body` (Archivo) — all UI and prose. The app default on `html, body`.
-  - `--font-mono` (IBM Plex Mono) — **anything read as data**: clocks, ratings, board
+- **Design system ("Sketchbook")** — a light watercolor + line-art look: cold-press
+  paper ground, sepia-ink structure, transparent watercolor washes for color. Three
+  faces, loaded via Google Fonts `<link>` in *both* HTML entries (`app/index.html`,
+  `index.html`), each with a local fallback stack baked into the token:
+  - `--font-display` (Caveat) — page titles, section heads, outcome announcements,
+    avatar initials, big stats. A brush-pen script with a small x-height: display
+    selectors get `font-size-adjust: 0.46` and near-zero tracking (tracked-out
+    script falls apart) — see the "Sketchbook overrides" block at the end of
+    `src/styles.css`. Keep it at heading sizes.
+  - `--font-body` (Nunito) — all UI and prose. The app default on `html, body`.
+  - `--font-mono` (Courier Prime) — **anything read as data**: clocks, ratings, board
     coordinates, move lists, dates, counts, peer ids, version tag. Also the
     tracked micro-caps idiom (`--track-label`, `.label-caps`) used for nav, panel
     captions, table headers and small control strips.
+- **Textures** live in `src/textures/` as SVG filters (no bitmaps) and are referenced
+  by relative `url()` from both stylesheets so Vite fingerprints them: `wash.svg`
+  (page washes, `body::before`), `paper.svg` (paper tooth, `body::after` /
+  landing `.grain`, multiplied), `board.svg` (pigment mottle over the board,
+  `.board-wrap::after`, z 4 — under the start/finish overlays) and `ink-rule.svg`
+  (hand-drawn underline on `.page-title`). Board square colors are inline in
+  `MergeBoard.tsx` and mirrored in `videoRenderer.ts`.
 
 - **Scrollbars** (block at the top of `src/styles.css`, mirrored in `landing.css`).
   Three things that are easy to get wrong:
@@ -219,11 +228,13 @@ record → export → replay → snapshot → scene → canvas → WebM:
   Scroll containers today: the document (app + landing), `.moves-panel`, `.chat-log`,
   `.custom-select-popover`, `.vid-timeline-scroll`, and `textarea`. A new one needs
   adding to the gutter list and, if vertical, the hairline-track-rule list.
-- Surface tokens: `--rule` / `--rule-strong` are the hairline dividers that structure
-  every panel (prefer them over `--border`); `--plate` is the letterpress shadow that
-  makes a card read as a physical plate. Panels are 3px radius, the board 4px.
-  `--brass` is the warm counter-accent (dates, secondary tags) against the green
-  primary. `body::before` paints the app-wide grain; `.app-shell` sits above it.
+- Surface tokens: `--rule` / `--rule-strong` are the ink lines that structure every
+  panel (prefer them over `--border`); `--plate` is the offset pencil shadow that
+  makes a card read as a sheet laid on paper; `--sketch-radius-sm` is the wobbly
+  hand-drawn corner applied to plates and buttons (list in the overrides block — a
+  new panel class should join it). `--accent` is an indigo wash; `--brass` (burnt
+  sienna) is the warm counter-accent (dates, secondary tags). Don't add glows —
+  emphasis is ink and wash, not light. `.app-shell` sits above the paper tooth.
   `.page`/`.page-narrow` children get a staggered route-reveal animation, so page
   content is expected to be a handful of direct-child blocks.
 - **SFX**: `src/lib/sfx.ts` — fully procedural Web Audio, no audio files, one master

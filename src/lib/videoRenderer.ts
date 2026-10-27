@@ -14,10 +14,10 @@ import { TOKEN_SPECS, type EffectEvent } from './videoProject';
 
 export type Orientation = 'white' | 'black';
 
-const LIGHT = '#dfe5f0';
-const DARK = '#5d6c89';
+const LIGHT = '#f8f0de'; // matches MergeBoard's painted squares
+const DARK = '#93aec7';
 const LAST_MOVE_TINT = 'rgba(140, 220, 150, 0.45)';
-const BORDER_COLOR = '#0c1e2c'; // frame around the board (also fills the export edges)
+const BORDER_COLOR = '#f4ecdc'; // frame around the board (also fills the export edges)
 
 // The board is drawn inset by a margin so corner tokens can overhang into the
 // frame instead of being clamped toward the center. The canvas is sized to

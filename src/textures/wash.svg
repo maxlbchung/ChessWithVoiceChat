@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <!-- Watercolor washes for the page ground. Each blob is pushed out of round
+       by low-frequency turbulence, given a darker pooled rim (pigment drying
+       at the edge of a wash), mottled by a mid-frequency density map so it
+       blooms unevenly, and finally broken up by the paper's tooth. -->
+  <defs>
+    <filter id="wc" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.006" numOctaves="4" seed="11" result="warp"/>
+      <feDisplacementMap in="SourceGraphic" in2="warp" scale="220" xChannelSelector="R" yChannelSelector="G" result="shape"/>
+      <feGaussianBlur in="shape" stdDeviation="3" result="crisp"/>
+      <feMorphology in="shape" operator="erode" radius="14" result="inner"/>
+      <feGaussianBlur in="inner" stdDeviation="22" result="innerSoft"/>
+      <feComposite in="crisp" in2="innerSoft" operator="arithmetic" k2="1" k3="-0.5" result="pooled"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="3" seed="5" result="bloom"/>
+      <feColorMatrix in="bloom" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1.8 -0.25" result="bloomMask"/>
+      <feComposite in="crisp" in2="bloomMask" operator="in" result="mottle"/>
+      <feComposite in="pooled" in2="mottle" operator="arithmetic" k2="1" k3="0.45" result="body"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="2" result="grain"/>
+      <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.4 1.45" result="grainMask"/>
+      <feComposite in="body" in2="grainMask" operator="in"/>
+    </filter>
+  </defs>
+  <g filter="url(#wc)">
+    <ellipse cx="200" cy="120" rx="440" ry="250" fill="#6f98c2" opacity="0.55"/>
+    <ellipse cx="1420" cy="880" rx="480" ry="270" fill="#cf8a80" opacity="0.42"/>
+    <ellipse cx="1330" cy="150" rx="300" ry="160" fill="#e0b062" opacity="0.45"/>
+    <ellipse cx="300" cy="900" rx="340" ry="190" fill="#8fb57c" opacity="0.42"/>
+  </g>
+</svg>
