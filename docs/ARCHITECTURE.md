@@ -205,19 +205,34 @@ record → export → replay → snapshot → scene → canvas → WebM:
     globally, so columns of numbers still line up.
 - **Procedural watercolor** — `src/lib/watercolor.ts` `paintWashes()` builds random
   SVG-filter paintings and publishes them as CSS variables on `<html>`:
-  `--wash-page` (the page splotches, `body::before`), `--wash-primary-{1,2,3}` /
-  `--wash-secondary-{1,2,3}` (fill swatches covering a button/dropdown face, inset a
-  few px inside the ink outline), `--wash-ring-{1,2,3}` (the inverse — paint only
-  round the edge — for selected states: `.selected`, `.active`), all rotated by
-  `:nth-child` so neighbours differ, and `--wash-panel` (tileable mottle on plates). The app repaints on every route change (`Layout.tsx`); the
-  landing paints once per load (`landing/wash.ts`, its only script). Every CSS use has
-  a fallback for the moment before the first paint. Static textures in
-  `src/textures/`: `wash.svg` (fallback page wash), `paper.svg` (cold-press paper:
-  lit tooth + pulp cloudiness + fibres; `body::after` / landing `.grain`, and
-  multiplied into every plate), `board.svg` (pigment mottle over the board,
-  `.board-wrap::after`, z 4 — under the start/finish overlays) and `ink-rule.svg`
-  (hand-drawn underline on `.page-title`). Board square colors are inline in
-  `MergeBoard.tsx` and mirrored in `videoRenderer.ts`.
+  `--wash-page` (the page splotches, `body::before`; regenerated on every load and
+  route change — `Layout.tsx`, `landing/wash.ts`), and once per document
+  `--wash-primary-{1,2,3}` / `--wash-secondary-{1,2,3}` (fill swatches covering a
+  button/dropdown face, inset a few px inside the ink outline), `--wash-ring-{1,2,3}`
+  (the inverse — paint only round the edge — for selected states: `.selected`,
+  `.active`), all rotated by `:nth-child`, `--wash-panel` (tileable mottle on plates),
+  `--paper` (cold-press paper from `src/textures/paper.svg`: lit tooth + pulp
+  cloudiness + fibres, as sepia-with-alpha; `body::after`, landing `.grain`, every
+  plate) and `--board-tex` (`src/textures/board.svg`, `.board-wrap::after`, z 4 —
+  under the start/finish overlays). `ink-rule.svg` (the `.page-title` underline) is
+  a plain SVG with no filters. Board square colors are inline in `MergeBoard.tsx`
+  and mirrored in `videoRenderer.ts`.
+
+  **Performance rules** (the first version of this cost 0.5 s main-thread stalls on
+  load and on every route change):
+  1. Never hand CSS an SVG that contains filters. Chrome re-runs the filter graph
+     whenever it rasterizes the image — at device resolution, per element size,
+     after invalidations. Everything goes through `bake()` (SVG → canvas → PNG blob
+     URL), once.
+  2. Keep each bake under ~50 ms and run it in an idle callback: the page wash
+     bakes at 0.35× CSS resolution with 3 noise octaves; swatches/textures at 1×.
+  3. No `mix-blend-mode` / `background-blend-mode` on large or frequently
+     repainted layers (the full-screen paper, the board) — textures are authored
+     as color + alpha and use plain alpha blending.
+  4. Every `var(--wash-*)` / `var(--paper)` use needs a cheap fallback (`none` or a
+     gradient), never an SVG file.
+  Measure with `scripts/perf-theme.mjs` against `npm run preview` (long tasks and
+  frame times; pre-rebrand baseline: FCP ~0.4 s, no long tasks during navigation).
 
 - **Scrollbars** (block at the top of `src/styles.css`, mirrored in `landing.css`).
   Three things that are easy to get wrong:

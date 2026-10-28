@@ -266,11 +266,11 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  /* Painted watercolor washes (src/textures/wash.svg) over faint tinted
+  /* Procedural watercolor washes (--wash-page, baked by src/lib/watercolor.ts) over faint tinted
      gradients, so the corners still carry color on very wide windows where
      the SVG's slice crop pushes its blobs off-screen. */
   background:
-    var(--wash-page, url("./textures/wash.svg")) center / cover no-repeat,
+    var(--wash-page, none) center / cover no-repeat,
     radial-gradient(circle at 12% 8%, var(--bg-grad-1) 0%, transparent 40%),
     radial-gradient(circle at 90% 90%, var(--bg-grad-3) 0%, transparent 45%),
     radial-gradient(circle at 88% 10%, var(--bg-grad-2) 0%, transparent 35%);
@@ -281,8 +281,9 @@ body::before {
    stray fibres (see the notes in src/textures/paper.svg). A
    ::after on <body> rather than a DOM node — no markup change, and it can't
    catch pointers. (::after, not ::before: the wash owns ::before, and the
-   tooth must paint above it.) multiply keeps the speckle sitting *in* the
-   paper rather than floating on it. */
+   tooth must paint above it.) The texture is sepia ink with alpha, laid on
+   with plain alpha blending — a full-screen mix-blend-mode layer cost
+   frames on every repaint. */
 body::after {
   content: "";
   position: fixed;
@@ -290,8 +291,8 @@ body::after {
   pointer-events: none;
   z-index: 0;
   opacity: 0.9;
-  mix-blend-mode: multiply;
-  background-image: url("./textures/paper.svg");
+  background-image: var(--paper, none);
+  background-size: 480px 480px;
 }
 /* Everything real sits above the grain. */
 .app-shell { position: relative; z-index: 1; }
@@ -1289,8 +1290,9 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 0 0 1px var(--rule-strong), 0 14px 36px -10px rgba(60, 45, 30, 0.27);
   transition: box-shadow 220ms;
 }
-/* Watercolor over the painted squares: mottled pigment + paper tooth,
-   multiplied in so pieces and squares share the same stock. Under the
+/* Watercolor over the painted squares: mottled pigment + paper tooth, so
+   pieces and squares share the same stock. Plain alpha, no blend mode —
+   the board repaints on every move. Under the
    start/finish overlays (z 5/6), never catches pointers. */
 .board-wrap::after,
 .free-play-board-wrap::after {
@@ -1299,9 +1301,8 @@ a { color: inherit; text-decoration: none; }
   inset: 0;
   z-index: 4;
   pointer-events: none;
-  mix-blend-mode: multiply;
   opacity: 0.6;
-  background: url("./textures/board.svg") center / 400px 400px;
+  background: var(--board-tex, none) center / 400px 400px;
   border-radius: inherit;
 }
 @keyframes board-finish-fade {
@@ -5710,16 +5711,15 @@ html, body { font-variation-settings: "INFM" 35; }
 .brand-mark { text-shadow: none; }
 
 /* Panels: a sheet of the same cold-press paper (src/textures/paper.svg,
-   multiplied into the plate's ground) given a faint, uneven wash. Both
+   laid over the plate's ground) given a faint, uneven wash. Both
    layers tile, so neither ever stretches. */
 .user-chip, .free-play-header, .time-mode-box, .lobby-panel, .game-result-strip,
 .player-card, .game-meta, .moves-panel, .chat-panel, .settings-card,
 .profile-card, .history-table, .cash-shop, .mine-panel, .setup-tray,
 .sandbox-controls, .sandbox-palette, .sandbox-tips-card, .review-import-card,
 .modal {
-  background-image: var(--wash-panel, none), url("./textures/paper.svg");
+  background-image: var(--wash-panel, none), var(--paper, none);
   background-size: 360px 360px, 480px 480px;
-  background-blend-mode: normal, multiply;
 }
 
 /* 4. Pen rules. Title underlines are a drawn stroke (src/textures/ink-rule.svg,

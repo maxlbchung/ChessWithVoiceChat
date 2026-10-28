@@ -1,17 +1,30 @@
-// Procedural watercolor. Every call paints a fresh set of washes as inline SVG
-// data URIs and publishes them as CSS custom properties on <html>; the
-// stylesheets only ever reference the variables:
+// Procedural watercolor. Every call paints a fresh set of washes and publishes
+// them as CSS custom properties on <html>; the stylesheets only ever
+// reference the variables:
 //
 //   --wash-page                 the splotches behind the whole page
 //   --wash-primary-{1,2,3}      indigo fill swatches for primary buttons
 //   --wash-secondary-{1,2,3}    pale fill swatches for other buttons/dropdowns
 //   --wash-ring-{1,2,3}         indigo ring swatches — the selected state
 //   --wash-panel                tileable pigment mottle for plates
+//   --paper, --board-tex        the static paper and board textures
 //
 // Three swatch variants per button kind so neighbouring buttons don't share a
 // silhouette (styles.css picks one by :nth-child). The app repaints on every
-// route change (Layout.tsx); the landing page paints once per load
-// (landing/wash.ts). Pure string building — the browser does the rendering.
+// route change (Layout.tsx) — only the page splotches are regenerated per
+// route; swatches and textures are baked once per document. The landing page
+// paints once per load (landing/wash.ts).
+//
+// PERFORMANCE: the paintings are SVG filter graphs (turbulence, displacement,
+// morphology, blurs, lighting) and must never reach CSS as SVG. Chrome
+// re-runs an SVG background's filters whenever it rasterizes it — at full
+// device resolution, per element size, and again after invalidations — which
+// cost ~500ms of main thread per page-wash paint (measured: 10 long tasks of
+// 500-750ms across four route changes). Instead each SVG is rasterized ONCE
+// into a canvas (`bake`), encoded to a PNG blob, and CSS gets the blob URL —
+// a plain bitmap. The page wash bakes at a third of CSS resolution (it's
+// soft), the rest at 1x, and bakes are spread over idle callbacks so no single
+// task runs long.
 
 type Rng = () => number;
 
@@ -37,24 +50,53 @@ const PAGE_PIGMENTS = ['#6f98c2', '#cf8a80', '#e0b062', '#8fb57c', '#a99ad0', '#
 const PALE_PIGMENTS = ['#e0b062', '#cf8a80', '#8fb57c', '#d9b49a', '#c4b3d6'] as const;
 const INDIGO = ['#3d6c9a', '#45739f', '#36628f'] as const;
 
-function dataUrl(svg: string): string {
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+import paperSvg from '../textures/paper.svg?raw';
+import boardSvg from '../textures/board.svg?raw';
+
+// Give an SVG an explicit pixel size so it rasterizes at exactly the size it
+// will be drawn (otherwise it rasterizes at its intrinsic size, then scales).
+function sized(svg: string, w: number, h: number): string {
+  return svg.replace(/<svg\b[^>]*>/, (tag) =>
+    tag.replace(/\s(width|height)="[^"]*"/g, '').replace('<svg', `<svg width="${w}" height="${h}"`));
 }
+
+// Rasterize an SVG into a PNG blob URL, wrapped for CSS.
+async function bake(svg: string, w: number, h: number): Promise<string> {
+  const img = new Image();
+  img.src = `data:image/svg+xml,${encodeURIComponent(sized(svg, w, h))}`;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res));
+  if (!blob) throw new Error('watercolor: bake failed');
+  return `url("${URL.createObjectURL(blob)}")`;
+}
+
+// One bake per idle slot, so the work interleaves with input and rendering.
+function idle(): Promise<void> {
+  return new Promise((res) => {
+    if ('requestIdleCallback' in window) requestIdleCallback(() => res(), { timeout: 400 });
+    else setTimeout(res, 16);
+  });
+}
+const frame = () => new Promise<number>((res) => requestAnimationFrame(res));
 
 // The wash filter shared by every swatch: warp the shape's outline with
 // low-frequency noise, darken a rim where pigment pools as it dries, mottle
 // the body unevenly, then break it up with paper tooth (tooth = alpha slope
 // and offset of the grain mask; buttons use a lighter tooth so text stays
 // legible on them).
-function washFilter(r: Rng, id: string, warpFreq: number, warpScale: number, rim: number, tooth = [1.4, 1.45]): string {
+function washFilter(r: Rng, id: string, warpFreq: number, warpScale: number, rim: number, tooth = [1.4, 1.45], octaves = 4): string {
   return `<filter id="${id}" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="${warpFreq}" numOctaves="4" seed="${seedInt(r)}" result="warp"/>
+<feTurbulence type="fractalNoise" baseFrequency="${warpFreq}" numOctaves="${octaves}" seed="${seedInt(r)}" result="warp"/>
 <feDisplacementMap in="SourceGraphic" in2="warp" scale="${warpScale}" xChannelSelector="R" yChannelSelector="G" result="shape"/>
 <feGaussianBlur in="shape" stdDeviation="${f(warpScale * 0.015 + 0.6)}" result="crisp"/>
 <feMorphology in="shape" operator="erode" radius="${f(rim)}" result="inner"/>
 <feGaussianBlur in="inner" stdDeviation="${f(rim * 1.5)}" result="innerSoft"/>
 <feComposite in="crisp" in2="innerSoft" operator="arithmetic" k2="1" k3="-0.5" result="pooled"/>
-<feTurbulence type="fractalNoise" baseFrequency="${(warpFreq * 3).toFixed(4)}" numOctaves="3" seed="${seedInt(r)}" result="bloom"/>
+<feTurbulence type="fractalNoise" baseFrequency="${(warpFreq * 3).toFixed(4)}" numOctaves="${Math.min(octaves, 3)}" seed="${seedInt(r)}" result="bloom"/>
 <feColorMatrix in="bloom" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.8 -0.25" result="bloomMask"/>
 <feComposite in="crisp" in2="bloomMask" operator="in" result="mottle"/>
 <feComposite in="pooled" in2="mottle" operator="arithmetic" k2="1" k3="0.45" result="body"/>
@@ -105,7 +147,7 @@ function pageWash(r: Rng): string {
       shapes += `<circle cx="${f(cx + Math.cos(ang) * dist)}" cy="${f(cy + Math.sin(ang) * dist * 0.7)}" r="${f(between(r, 6, 16))}" fill="${fill}" opacity="${(op * 0.9).toFixed(2)}"/>`;
     }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice"><defs>${washFilter(r, 'p', 0.006, 200, 14)}</defs><g filter="url(#p)">${shapes}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice"><defs>${washFilter(r, 'p', 0.006, 200, 14, [1.4, 1.45], 3)}</defs><g filter="url(#p)">${shapes}</g></svg>`;
 }
 
 // Control swatches, stretched over the control with
@@ -123,28 +165,66 @@ function swatch(r: Rng, fill: string, opacity: number, shape: 'fill' | 'ring'): 
   const ix = between(r, 13, 17), iy = between(r, 12, 15);
   const inner = `M${f(ix)} ${f(iy)}H${f(W - ix)}V${f(H - iy)}H${f(ix)}Z`;
   const d = shape === 'ring' ? outer + inner : outer;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${washFilter(r, 's', 0.04, 7, shape === 'ring' ? 2.5 : 4, [0.6, 1.2])}</defs><g filter="url(#s)"><path d="${d}" fill-rule="evenodd" fill="${fill}" opacity="${opacity}"/></g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${washFilter(r, 's', 0.04, 7, shape === 'ring' ? 2.5 : 4, [0.6, 1.2], 3)}</defs><g filter="url(#s)"><path d="${d}" fill-rule="evenodd" fill="${fill}" opacity="${opacity}"/></g></svg>`;
 }
 
 // Panel ground: a seamless tile of faint pigment mottle (no outline), so a
 // plate reads as a sheet that was given a light wash.
 function panelTile(r: Rng): string {
   const [tr, tg, tb] = pick(r, [[0.25, 0.35, 0.5], [0.55, 0.38, 0.2], [0.35, 0.45, 0.3]]);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360"><filter id="m" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.009" numOctaves="3" seed="${seedInt(r)}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 ${tr} 0 0 0 0 ${tg} 0 0 0 0 ${tb} 0 0 0 0.55 -0.2"/></filter><rect width="360" height="360" filter="url(#m)"/></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360"><filter id="m" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.009" numOctaves="2" seed="${seedInt(r)}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 ${tr} 0 0 0 0 ${tg} 0 0 0 0 ${tb} 0 0 0 0.55 -0.2"/></filter><rect width="360" height="360" filter="url(#m)"/></svg>`;
 }
 
-export function paintWashes(root: HTMLElement = document.documentElement): void {
+// Bakes that happen once per document: the static paper/board textures and
+// the control/panel swatches. Rasterized at 1x — each stays under ~50ms of
+// main thread — and slotted into idle time after the first page wash.
+let onceBaked: Promise<void> | null = null;
+function bakeOnce(root: HTMLElement): Promise<void> {
+  onceBaked ??= (async () => {
+    const r = rng((Math.random() * 2 ** 32) >>> 0);
+    const set = async (name: string, svg: string, w: number, h: number) => {
+      await idle();
+      root.style.setProperty(name, await bake(svg, w, h));
+    };
+    for (let i = 1; i <= 3; i++) {
+      await set(`--wash-primary-${i}`, swatch(r, pick(r, INDIGO), 1, 'fill'), 240, 80);
+      await set(`--wash-secondary-${i}`, swatch(r, pick(r, PALE_PIGMENTS), 0.5, 'fill'), 240, 80);
+      await set(`--wash-ring-${i}`, swatch(r, pick(r, INDIGO), 0.85, 'ring'), 240, 80);
+    }
+    await set('--wash-panel', panelTile(r), 360, 360);
+    await set('--paper', paperSvg, 480, 480);
+    await set('--board-tex', boardSvg, 400, 400);
+  })();
+  return onceBaked;
+}
+
+let generation = 0;
+let liveWash: string | null = null;
+
+// Paint the page splotches — fresh on every call (every load and route
+// change). The first call also kicks off the once-per-document bakes.
+export async function paintWashes(root: HTMLElement = document.documentElement): Promise<void> {
+  const gen = ++generation;
   const r = rng((Math.random() * 2 ** 32) >>> 0);
-  const s = root.style;
-  s.setProperty('--wash-page', dataUrl(pageWash(r)));
-  for (let i = 1; i <= 3; i++) {
-    s.setProperty(`--wash-primary-${i}`, dataUrl(swatch(r, pick(r, INDIGO), 1, 'fill')));
-    s.setProperty(`--wash-secondary-${i}`, dataUrl(swatch(r, pick(r, PALE_PIGMENTS), 0.5, 'fill')));
-    s.setProperty(`--wash-ring-${i}`, dataUrl(swatch(r, pick(r, INDIGO), 0.85, 'ring')));
+  await idle();
+  if (gen !== generation) return;
+  // Third resolution: the wash is soft, and filter cost scales with pixels.
+  const scale = 0.35;
+  const wash = await bake(pageWash(r), Math.max(240, Math.round(innerWidth * scale)), Math.max(240, Math.round(innerHeight * scale)));
+  if (gen !== generation) {
+    URL.revokeObjectURL(wash.slice(5, -2));
+    return;
   }
-  s.setProperty('--wash-panel', dataUrl(panelTile(r)));
-  // Restart the fade-in on the page layer (see .wash-fresh in styles.css).
+  // Restart the fade on the page layer (.wash-fresh in styles.css): drop the
+  // class, then re-add it a frame later alongside the new image — no forced
+  // reflow.
   root.classList.remove('wash-fresh');
-  void root.offsetWidth;
+  await frame();
+  root.style.setProperty('--wash-page', wash);
   root.classList.add('wash-fresh');
+  const old = liveWash;
+  liveWash = wash.slice(5, -2);
+  // The old bitmap is only safe to drop once nothing references it.
+  if (old) setTimeout(() => URL.revokeObjectURL(old), 2000);
+  void bakeOnce(root);
 }

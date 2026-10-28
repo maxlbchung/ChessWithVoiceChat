@@ -70,8 +70,10 @@ Playwright screenshots you actually look at.
   a number (clocks, ratings, coordinates, move lists) and for tracked micro-caps
   labels. Never hardcode a font stack — and don't reintroduce a system-sans default.
   Use `--rule`/`--plate` for panel edges. `landing/landing.css` mirrors these tokens.
-  Watercolor washes are runtime CSS vars (`--wash-*`, `src/lib/watercolor.ts`) —
-  reference them with a fallback, don't hardcode wash images.
+  Watercolor washes are runtime CSS vars (`--wash-*`, `--paper`, `--board-tex`,
+  `src/lib/watercolor.ts`) — reference them with a cheap fallback. Never put an
+  SVG with filters straight into CSS, and no blend modes on big/repainting layers:
+  both caused 0.5 s stalls (rules in docs/ARCHITECTURE.md "Procedural watercolor").
 - Per-hero behavior is wired through copy-pasted `if/else` chains in multiple files
   (picker preview SFX, ability SFX, animation whitelists). When you touch one chain,
   grep for its siblings — they drift. Full map in the `add-hero` skill.

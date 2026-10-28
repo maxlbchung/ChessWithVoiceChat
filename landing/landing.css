@@ -127,24 +127,24 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  /* Same painted washes as the app (src/textures/wash.svg). */
+  /* Same procedural washes as the app (--wash-page, src/lib/watercolor.ts). */
   background:
-    var(--wash-page, url("../src/textures/wash.svg")) center / cover no-repeat,
+    var(--wash-page, none) center / cover no-repeat,
     radial-gradient(circle at 12% 8%, var(--bg-grad-1) 0%, transparent 40%),
     radial-gradient(circle at 90% 90%, var(--bg-grad-3) 0%, transparent 45%),
     radial-gradient(circle at 88% 10%, var(--bg-grad-2) 0%, transparent 35%);
   opacity: 0.85;
 }
 
-/* Paper tooth over the whole page, multiplied into the stock. */
+/* Paper tooth over the whole page, laid over the stock with plain alpha. */
 .grain {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
   opacity: 0.9;
-  mix-blend-mode: multiply;
-  background-image: url("../src/textures/paper.svg");
+  background-image: var(--paper, none);
+  background-size: 480px 480px;
 }
 
 main,
@@ -305,7 +305,7 @@ a {
   border: 1px solid var(--rule-strong);
   /* 8×8 checker: one conic tile covers a 2×2 block of squares. */
   /* Painted, not printed: the board wash texture over the checker. */
-  background-image: url("../src/textures/board.svg"), conic-gradient(
+  background-image: var(--board-tex, none), conic-gradient(
     from 90deg at 50% 50%,
     var(--sq-light) 0 25%,
     var(--sq-dark) 0 50%,
@@ -313,7 +313,6 @@ a {
     var(--sq-dark) 0
   );
   background-size: 400px 400px, 25% 25%;
-  background-blend-mode: multiply, normal;
   box-shadow: var(--shadow), 3px 4px 0 -1px rgba(52, 42, 34, 0.2);
   transform: perspective(1200px) rotateX(6deg) rotateY(-11deg) rotateZ(1.5deg);
   transform-style: preserve-3d;
@@ -585,7 +584,6 @@ body { font-variation-settings: "INFM" 35; }
 .btn-primary:hover { filter: saturate(1.2) brightness(0.96); }
 .news {
   box-shadow: var(--plate);
-  background-image: var(--wash-panel, none), url("../src/textures/paper.svg");
+  background-image: var(--wash-panel, none), var(--paper, none);
   background-size: 360px 360px, 480px 480px;
-  background-blend-mode: normal, multiply;
 }
