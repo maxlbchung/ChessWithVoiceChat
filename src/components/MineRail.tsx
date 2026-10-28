@@ -25,9 +25,7 @@ export function MineRail({ detonated, total = MINE_COUNT, flagMode, onToggleFlag
         aria-label={`${left} of ${total} mines still buried`}
       >
         {Array.from({ length: total }, (_, i) => (
-          <span key={i} className={`mine-rail-bomb${i < detonated ? ' spent' : ''}`} aria-hidden>
-            💣
-          </span>
+          <span key={i} className={`mine-rail-bomb${i < detonated ? ' spent' : ''}`} aria-hidden />
         ))}
       </div>
       {onToggleFlagMode && (

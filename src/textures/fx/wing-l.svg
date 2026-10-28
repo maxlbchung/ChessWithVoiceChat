@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80" preserveAspectRatio="none">
+  <!-- Left wing, line art: three feather rows in a sky wash with an inked
+       scalloped edge. The right wing is this mirrored (wing-r.svg). -->
+  <path d="M58 10 C40 6 18 12 4 34 C10 36 12 38 8 46 C16 46 18 50 14 58 C24 56 28 62 26 72 C40 64 52 52 58 40 Z" fill="#6fa5c6" opacity="0.45"/>
+  <path d="M58 10 C40 6 18 12 4 34 C22 30 40 26 58 24 Z" fill="#fffaf0" opacity="0.6"/>
+  <g fill="none" stroke="#2a221c" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M58 10 C40 6 18 12 4 34 C10 36 12 38 8 46 C16 46 18 50 14 58 C24 56 28 62 26 72 C40 64 52 52 58 40" stroke-width="2.6"/>
+    <path d="M56 22 C42 22 26 28 10 40 M56 32 C44 34 30 42 18 54 M56 42 C48 46 40 54 30 64" stroke-width="1.5" opacity="0.6"/>
+  </g>
+</svg>

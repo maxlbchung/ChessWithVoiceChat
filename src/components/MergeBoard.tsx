@@ -219,9 +219,10 @@ export const HOLLOW_PURPLE_DRIFT_MS = 420;
 export const HOLLOW_PURPLE_CAST_FORM_MS = 700;
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-// Warm amber for the right-click annotation arrows and square highlights.
-const ARROW_COLOR = 'rgb(255,170,0)';
-const HIGHLIGHT_COLOR = 'rgba(255,170,0,0.45)';
+// Right-click annotation arrows and square highlights: a cadmium-orange
+// pigment (watercolor theme), not the old neon amber.
+const ARROW_COLOR = 'rgb(201,122,42)';
+const HIGHLIGHT_COLOR = 'rgba(210,128,48,0.42)';
 
 type EmojiBubblePlacement = {
   sq: Square;
@@ -888,7 +889,7 @@ export function MergeBoard({
             // as such. UI elements outside the board keep the pointer/X.
             cursor: 'var(--cursor-grab)',
             boxShadow: isDragOver
-              ? 'inset 0 0 1px 6px rgba(255,255,255,0.75)'
+              ? 'inset 0 0 0 3px rgba(42,34,28,0.55)'
               : undefined,
           };
 
@@ -901,23 +902,23 @@ export function MergeBoard({
           } else if (isSelected) {
             overlay = {
               background:
-                'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+                'radial-gradient(circle, transparent 55%, rgba(42,34,28,0.5) 56%, rgba(42,34,28,0.5) 63%, transparent 64.5%)',
             };
           } else if (target) {
             if (target.isMerge) {
               overlay = {
                 background:
-                  'radial-gradient(circle, transparent 55%, rgba(80,200,120,0.55) 56%, rgba(80,200,120,0.55) 65%, transparent 66%)',
+                  'radial-gradient(circle, transparent 55%, rgba(79,138,74,0.65) 56%, rgba(79,138,74,0.65) 64%, transparent 65.5%)',
               };
             } else if (target.isCapture) {
               overlay = {
                 background:
-                  'radial-gradient(circle, transparent 55%, rgba(0,0,0,0.45) 56%, rgba(0,0,0,0.45) 65%, transparent 66%)',
+                  'radial-gradient(circle, transparent 55%, rgba(178,58,53,0.6) 56%, rgba(178,58,53,0.6) 63%, transparent 64.5%)',
               };
             } else {
               overlay = {
                 background:
-                  'radial-gradient(circle, rgba(0,0,0,0.35) 22%, transparent 24%)',
+                  'radial-gradient(circle, rgba(42,34,28,0.4) 19%, rgba(42,34,28,0.18) 23%, transparent 25%)',
               };
             }
           }
@@ -941,16 +942,18 @@ export function MergeBoard({
             >
               {isLastMove && (
                 <div
+                  className="square-wash"
                   style={{
                     position: 'absolute',
                     inset: 0,
-                    background: 'rgba(140,220,150,0.45)',
+                    background: 'rgba(212,165,42,0.42)',
                     pointerEvents: 'none',
                   }}
                 />
               )}
               {isHighlighted && (
                 <div
+                  className="square-wash"
                   style={{
                     position: 'absolute',
                     inset: 0,
@@ -981,7 +984,7 @@ export function MergeBoard({
                       style={{ fontSize: (piece ? 0.3 : 0.6) * squarePx }}
                       aria-hidden
                     >
-                      🚩
+                      <span className="sweeper-flag-icon" />
                     </div>
                   );
                 }
@@ -1373,7 +1376,7 @@ export function MergeBoard({
                 // outside the rotated wrapper so it stays upright. Black's
                 // ticks are longer so the X reaches the tile corners
                 // (~sqrt(2)/2·size - ring radius from the ring's edge).
-                const ringColor = '#c0453f';
+                const ringColor = '#a8352f';
                 const size = squarePx;
                 const isBlack = m.firedBy === 'b';
                 const tick = isBlack ? Math.max(8, size * 0.36) : Math.max(4, size * 0.18);
@@ -1395,10 +1398,12 @@ export function MergeBoard({
                         position: 'relative',
                         width: size * 0.7,
                         height: size * 0.7,
-                        borderRadius: '50%',
+                        // Watercolor target: madder wash disc, a hand-drawn
+                        // ring (wobbly radius) and a pencil offset.
+                        borderRadius: '52% 46% 50% 48% / 47% 52% 46% 53%',
                         border: `2px solid ${ringColor}`,
-                        boxShadow: `0 0 ${Math.max(2, size * 0.06)}px ${ringColor}aa`,
-                        background: 'rgba(0,0,0,0.25)',
+                        boxShadow: `2px 2px 0 -0.5px ${ringColor}66`,
+                        background: 'rgba(192, 69, 63, 0.2)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -1421,11 +1426,11 @@ export function MergeBoard({
                       </div>
                       <span
                         style={{
-                          color: '#fff',
-                          fontWeight: 700,
-                          fontSize: Math.max(11, size * 0.34),
+                          color: '#2a221c',
+                          fontFamily: 'var(--font-display)',
+                          fontWeight: 800,
+                          fontSize: Math.max(12, size * 0.38),
                           lineHeight: 1,
-                          textShadow: '0 0 3px rgba(0,0,0,0.85)',
                         }}
                       >
                         {m.pliesLeft}
@@ -1796,7 +1801,7 @@ export function MergeBoard({
                 if (!ghostCrosshair) return null;
                 if (hoverSq !== sq) return null;
                 if (missilesBySq.has(sq)) return null;
-                const ringColor = '#c0453f';
+                const ringColor = '#a8352f';
                 const size = squarePx;
                 const isBlack = ghostCrosshair.firedBy === 'b';
                 const tick = isBlack ? Math.max(8, size * 0.36) : Math.max(4, size * 0.18);
@@ -1818,10 +1823,12 @@ export function MergeBoard({
                         position: 'relative',
                         width: size * 0.7,
                         height: size * 0.7,
-                        borderRadius: '50%',
+                        // Watercolor target: madder wash disc, a hand-drawn
+                        // ring (wobbly radius) and a pencil offset.
+                        borderRadius: '52% 46% 50% 48% / 47% 52% 46% 53%',
                         border: `2px solid ${ringColor}`,
-                        boxShadow: `0 0 ${Math.max(2, size * 0.06)}px ${ringColor}aa`,
-                        background: 'rgba(0,0,0,0.25)',
+                        boxShadow: `2px 2px 0 -0.5px ${ringColor}66`,
+                        background: 'rgba(192, 69, 63, 0.2)',
                       }}
                     >
                       <div
@@ -1998,7 +2005,7 @@ export function MergeBoard({
                     strokeLinecap="round"
                     opacity={0.85}
                     markerEnd={`url(#${markerId})`}
-                    style={{ filter: `drop-shadow(0 0 3px ${color}aa)` }}
+                    style={{ filter: `drop-shadow(1.5px 1.5px 0 ${color}66)` }}
                   />
                 </g>
               );
@@ -2226,7 +2233,7 @@ function DragFloater({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.4))',
+        filter: 'drop-shadow(3px 5px 0 rgba(52,42,34,0.22))',
       }}
     >
       {slimeGoo && <span className="slime-goo slime-goo-mini" aria-hidden />}

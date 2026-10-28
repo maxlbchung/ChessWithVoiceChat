@@ -220,6 +220,17 @@ record → export → replay → snapshot → scene → canvas → WebM:
   "Watercolor effects" block in `src/styles.css` lists the masked classes; a new
   effect element should join it). Hero colors (`HERO_INFO.glowColor`) are muted
   pigments, and piece "glows" are hard off-register `drop-shadow`s with no blur.
+  The structural parts of effects are **line-art sprites** in `src/textures/fx/`
+  (ice crystal, snowflake, shards, sword blade, wings, rubble, specks, slime droplet,
+  drops, flag, bomb, star, paper shreds): sepia ink outlines over pigment washes,
+  plain paths/gradients, no filters. The "Watercolor effects: line art" block in
+  `src/styles.css` maps them onto the effect classes; emoji glyphs in the board
+  (snowflake, stun stars, sweeper flag, minefield bombs) are replaced by sprites.
+  House rule for new effects: no `0 0 <blur>` glows (box-, text- or drop-shadow) —
+  use a pigment wash, an ink line, or a hard pencil offset (`2px 3px 0`).
+  `scripts/fx-harness.tsx` (gitignored, open at `/scripts/fx-harness.html#<scene>` on
+  the dev server) renders every effect in isolation; `scripts/verify-fx.mjs` scrubs
+  each animation and screenshots frames.
   `ink-rule.svg` (the `.page-title` underline) is
   a plain SVG with no filters. Board square colors are inline in `MergeBoard.tsx`
   and mirrored in `videoRenderer.ts`.

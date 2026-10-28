@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Landmine/bomb, line art: payne's-grey wash ball with a bare-paper
+       highlight, umber fuse cap, inked outline and a gamboge spark. -->
+  <circle cx="22" cy="28" r="15" fill="#4a5262" opacity="0.4" transform="translate(1.5 1.5)"/>
+  <circle cx="22" cy="28" r="15" fill="#4a5262" opacity="0.78"/>
+  <path d="M13 22 C14 18 17 16 20 15" fill="none" stroke="#fffaf0" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  <path d="M29 12 L35 18 L32 21 L26 15 Z" fill="#8a6a48" opacity="0.85"/>
+  <circle cx="22" cy="28" r="15" fill="none" stroke="#2a221c" stroke-width="2.4"/>
+  <path d="M29 12 L35 18 L32 21 L26 15 Z" fill="none" stroke="#2a221c" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M33 14 C35 9 39 8 41 5" fill="none" stroke="#2a221c" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M41 1.5 L42.5 4.5 L46 4 L43.5 6.5 L45 9.5 L41.5 8 L39 10.5 L39.5 7 L36.5 5.5 L40 4.5 Z" fill="#d4a52a" stroke="#2a221c" stroke-width="1" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Slime droplet: sap-green wash with a paper highlight, inked edge. -->
+  <path d="M20 4 C25 14 33 20 32 28 C31 35 25 37 20 37 C14 37 8 34 8 27 C8 20 15 14 20 4 Z" fill="#78a84f" opacity="0.7"/>
+  <path d="M14 26 C14 22 16 19 18 17" fill="none" stroke="#fffaf0" stroke-width="2.4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M20 4 C25 14 33 20 32 28 C31 35 25 37 20 37 C14 37 8 34 8 27 C8 20 15 14 20 4 Z" fill="none" stroke="#2a221c" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>

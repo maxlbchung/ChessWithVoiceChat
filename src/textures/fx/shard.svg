@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 60" preserveAspectRatio="none">
+  <!-- Ice shard: cerulean wash with a paler facet, inked outline. -->
+  <path d="M20 3 L37 18 L32 56 L9 53 L3 26 Z" fill="#6fa5c6" opacity="0.55"/>
+  <path d="M20 3 L37 18 L22 30 Z" fill="#e8f1f6" opacity="0.7"/>
+  <path d="M20 3 L37 18 L32 56 L9 53 L3 26 Z M20 3 L22 30 L32 56 M22 30 L3 26" fill="none" stroke="#2a221c" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

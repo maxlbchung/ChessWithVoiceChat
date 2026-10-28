@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Frozen piece: a block of ice painted in cerulean washes (an off-register
+       bleed, a body wash, a paler upper face) with inked facets. No filters —
+       this sits over a piece for two plies and repaints with the board. -->
+  <path d="M14 22 L30 9 L66 7 L88 19 L92 58 L84 88 L46 94 L13 86 L7 50 Z" fill="#6fa5c6" opacity="0.32" transform="translate(2.5 2)"/>
+  <path d="M14 22 L30 9 L66 7 L88 19 L92 58 L84 88 L46 94 L13 86 L7 50 Z" fill="#9cc3dc" opacity="0.42"/>
+  <path d="M14 22 L30 9 L66 7 L88 19 L70 30 L34 31 Z" fill="#e8f1f6" opacity="0.55"/>
+  <path d="M88 19 L92 58 L84 88 L70 76 L70 30 Z" fill="#5d93b8" opacity="0.28"/>
+  <g fill="none" stroke="#2a221c" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 22 L30 9 L66 7 L88 19 L92 58 L84 88 L46 94 L13 86 L7 50 Z" stroke-width="2.2" opacity="0.8"/>
+    <path d="M13.2 23.4 L30.6 10.2 L65.4 8.4 L86.6 20.2 L90.8 57.4 L83 86.8 L46.4 92.6 L14.4 85 L8.6 50.6 Z" stroke-width="1" opacity="0.35"/>
+    <path d="M14 22 L34 31 L70 30 L88 19 M34 31 L30 70 L46 94 M70 30 L70 76 L84 88 M30 70 L70 76" stroke-width="1.3" opacity="0.55"/>
+    <path d="M22 18 L28 14 M76 40 L78 52 M40 84 L52 86" stroke="#fffaf0" stroke-width="2" opacity="0.8"/>
+  </g>
+</svg>

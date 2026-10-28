@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Dizzy star: gamboge wash, inked outline. -->
+  <path d="M20 3 L24.5 14.5 L37 15 L27 23 L31 36 L20 28.5 L9 36 L13 23 L3 15 L15.5 14.5 Z" fill="#d4a52a" opacity="0.8"/>
+  <path d="M20 3 L24.5 14.5 L37 15 L27 23 L31 36 L20 28.5 L9 36 L13 23 L3 15 L15.5 14.5 Z" fill="none" stroke="#2a221c" stroke-width="2.4" stroke-linejoin="round"/>
+</svg>

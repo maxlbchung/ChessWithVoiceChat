@@ -1558,9 +1558,11 @@ a { color: inherit; text-decoration: none; }
 }
 .game-result-strip .rating-delta .delta { font-size: 15px; }
 .board-wrap.viewing-history {
+  /* Reviewing past moves: an ochre wash frame with a pencil offset (was an
+     amber glow). */
   box-shadow:
-    0 0 0 3px rgba(224, 192, 138, 0.7),
-    0 0 32px 6px rgba(224, 192, 138, 0.5);
+    0 0 0 3px rgba(212, 165, 42, 0.75),
+    4px 5px 0 1px rgba(168, 100, 42, 0.3);
 }
 
 .player-card {
@@ -1590,13 +1592,15 @@ a { color: inherit; text-decoration: none; }
   color: var(--bad);
 }
 @keyframes player-card-low-pulse {
+  /* Low clock: a madder ring that bleeds outward and fades, like a wet
+     edge spreading — no blurred glow. */
   0%, 100% {
-    box-shadow: 0 4px 16px rgba(214, 139, 139, 0.2),
-                0 0 0 0 rgba(214, 139, 139, 0.35);
+    box-shadow: 2px 3px 0 -0.5px rgba(178, 58, 53, 0.25),
+                0 0 0 0 rgba(178, 58, 53, 0.35);
   }
   50% {
-    box-shadow: 0 4px 20px rgba(214, 139, 139, 0.45),
-                0 0 0 6px rgba(214, 139, 139, 0);
+    box-shadow: 3px 4px 0 -0.5px rgba(178, 58, 53, 0.4),
+                0 0 0 6px rgba(178, 58, 53, 0);
   }
 }
 .player-avatar {
@@ -2788,7 +2792,7 @@ a { color: inherit; text-decoration: none; }
   border-color: var(--hero-color);
 }
 .hero-card-row .hero-card-king.small {
-  filter: drop-shadow(0 0 8px var(--hero-color));
+  filter: drop-shadow(2px 2px 0 color-mix(in srgb, var(--hero-color) 75%, transparent));
   flex-shrink: 0;
 }
 /* flex: 1 stretches the text block to fill the remaining row width after
@@ -2872,9 +2876,7 @@ a { color: inherit; text-decoration: none; }
    uses the same hue so it pairs visually with the actual king's aura. */
 .masked-self-overlay {
   opacity: 0.4;
-  filter:
-    drop-shadow(0 0 3px var(--mask-glow, #9576db))
-    drop-shadow(0 0 8px color-mix(in srgb, var(--mask-glow, #9576db) 60%, transparent));
+  filter: drop-shadow(1.5px 1.5px 0 var(--mask-glow, #9576db));
 }
 
 /* Secret Queen owner's view: the pawn disguise renders in FRONT (the sprite),
@@ -2957,9 +2959,6 @@ a { color: inherit; text-decoration: none; }
 }
 .frozen-flake {
   color: rgba(240, 250, 255, 0.95);
-  text-shadow:
-    0 0 6px rgba(118, 179, 219, 0.9),
-    0 0 12px rgba(107, 156, 193, 0.7);
   font-weight: 700;
   pointer-events: none;
   user-select: none;
@@ -3016,9 +3015,6 @@ a { color: inherit; text-decoration: none; }
     rgba(115, 158, 195, 0.75) 100%);
   /* Jagged shard silhouette via clip-path. */
   clip-path: polygon(50% 0%, 100% 30%, 85% 100%, 25% 90%, 0% 45%);
-  filter:
-    drop-shadow(0 0 2px rgba(118, 179, 219, 0.9))
-    drop-shadow(0 0 4px rgba(107, 156, 193, 0.5));
   opacity: 0;
   animation: frost-shard-fly 620ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
   --shard-dx: 0px;
@@ -3197,8 +3193,6 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  filter: drop-shadow(0 0 0.4rem rgba(130, 184, 207, 0.95))
-    drop-shadow(0 0 1rem rgba(130, 184, 207, 0.7));
   animation: ability-flight-fly 950ms cubic-bezier(0.45, 0, 0.55, 1) forwards;
 }
 @keyframes ability-flight-fly {
@@ -3223,7 +3217,6 @@ a { color: inherit; text-decoration: none; }
     rgba(118, 172, 219, 0.55) 60%,
     rgba(130, 184, 207, 0.0) 100%
   );
-  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
   z-index: 0;
 }
 .ability-flight-wing.left {
@@ -3459,9 +3452,6 @@ a { color: inherit; text-decoration: none; }
     rgba(164, 62, 62, 0.4) 40%,
     transparent 75%
   );
-  box-shadow:
-    0 0 1rem rgba(214, 101, 101, 0.85),
-    0 0 2.4rem rgba(164, 62, 62, 0.55);
   opacity: 0;
   /* Delay aligns with the blade crossing the target at mid-swing. */
   animation: ability-warlord-impact 520ms ease-out 450ms forwards;
@@ -3564,9 +3554,6 @@ a { color: inherit; text-decoration: none; }
     rgba(107, 156, 193, 0.25) 65%,
     transparent 85%
   );
-  box-shadow:
-    0 0 1rem rgba(118, 179, 219, 0.85),
-    0 0 2.4rem rgba(107, 156, 193, 0.6);
   animation: ability-frost-burst 700ms ease-out forwards;
 }
 @keyframes ability-frost-burst {
@@ -3598,9 +3585,6 @@ a { color: inherit; text-decoration: none; }
     rgba(65, 145, 83, 0.3) 60%,
     transparent 82%
   );
-  box-shadow:
-    0 0 1rem rgba(131, 205, 145, 0.85),
-    0 0 2.4rem rgba(83, 157, 101, 0.55);
   filter: blur(1px);
   animation: ability-mutation-glow 820ms cubic-bezier(0.3, 0.7, 0.4, 1) forwards;
 }
@@ -3620,9 +3604,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.2);
   border-radius: 50%;
   border: 2px solid rgba(118, 219, 134, 0.95);
-  box-shadow:
-    0 0 0.5rem rgba(125, 211, 140, 0.85),
-    inset 0 0 0.4rem rgba(118, 219, 129, 0.5);
   animation: ability-mutation-ring 920ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
 }
 .ability-mutation-ring.r2 { animation-delay: 140ms; }
@@ -3681,9 +3662,6 @@ a { color: inherit; text-decoration: none; }
     rgba(120, 20, 10, 0.4) 78%,
     transparent 92%
   );
-  box-shadow:
-    0 0 1.2rem rgba(214, 147, 101, 0.85),
-    0 0 2.6rem rgba(184, 97, 66, 0.55);
   animation: ability-icbm-fireball 820ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
 }
 @keyframes ability-icbm-fireball {
@@ -3702,9 +3680,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.25);
   border-radius: 50%;
   border: 3px solid rgba(219, 178, 118, 0.95);
-  box-shadow:
-    0 0 0.6rem rgba(214, 159, 101, 0.85),
-    inset 0 0 0.4rem rgba(219, 182, 118, 0.5);
   animation: ability-icbm-shock 900ms cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
 }
 .ability-icbm-shock.r2 { animation-delay: 160ms; }
@@ -3727,9 +3702,6 @@ a { color: inherit; text-decoration: none; }
     rgba(201, 54, 54, 0.2) 48%,
     transparent 76%
   );
-  box-shadow:
-    0 0 0.45rem rgba(208, 77, 77, 0.9),
-    0 0 1.2rem rgba(206, 69, 69, 0.55);
   animation: explosive-aura-pulse 680ms ease-in-out infinite;
 }
 .piece-explosive-body {
@@ -3780,9 +3752,6 @@ a { color: inherit; text-decoration: none; }
   border-radius: 50%;
   background:
     radial-gradient(circle at 42% 38%, rgba(219, 212, 118, 1) 0%, rgba(213, 164, 97, 0.95) 26%, rgba(195, 71, 62, 0.88) 52%, rgba(80, 0, 0, 0.42) 78%, transparent 94%);
-  box-shadow:
-    0 0 1rem rgba(212, 105, 93, 0.95),
-    0 0 2.4rem rgba(174, 46, 46, 0.62);
   animation: ability-kamakaze-fireball 820ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
 }
 @keyframes ability-kamakaze-fireball {
@@ -3798,9 +3767,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.275);
   border-radius: 50%;
   border: 3px solid rgba(215, 116, 105, 0.95);
-  box-shadow:
-    0 0 0.6rem rgba(209, 87, 81, 0.9),
-    inset 0 0 0.4rem rgba(219, 155, 118, 0.55);
   animation: ability-kamakaze-shock 760ms cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
 }
 .ability-kamakaze-shock.r2 { animation-delay: 110ms; }
@@ -4103,9 +4069,6 @@ a { color: inherit; text-decoration: none; }
   border-radius: 50%;
   background:
     radial-gradient(circle at 46% 40%, rgba(219, 213, 118, 1) 0%, rgba(212, 166, 91, 0.96) 24%, rgba(186, 85, 58, 0.9) 54%, rgba(70, 22, 8, 0.5) 78%, transparent 94%);
-  box-shadow:
-    0 0 1rem rgba(210, 126, 85, 0.9),
-    0 0 2.6rem rgba(150, 63, 40, 0.55);
   animation: ability-mine-fireball 760ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
 }
 @keyframes ability-mine-fireball {
@@ -4121,7 +4084,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.5);
   border-radius: 50%;
   border: 4px solid rgba(219, 181, 118, 0.9);
-  box-shadow: 0 0 0.9rem rgba(214, 159, 101, 0.6);
   animation: ability-mine-shock 820ms cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
 }
 .ability-mine-shock.r2 { animation-delay: 140ms; }
@@ -4137,7 +4099,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.065);
   border-radius: 2px;
   background: linear-gradient(160deg, #604b3b, #2c1a10);
-  box-shadow: 0 0 0.3rem rgba(214, 153, 101, 0.5);
   animation: ability-mine-debris 780ms cubic-bezier(0.15, 0.6, 0.35, 1) var(--delay, 0ms) forwards;
 }
 @keyframes ability-mine-debris {
@@ -4359,7 +4320,6 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   /* Counterweight for the bright glow around white kings so they read well
      against the green primary button. Black kings get a subtle outline. */
-  filter: drop-shadow(0 0 1px rgba(60, 45, 30, 0.248));
 }
 .sandbox-king-label {
   display: inline-flex;
@@ -4608,9 +4568,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.25);
   border-radius: 50%;
   border: 2px solid rgba(150, 219, 118, 0.9);
-  box-shadow:
-    0 0 0.6rem rgba(136, 192, 112, 0.8),
-    inset 0 0 0.5rem rgba(154, 219, 118, 0.5);
   animation: slime-burst-ring 760ms cubic-bezier(0.25, 0.7, 0.4, 1) forwards;
 }
 .ability-slime-expand .slime-burst.r2 { animation-delay: 120ms; }
@@ -4661,7 +4618,6 @@ a { color: inherit; text-decoration: none; }
     rgba(155, 219, 118, 0.95) 0%,
     rgba(136, 192, 112, 0.9) 50%,
     rgba(77, 133, 77, 0.85) 100%);
-  filter: drop-shadow(0 0 3px rgba(136, 192, 112, 0.8));
   opacity: 0;
   animation: slime-drop-fly 640ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
   --drop-dx: 0px;
@@ -4700,7 +4656,6 @@ a { color: inherit; text-decoration: none; }
   box-sizing: border-box;
 }
 .jug-pip.filled {
-  box-shadow: 0 0 4px rgba(193, 144, 94, 0.85);
 }
 
 /* Quake-leap stun — dizzy stars orbiting above the piece's head, plus a
@@ -4768,9 +4723,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.3);
   border-radius: 50%;
   border: 3px solid rgba(159, 137, 104, 0.9);
-  box-shadow:
-    0 0 0.6rem rgba(125, 106, 75, 0.8),
-    inset 0 0 0.5rem rgba(197, 177, 139, 0.5);
   animation: jug-shock-ring 820ms cubic-bezier(0.25, 0.7, 0.4, 1) both;
 }
 .ability-juggernaut .jug-shock.r2 { animation-delay: 140ms; }
@@ -4862,9 +4814,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.45);
   border-width: 4px;
   border-color: rgba(177, 153, 115, 0.95);
-  box-shadow:
-    0 0 1rem rgba(157, 126, 83, 0.85),
-    inset 0 0 0.7rem rgba(207, 181, 130, 0.6);
   animation: jug-slam-shock-ring 980ms cubic-bezier(0.2, 0.7, 0.35, 1) both;
 }
 .ability-jug-slam .jug-shock.r3 {
@@ -5009,7 +4958,6 @@ a { color: inherit; text-decoration: none; }
   transform: translate(-50%, -50%) rotate(45deg);
   border-top: 2.5px solid rgba(188, 118, 219, 1);
   border-right: 2.5px solid rgba(188, 118, 219, 1);
-  filter: drop-shadow(0 0 3px rgba(164, 84, 209, 0.9));
   animation: hp-chevron-nudge 900ms ease-in-out infinite;
 }
 @keyframes hp-chevron-nudge {
@@ -5026,9 +4974,6 @@ a { color: inherit; text-decoration: none; }
     radial-gradient(circle at 34% 30%, rgba(188, 118, 219, 0.9) 0%, transparent 42%),
     radial-gradient(circle at 68% 72%, rgba(74, 37, 123, 0.85) 0%, transparent 55%),
     radial-gradient(circle, rgba(174, 101, 214, 0.98) 0%, rgba(98, 50, 150, 0.95) 62%, rgba(40, 6, 80, 0.92) 100%);
-  box-shadow:
-    0 0 0.5rem rgba(164, 84, 209, 0.9),
-    inset 0 0 0.35rem rgba(219, 118, 219, 0.45);
   animation: hp-orb-churn 2200ms linear infinite;
 }
 @keyframes hp-orb-churn {
@@ -5131,7 +5076,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.225);
   border-radius: 50%;
   border: 3px solid rgba(184, 118, 219, 0.95);
-  box-shadow: 0 0 0.7rem rgba(164, 84, 209, 0.95);
   animation: gojo-ring 700ms cubic-bezier(0.2, 0.7, 0.4, 1) both;
 }
 .ability-gojo-blast .gojo-shred {
@@ -5240,9 +5184,6 @@ a { color: inherit; text-decoration: none; }
   margin-top: calc(var(--size) * -0.25);
   border-radius: 50%;
   border: 3px solid rgba(183, 118, 219, 0.95);
-  box-shadow:
-    0 0 0.6rem rgba(164, 84, 209, 0.9),
-    inset 0 0 0.4rem rgba(185, 118, 219, 0.55);
   animation: gojo-ring 820ms cubic-bezier(0.2, 0.7, 0.4, 1) 740ms both;
 }
 .ability-gojo .gojo-ring.r2 { animation-delay: 880ms; }
@@ -5267,7 +5208,7 @@ a { color: inherit; text-decoration: none; }
 .explosive-aura, .ability-kamakaze-flash, .ability-kamakaze-fireball,
 .ability-kamakaze-smoke, .ability-mine-flash, .ability-mine-fireball,
 .ability-mine-smoke, .ability-slime-split .slime-drop,
-.ability-jug-absorb .jug-dust, .ability-jug-slam .jug-slam-flash,
+.ability-jug-absorb .jug-dust, .ability-jug-slam .jug-dust, .ability-jug-slam .jug-slam-flash,
 .hollow-purple-marker .hp-halo, .hollow-purple-marker .hp-orb,
 .ability-gojo-blast .gojo-blast-flash, .ability-gojo-blast .gojo-blast-void,
 .ability-gojo .gojo-collapse, .ability-gojo .gojo-flash, .ability-gojo .gojo-mote,
@@ -5283,8 +5224,8 @@ a { color: inherit; text-decoration: none; }
 }
 .ability-mutation-ring, .ability-icbm-shock, .ability-kamakaze-shock,
 .ability-mine-shock, .ability-slime-expand .slime-burst,
-.ability-jug-absorb .jug-shock, .ability-gojo-blast .gojo-blast-ring,
-.ability-gojo .gojo-ring {
+.ability-jug-absorb .jug-shock, .ability-jug-slam .jug-shock,
+.ability-gojo-blast .gojo-blast-ring, .ability-gojo .gojo-ring {
   -webkit-mask-image: var(--blot-2, radial-gradient(circle, #000 60%, transparent 75%));
   mask-image: var(--blot-2, radial-gradient(circle, #000 60%, transparent 75%));
   -webkit-mask-size: 140% 140%;
@@ -5302,6 +5243,332 @@ a { color: inherit; text-decoration: none; }
 .ability-icbm-shock, .ability-gojo .gojo-ring {
   -webkit-mask-image: var(--blot-3, radial-gradient(circle, #000 60%, transparent 75%));
   mask-image: var(--blot-3, radial-gradient(circle, #000 60%, transparent 75%));
+}
+
+/* ---------- Watercolor effects: line art ----------
+   The structural parts of each effect, redrawn as sepia ink over pigment
+   washes. Sprites live in src/textures/fx/ — plain SVG paths, no filters
+   (they repaint with the board; see "Procedural watercolor" in
+   docs/ARCHITECTURE.md). Keyframes are untouched: only the look changes. */
+:root { --fx-ink: #2a221c; }
+
+/* Frost — the frozen piece sits in an inked ice crystal; the old glyph is
+   swapped for a small inked snowflake in the corner so the piece itself
+   stays readable through the ice. */
+.frozen-overlay {
+  background: url("./textures/fx/ice.svg") center / 92% 92% no-repeat;
+  box-shadow: none;
+}
+.frozen-flake {
+  position: absolute;
+  top: 3%;
+  right: 3%;
+  width: 34%;
+  height: 34%;
+  font-size: 0 !important;
+  color: transparent;
+  background: url("./textures/fx/snowflake.svg") center / contain no-repeat;
+}
+.frozen-cracks {
+  inset: 4%;
+  width: 92%;
+  height: 92%;
+  /* The ice.svg outline, pulled ~6% toward the centre so cracks stop just
+     inside the ink line instead of crossing it. */
+  clip-path: polygon(16.2% 23.7%, 31.2% 11.5%, 65% 9.6%, 85.7% 20.9%, 89.5% 57.5%, 82% 85.7%, 46.2% 91.4%, 15.2% 83.8%, 9.6% 50%);
+}
+.frozen-cracks .crack-main { stroke: var(--fx-ink); stroke-opacity: 0.85; stroke-width: 1.4; }
+.frozen-cracks .crack-sub { stroke: var(--fx-ink); stroke-opacity: 0.65; }
+.frozen-cracks .crack-twig { stroke: var(--fx-ink); stroke-opacity: 0.5; }
+.frozen-cracks .crack-chip { fill: var(--fx-ink); fill-opacity: 0.7; }
+.frozen-cracks .crack-highlight { stroke: #fffaf0; stroke-opacity: 0.8; stroke-width: 0.8; }
+.ability-frost-burst {
+  background: radial-gradient(circle, rgba(111, 165, 198, 0.85) 0%, rgba(111, 165, 198, 0.6) 45%, rgba(63, 120, 173, 0.35) 70%, transparent 82%);
+}
+.ability-frost-burst::after {
+  content: "";
+  position: absolute;
+  inset: 22%;
+  background: url("./textures/fx/snowflake.svg") center / contain no-repeat;
+}
+.ability-frost-shatter .frost-flash {
+  background: radial-gradient(circle, rgba(111, 165, 198, 0.75) 0%, rgba(111, 165, 198, 0.45) 40%, transparent 72%);
+}
+.ability-frost-shatter .frost-shard {
+  width: calc(var(--size) * 0.26);
+  height: calc(var(--size) * 0.34);
+  margin-left: calc(var(--size) * -0.13);
+  margin-top: calc(var(--size) * -0.17);
+  background: url("./textures/fx/shard.svg") center / 100% 100% no-repeat;
+  clip-path: none;
+  filter: none;
+}
+
+/* Warlord — the sword is line art: a steel-wash blade sprite and ochre /
+   umber guard, grip and pommel, each with its own ink edge (replacing the
+   cartoon four-way black drop-shadow outline). The strike lands as a madder
+   splash with a dry brush slash through it. */
+.ability-warlord-sword {
+  filter: drop-shadow(2px 3px 0 rgba(52, 42, 34, 0.18));
+}
+.ak-blade {
+  background: url("./textures/fx/blade.svg") center / 100% 100% no-repeat;
+  clip-path: none;
+}
+.ak-crossguard, .ak-pommel {
+  background: #c9a15a;
+  border: 1.5px solid var(--fx-ink);
+  box-sizing: border-box;
+}
+.ak-crossguard { border-radius: var(--sketch-radius-sm); }
+.ak-grip {
+  background: #6b4a30;
+  border: 1.5px solid var(--fx-ink);
+  box-sizing: border-box;
+}
+.ability-warlord-impact {
+  background: radial-gradient(circle, rgba(178, 58, 53, 0.8) 0%, rgba(178, 58, 53, 0.55) 40%, rgba(150, 45, 40, 0.3) 66%, transparent 80%);
+}
+.ability-warlord-impact::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 46%;
+  height: 9%;
+  transform: rotate(-38deg);
+  background: linear-gradient(90deg, transparent, rgba(42, 34, 28, 0.85) 18%, rgba(42, 34, 28, 0.9) 70%, transparent);
+  border-radius: 50% 30% 50% 30%;
+}
+
+/* Flight — inked, feathered wings in a sky wash (sprites), no light trail. */
+.ability-flight-wing {
+  background: url("./textures/fx/wing-l.svg") center / 100% 100% no-repeat;
+  clip-path: none;
+  filter: none;
+  width: 56%;
+}
+.ability-flight-wing.left { left: -26%; }
+.ability-flight-wing.right {
+  right: -26%;
+  background-image: url("./textures/fx/wing-r.svg");
+}
+
+/* Necromancer — the grave is an umber wash with a darker pooled lip, the
+   dust is flicked paint, and the summoning aura a dioxazine wash. */
+.ability-necro-mound {
+  background: radial-gradient(ellipse at 50% 40%, rgba(94, 70, 48, 0.85) 0%, rgba(107, 82, 63, 0.75) 45%, rgba(60, 44, 30, 0.9) 70%, transparent 74%);
+  box-shadow: none;
+  filter: none;
+}
+.ability-necro-dust {
+  background: url("./textures/fx/speck.svg") center / contain no-repeat;
+  filter: none;
+}
+.ability-necro-glow {
+  background: radial-gradient(circle, rgba(125, 90, 168, 0.55) 0%, rgba(125, 90, 168, 0.35) 45%, transparent 72%);
+  filter: none;
+}
+
+/* Mutation — a sap-green bloom with dry-brush rings in a deeper green. */
+.ability-mutation-glow {
+  background: radial-gradient(circle, rgba(120, 168, 79, 0.75) 0%, rgba(63, 138, 90, 0.55) 40%, rgba(63, 138, 90, 0.25) 66%, transparent 80%);
+  filter: none;
+}
+.ability-mutation-ring {
+  border-color: rgba(47, 110, 70, 0.9);
+}
+
+/* Explosions (ICBM, Kamakaze, Chesssweeper mines) — painted, not lit: a
+   gamboge bloom instead of a white-hot flash, fireballs graded gamboge →
+   cadmium → vermilion → burnt umber, sienna/madder dry-brush shock rings,
+   umber smoke washes, and debris as inked rubble. All masked by blots
+   (the mask block above). */
+.ability-icbm-flash, .ability-kamakaze-flash, .ability-mine-flash {
+  background: radial-gradient(circle, rgba(212, 165, 42, 0.8) 0%, rgba(210, 117, 48, 0.55) 35%, rgba(196, 69, 47, 0.25) 60%, transparent 76%);
+  filter: none;
+}
+.ability-icbm-fireball, .ability-kamakaze-fireball, .ability-mine-fireball {
+  background: radial-gradient(circle at 46% 42%, rgba(212, 165, 42, 0.92) 0%, rgba(210, 117, 48, 0.88) 28%, rgba(196, 69, 47, 0.82) 52%, rgba(94, 62, 40, 0.55) 72%, transparent 86%);
+  box-shadow: none;
+}
+.ability-mine-fireball {
+  background: radial-gradient(circle at 46% 42%, rgba(196, 140, 60, 0.9) 0%, rgba(160, 100, 50, 0.85) 30%, rgba(110, 72, 44, 0.8) 55%, rgba(60, 44, 30, 0.5) 74%, transparent 88%);
+}
+.ability-icbm-shock, .ability-mine-shock { border-color: rgba(168, 100, 42, 0.9); box-shadow: none; }
+.ability-kamakaze-shock { border-color: rgba(178, 58, 53, 0.9); box-shadow: none; }
+.ability-kamakaze-smoke, .ability-mine-smoke {
+  background: radial-gradient(circle, rgba(94, 82, 72, 0.55) 0%, rgba(94, 82, 72, 0.32) 50%, transparent 76%);
+  filter: none;
+}
+.ability-mine-debris {
+  width: calc(var(--size) * 0.2);
+  height: calc(var(--size) * 0.18);
+  margin-left: calc(var(--size) * -0.1);
+  margin-top: calc(var(--size) * -0.09);
+  border-radius: 0;
+  background: url("./textures/fx/rock.svg") center / 100% 100% no-repeat;
+  box-shadow: none;
+}
+/* Kamakaze-armed piece: a pulsing vermilion wash behind it. */
+.explosive-aura {
+  background: radial-gradient(circle, rgba(196, 69, 47, 0.55) 0%, rgba(196, 69, 47, 0.3) 50%, transparent 72%);
+}
+/* Spent mine: a burnt-umber scorch wash with a darker pooled centre. */
+.sweeper-crater {
+  background: radial-gradient(circle at 50% 52%, rgba(60, 44, 30, 0.6) 0%, rgba(94, 62, 40, 0.42) 32%, rgba(120, 90, 60, 0.2) 56%, transparent 72%);
+  -webkit-mask-image: var(--blot-2, none);
+  mask-image: var(--blot-2, none);
+  -webkit-mask-size: 110% 110%;
+  mask-size: 110% 110%;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* Slime — each slime king sits inside a droplet of green water
+   (src/textures/fx/slime-ball.svg): translucent body, pigment settling to
+   the bottom, pooled rim, ink outline, bare-paper highlights. The goo layer
+   paints in front of the king, so the king reads as inside the water. The
+   wobble is transform-only (the sprite isn't clipped by border-radius). */
+.slime-goo {
+  inset: 0;
+  border-radius: 0;
+  background: url("./textures/fx/slime-ball.svg") center / 100% 100% no-repeat;
+  box-shadow: none;
+  animation: slime-drop-wobble 2600ms ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+.slime-goo-mini { inset: -2%; }
+.slime-goo-big { inset: -1%; }
+@keyframes slime-drop-wobble {
+  0%, 100% { transform: scale(1, 1); }
+  25%      { transform: scale(1.03, 0.97); }
+  50%      { transform: scale(0.98, 1.025); }
+  75%      { transform: scale(1.015, 0.99); }
+}
+.ability-slime-split .slime-splat {
+  background: radial-gradient(circle, rgba(120, 168, 79, 0.75) 0%, rgba(120, 168, 79, 0.45) 45%, rgba(63, 120, 60, 0.3) 66%, transparent 76%);
+}
+.ability-slime-split .slime-drop {
+  background: url("./textures/fx/drop.svg") center / 100% 100% no-repeat;
+  border-radius: 0;
+  filter: none;
+}
+.ability-slime-expand .slime-burst { border-color: rgba(63, 120, 60, 0.85); }
+
+/* Juggernaut — inked tier pips, gamboge star sprites for the stun orbit,
+   inked rubble, raw-umber dust washes, an ochre slam bloom, and the quake
+   tile's haze as a sienna wash with a ragged edge. */
+.jug-pip { border: 1.5px solid var(--fx-ink); }
+.stun-star {
+  width: 15px;
+  height: 15px;
+  font-size: 0;
+  color: transparent;
+  text-shadow: none;
+  background: url("./textures/fx/star.svg") center / contain no-repeat;
+}
+.ability-jug-absorb .jug-rubble, .ability-jug-slam .jug-rubble {
+  width: calc(var(--size) * 0.18);
+  height: calc(var(--size) * 0.16);
+  border-radius: 0;
+  background: url("./textures/fx/rock.svg") center / 100% 100% no-repeat;
+}
+.ability-jug-absorb .jug-dust, .ability-jug-slam .jug-dust {
+  background: radial-gradient(circle, rgba(140, 112, 80, 0.5) 0%, rgba(140, 112, 80, 0.28) 48%, transparent 74%);
+}
+.ability-jug-slam .jug-slam-flash {
+  background: radial-gradient(circle, rgba(212, 165, 42, 0.7) 0%, rgba(168, 120, 60, 0.5) 32%, rgba(140, 100, 60, 0.22) 58%, transparent 74%);
+  filter: none;
+}
+.ability-jug-slam .jug-shock, .ability-jug-absorb .jug-shock { border-color: rgba(140, 100, 60, 0.9); }
+.earthquake-marker rect { fill: rgba(150, 110, 70, 0.32); }
+.earthquake-marker {
+  -webkit-mask-image: var(--blot-3, none);
+  mask-image: var(--blot-3, none);
+  -webkit-mask-size: 135% 135%;
+  mask-size: 135% 135%;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* Gojo — torn violet paper scraps instead of glowing shrapnel; motes and
+   the trail lose their blur; the orb keeps a bare-paper highlight (the
+   watercolor way to show light: leave the paper unpainted). */
+.ability-gojo-blast .gojo-shred {
+  width: calc(var(--size) * 0.16);
+  height: calc(var(--size) * 0.12);
+  border-radius: 0;
+  background: url("./textures/fx/shred.svg") center / 100% 100% no-repeat;
+}
+.ability-gojo .gojo-mote, .hollow-purple-marker .hp-trail { filter: none; }
+.hollow-purple-marker .hp-core {
+  background: radial-gradient(circle, #fffaf0 0%, rgba(255, 250, 240, 0.7) 40%, transparent 75%);
+}
+
+/* Board marks shared by every mode — painted, not printed. */
+/* Last-move and right-click highlights: a pigment wash with a ragged blot
+   edge rather than a flat filled square. */
+.square-wash {
+  -webkit-mask-image: var(--blot-1, none);
+  mask-image: var(--blot-1, none);
+  -webkit-mask-size: 118% 118%;
+  mask-size: 118% 118%;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+/* Chesssweeper: an inked flag sprite instead of the emoji; the minefield
+   panel's bombs are inked line art too (spent ones still flatten to a grey
+   silhouette via the filter above). */
+.sweeper-flag-icon {
+  display: block;
+  width: 0.85em;
+  height: 1em;
+  background: url("./textures/fx/flag.svg") center / contain no-repeat;
+}
+.sweeper-flag { filter: none; }
+.mine-rail-bomb {
+  display: inline-block;
+  width: 1.45rem;
+  height: 1.45rem;
+  background: url("./textures/fx/bomb.svg") center / contain no-repeat;
+  filter: drop-shadow(1.5px 1.5px 0 rgba(52, 42, 34, 0.18));
+}
+.mine-rail-bomb.spent { filter: grayscale(1) brightness(0.55); }
+/* Secret Queen pick phase: hand-drawn brush rings. */
+.secret-pick-ring {
+  border-width: 2.5px;
+  border-color: rgba(63, 138, 90, 0.9);
+  border-radius: 52% 46% 50% 48% / 47% 52% 46% 53%;
+  box-shadow: 2px 2px 0 -0.5px rgba(63, 138, 90, 0.35);
+}
+.secret-pick-ring.picked {
+  border-color: rgba(42, 34, 28, 0.6);
+  box-shadow: 2px 2px 0 -0.5px rgba(42, 34, 28, 0.25);
+}
+
+/* In-game emoji reactions: an inked speech bubble on paper (hand-drawn
+   corners, pencil offset) instead of a glossy white chip. The tail is drawn
+   in the same paper + ink and sits under the bubble, so the bubble's border
+   covers the seam. */
+.king-emoji-bubble {
+  --bubble-bg: #fffaf0;
+  --bubble-border: var(--fx-ink);
+  border-width: 1.5px;
+  border-radius: var(--sketch-radius-sm);
+  box-shadow: 2px 3px 0 -0.5px rgba(52, 42, 34, 0.2);
+  filter: none;
+}
+.king-emoji-tail polygon {
+  fill: #fffaf0;
+  stroke: var(--fx-ink);
+  stroke-width: 1.5;
 }
 
 /* ===== Video editor (DEV-only tool) ===================================== */

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 48">
+  <!-- Minesweeper flag, line art: madder wash pennant on an inked stick. -->
+  <path d="M12 6 C20 3 26 10 35 7 L32 15 L35 24 C26 27 20 20 12 23 Z" fill="#b8463e" opacity="0.4" transform="translate(1.5 1.5)"/>
+  <path d="M12 6 C20 3 26 10 35 7 L32 15 L35 24 C26 27 20 20 12 23 Z" fill="#c4452f" opacity="0.75"/>
+  <path d="M12 6 C20 3 26 10 35 7 L32 15 L35 24 C26 27 20 20 12 23" fill="none" stroke="#2a221c" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M11 4 L12.5 45 M5 45 C10 43 16 43 21 45" fill="none" stroke="#2a221c" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

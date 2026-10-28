@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 36" preserveAspectRatio="none">
+  <!-- Rubble chip: raw-umber wash, darker underside, inked outline. -->
+  <path d="M6 12 L18 3 L33 7 L38 22 L28 33 L9 31 L2 21 Z" fill="#9a7650" opacity="0.7"/>
+  <path d="M38 22 L28 33 L9 31 L16 20 Z" fill="#5e4630" opacity="0.5"/>
+  <path d="M6 12 L18 3 L33 7 L38 22 L28 33 L9 31 L2 21 Z M16 20 L33 7 M16 20 L9 31" fill="none" stroke="#2a221c" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

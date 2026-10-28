@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Paint flick: a main ink-and-umber dab with a couple of satellite drops. -->
+  <path d="M14 15 C18 9 27 11 27 18 C28 25 20 29 15 25 C11 23 11 18 14 15 Z" fill="#6b5240" opacity="0.75"/>
+  <path d="M14 15 C18 9 27 11 27 18 C28 25 20 29 15 25 C11 23 11 18 14 15 Z" fill="none" stroke="#2a221c" stroke-width="2"/>
+  <circle cx="32" cy="9" r="3" fill="#2a221c" opacity="0.8"/>
+  <circle cx="7" cy="31" r="2.2" fill="#2a221c" opacity="0.7"/>
+  <circle cx="31" cy="31" r="1.6" fill="#2a221c" opacity="0.6"/>
+</svg>

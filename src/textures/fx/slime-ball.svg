@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Slime ball: a droplet of sap-green water painted over the slime king.
+       Translucent body (the king shows through, tinted), pigment settling to
+       the bottom, a darker pooled rim, an ink outline, and highlights left as
+       bare paper, the watercolor way to paint light. A small puddle wash
+       grounds it. Plain gradients and paths only: no filters. -->
+  <defs>
+    <radialGradient id="body" cx="0.42" cy="0.36" r="0.68">
+      <stop offset="0" stop-color="#c6dc9a" stop-opacity="0.32"/>
+      <stop offset="0.55" stop-color="#8fbb62" stop-opacity="0.42"/>
+      <stop offset="0.86" stop-color="#5d9447" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3f7a3c" stop-opacity="0.7"/>
+    </radialGradient>
+    <linearGradient id="settle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.45" stop-color="#3f7a3c" stop-opacity="0"/>
+      <stop offset="1" stop-color="#2f6a34" stop-opacity="0.35"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="51" cy="92" rx="36" ry="6" fill="#5d9447" opacity="0.28"/>
+  <path id="drop" d="M50 7 C74 7 93 25 93 51 C93 75 75 92 50 92 C25 92 7 76 7 51 C7 26 26 7 50 7 Z" fill="url(#body)"/>
+  <path d="M50 7 C74 7 93 25 93 51 C93 75 75 92 50 92 C25 92 7 76 7 51 C7 26 26 7 50 7 Z" fill="url(#settle)"/>
+  <path d="M50 7 C74 7 93 25 93 51 C93 75 75 92 50 92 C25 92 7 76 7 51 C7 26 26 7 50 7 Z" fill="none" stroke="#3f7a3c" stroke-width="5" stroke-opacity="0.4"/>
+  <path d="M22 70 C30 84 50 88 66 84" fill="none" stroke="#dcebc0" stroke-width="3.5" stroke-linecap="round" stroke-opacity="0.75"/>
+  <path d="M24 34 C28 22 38 15 50 14" fill="none" stroke="#fffaf0" stroke-width="6" stroke-linecap="round" stroke-opacity="0.9"/>
+  <ellipse cx="25" cy="44" rx="3.2" ry="4.6" fill="#fffaf0" opacity="0.85"/>
+  <path d="M50 7 C74 7 93 25 93 51 C93 75 75 92 50 92 C25 92 7 76 7 51 C7 26 26 7 50 7 Z" fill="none" stroke="#2a221c" stroke-width="2.2" stroke-opacity="0.85"/>
+  <path d="M51.5 8.5 C74 9.5 91 27 91.2 51.5 C90.6 74 73.5 90 49 90.6" fill="none" stroke="#2a221c" stroke-width="1" stroke-opacity="0.4"/>
+</svg>

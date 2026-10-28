@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 30" preserveAspectRatio="none">
+  <!-- Torn scrap of violet-washed paper with an inked, ragged edge. -->
+  <path d="M3 8 L12 3 L18 7 L27 2 L37 9 L33 16 L38 24 L24 28 L15 25 L6 27 L8 17 Z" fill="#8a55c4" opacity="0.6"/>
+  <path d="M3 8 L12 3 L18 7 L27 2 L37 9 L33 16 L38 24 L24 28 L15 25 L6 27 L8 17 Z" fill="none" stroke="#2a221c" stroke-width="2" stroke-linejoin="round"/>
+</svg>

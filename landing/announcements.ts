@@ -35,6 +35,12 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     date: '2026-10-28',
     kind: 'update',
+    title: 'Every effect, hand-drawn',
+    body: 'All the board effects are now ink-and-watercolor: frozen pieces sit in a sketched ice crystal, the Warlord swings an inked sword, slime kings float in a droplet of green water, explosions bloom in paint, and the Chesssweeper flags, move hints and highlights are painted to match.',
+  },
+  {
+    date: '2026-10-28',
+    kind: 'update',
     title: 'Heroes in watercolor',
     body: 'Hero auras are now splashes of paint under each king, in a pigment for every hero, and the ability effects — frost, explosions, Hollow Purple and the rest — burst as watercolor instead of glowing light.',
   },

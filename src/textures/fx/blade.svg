@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 100" preserveAspectRatio="none">
+  <!-- Sword blade, line art: grey-blue steel wash, a paper highlight down one
+       side of the fuller, inked outline. Stretched to the blade length. -->
+  <path d="M10 1.5 L18.5 10 L18.5 99 L1.5 99 L1.5 10 Z" fill="#8a9cb0" opacity="0.55"/>
+  <path d="M10 1.5 L10 99 L1.5 99 L1.5 10 Z" fill="#fffaf0" opacity="0.55"/>
+  <path d="M10 1.5 L18.5 10 L18.5 99 L1.5 99 L1.5 10 Z" fill="none" stroke="#2a221c" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+  <path d="M10 14 L10 92" fill="none" stroke="#2a221c" stroke-width="1.2" opacity="0.6" vector-effect="non-scaling-stroke"/>
+</svg>
