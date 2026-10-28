@@ -214,7 +214,13 @@ record → export → replay → snapshot → scene → canvas → WebM:
   `--paper` (cold-press paper from `src/textures/paper.svg`: lit tooth + pulp
   cloudiness + fibres, as sepia-with-alpha; `body::after`, landing `.grain`, every
   plate) and `--board-tex` (`src/textures/board.svg`, `.board-wrap::after`, z 4 —
-  under the start/finish overlays). `ink-rule.svg` (the `.page-title` underline) is
+  under the start/finish overlays), and `--blot-{1,2,3}` (watercolor splash shapes
+  used only as CSS **masks**: hero auras and every hero/minefield burst, flash, orb
+  and ring are masked by a blot so their gradients land as paint splashes — the
+  "Watercolor effects" block in `src/styles.css` lists the masked classes; a new
+  effect element should join it). Hero colors (`HERO_INFO.glowColor`) are muted
+  pigments, and piece "glows" are hard off-register `drop-shadow`s with no blur.
+  `ink-rule.svg` (the `.page-title` underline) is
   a plain SVG with no filters. Board square colors are inline in `MergeBoard.tsx`
   and mirrored in `videoRenderer.ts`.
 

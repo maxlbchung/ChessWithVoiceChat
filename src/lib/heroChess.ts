@@ -134,7 +134,10 @@ export type HeroInfo = {
   kind: HeroKind;
   name: string;
   blurb: string;
-  // Hex colour used for the king's glow.
+  // Hex colour of the hero's watercolor pigment: the king's aura wash, the
+  // off-register edge on the king, and the hero's accent in the picker and
+  // ability panel. Muted paint tones, not neon — see "Watercolor effects"
+  // in styles.css.
   glowColor: string;
   // Cooldown in *turns*. A "turn" is one of your own moves; we convert to
   // plies internally by multiplying by 2. `null` = one-shot ability.
@@ -149,28 +152,28 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     kind: 'frost',
     name: 'Frost',
     blurb: 'Freeze a piece for two of the opponent’s moves — can’t be captured or moved.',
-    glowColor: '#2b6fb0',
+    glowColor: '#3f78ad',
     cooldownTurns: 2,
   },
   warlord: {
     kind: 'warlord',
     name: 'Warlord',
     blurb: 'Destroy an enemy piece adjacent to your king without moving. Starts with an extra row of pawns but no queen.',
-    glowColor: '#c41e1e',
+    glowColor: '#b23a35',
     cooldownTurns: 1,
   },
   necromancer: {
     kind: 'necromancer',
     name: 'Necromancer',
     blurb: 'Spawn a pawn on an empty square next to your king.',
-    glowColor: '#9b4dca',
+    glowColor: '#7d5aa8',
     cooldownTurns: 3,
   },
   flight: {
     kind: 'flight',
     name: 'Flight',
     blurb: 'Fly one of your pieces to any empty square. Pawns landing on the back rank promote.',
-    glowColor: '#87ceeb',
+    glowColor: '#6fa5c6',
     cooldownTurns: 5,
   },
   harem: {
@@ -178,21 +181,21 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     name: 'Harem',
     // Passive — no active ability. Cooldown shown as "passive" in the picker.
     blurb: 'No active ability. Your bishops and rooks start as queens.',
-    glowColor: '#ff4fa3',
+    glowColor: '#cc5f82',
     cooldownTurns: null,
   },
   mutation: {
     kind: 'mutation',
     name: 'Mutation',
     blurb: 'Mutate a bishop / rook / queen to also move like a knight. Promotions can fuse with a knight too.',
-    glowColor: '#1f7a44',
+    glowColor: '#3f8a5a',
     cooldownTurns: 5,
   },
   icbm: {
     kind: 'icbm',
     name: 'ICBM',
     blurb: 'Launch a missile at any square. Lands 5 plies later — demolishes whatever is there. Frost can’t stop it.',
-    glowColor: '#ff6a00',
+    glowColor: '#d27530',
     // After the initial arming period, ICBM has no cooldown — fire freely.
     cooldownTurns: 0,
     initialCooldownTurns: 10,
@@ -201,42 +204,42 @@ export const HERO_INFO: Record<HeroKind, HeroInfo> = {
     kind: 'goofball',
     name: 'Goofball',
     blurb: 'Make up to two legal moves for your opponent on their behalf — any pieces, including the same one twice.',
-    glowColor: '#f7d000',
+    glowColor: '#d4a52a',
     cooldownTurns: 2,
   },
   'twin-jutsu': {
     kind: 'twin-jutsu',
     name: 'Twin-Jutsu',
     blurb: 'All your pieces look like kings to the opponent until they move, and your back rank starts shuffled (no castling). Active swap shuffles two of your pieces and re-masks both.',
-    glowColor: '#000000',
+    glowColor: '#3b4250',
     cooldownTurns: 3,
   },
   slime: {
     kind: 'slime',
     name: 'Slime',
     blurb: 'Starts with normal pieces. Active: grow your king into a giant 2×2 king that slides one square, crushing what it lands on. Capturing one of its tiles splits it into three mini kings — you can’t be checked until a single king remains. Active: grow a mini king back into a big king.',
-    glowColor: '#7ed957',
+    glowColor: '#78a84f',
     cooldownTurns: 5,
   },
   juggernaut: {
     kind: 'juggernaut',
     name: 'Juggernaut',
     blurb: 'Fields only a lone colorless king with three lives. Capturing it kills the attacker and only enrages it — it tiers up, swapping its active ability each time, and it can’t be checked until tier 3, where the next hit finally fells it. Walks one square in any direction at every tier; the tier abilities carry the reach.',
-    glowColor: '#b08d57',
+    glowColor: '#a5793f',
     cooldownTurns: 3,
   },
   kamakaze: {
     kind: 'kamakaze',
     name: 'Kamakaze',
     blurb: 'Mark one of your pieces explosive. It detonates in a 1-tile radius when it captures or gets captured, chaining through nearby explosives.',
-    glowColor: '#e02b2b',
+    glowColor: '#c4452f',
     cooldownTurns: 5,
   },
   gojo: {
     kind: 'gojo',
     name: 'Gojo',
     blurb: 'Spawn Hollow Purple beside your king. It drifts one square every ply in a straight line to the board edge, annihilating every piece it touches — yours included.',
-    glowColor: '#b026ff',
+    glowColor: '#8a55c4',
     cooldownTurns: 10,
   },
 };

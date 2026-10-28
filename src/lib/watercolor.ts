@@ -8,6 +8,9 @@
 //   --wash-ring-{1,2,3}         indigo ring swatches — the selected state
 //   --wash-panel                tileable pigment mottle for plates
 //   --paper, --board-tex        the static paper and board textures
+//   --blot-{1,2,3}              watercolor blot shapes used as MASKS — any
+//                               element masked by one becomes a paint splash
+//                               of its own color (hero auras and effects)
 //
 // Three swatch variants per button kind so neighbouring buttons don't share a
 // silhouette (styles.css picks one by :nth-child). The app repaints on every
@@ -168,6 +171,15 @@ function swatch(r: Rng, fill: string, opacity: number, shape: 'fill' | 'ring'): 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${washFilter(r, 's', 0.04, 7, shape === 'ring' ? 2.5 : 4, [0.6, 1.2], 3)}</defs><g filter="url(#s)"><path d="${d}" fill-rule="evenodd" fill="${fill}" opacity="${opacity}"/></g></svg>`;
 }
 
+// Blot: one dropped splash of paint — ragged lobed edge, darker pooled rim,
+// mottled body, paper tooth. Only its alpha matters: it's used as a CSS mask,
+// so whatever is masked (a hero's aura color, an explosion's gradient) takes
+// on the blot's shape and texture.
+function blot(r: Rng): string {
+  const cx = 100 + between(r, -4, 4), cy = 100 + between(r, -4, 4);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs>${washFilter(r, 'b', 0.02, 46, 9, [0.8, 1.1], 3)}</defs><g filter="url(#b)"><ellipse cx="${f(cx)}" cy="${f(cy)}" rx="${f(between(r, 66, 76))}" ry="${f(between(r, 62, 72))}" fill="#000" opacity="0.92"/></g></svg>`;
+}
+
 // Panel ground: a seamless tile of faint pigment mottle (no outline), so a
 // plate reads as a sheet that was given a light wash.
 function panelTile(r: Rng): string {
@@ -192,6 +204,7 @@ function bakeOnce(root: HTMLElement): Promise<void> {
       await set(`--wash-ring-${i}`, swatch(r, pick(r, INDIGO), 0.85, 'ring'), 240, 80);
     }
     await set('--wash-panel', panelTile(r), 360, 360);
+    for (let i = 1; i <= 3; i++) await set(`--blot-${i}`, blot(r), 160, 160);
     await set('--paper', paperSvg, 480, 480);
     await set('--board-tex', boardSvg, 400, 400);
   })();

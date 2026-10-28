@@ -1004,17 +1004,15 @@ export function MergeBoard({
                 return (
                   <div
                     key={isFlightDestSq ? `flight-glow-${abilityAnim.key}-${sq}` : `glow-${sq}`}
+                    // Watercolor aura: a wash of the hero's pigment masked by
+                    // a baked paint blot (.hero-aura in styles.css) — a
+                    // splash under the king rather than a glow of light.
+                    className="hero-aura"
                     style={{
                       position: 'absolute',
-                      // Fill the whole square so the radial fade has room to
-                      // breathe past the piece silhouette.
-                      inset: 0,
-                      borderRadius: '50%',
-                      background: `radial-gradient(circle, ${kingGlowColor}cc 0%, ${kingGlowColor}88 28%, ${kingGlowColor}44 52%, transparent 78%)`,
-                      boxShadow: `
-                        0 0 ${squarePx * 0.18}px ${squarePx * 0.04}px ${kingGlowColor},
-                        0 0 ${squarePx * 0.45}px ${squarePx * 0.12}px ${kingGlowColor}aa
-                      `,
+                      inset: '-4%',
+                      background: kingGlowColor,
+                      opacity: 0.62,
                       pointerEvents: 'none',
                       zIndex: 0,
                       animation: isFlightDestSq
@@ -1196,7 +1194,7 @@ export function MergeBoard({
                 // legible against any fill. Pointer-events:none so drag/click
                 // still go to the underlying sprite.
                 const size = squarePx * 0.95;
-                const fill = (piece.color === 'w' ? kingGlows?.w : kingGlows?.b) ?? '#bda0ff';
+                const fill = (piece.color === 'w' ? kingGlows?.w : kingGlows?.b) ?? '#9576db';
                 const stroke = 'rgba(0,0,0,0.5)';
                 return (
                   <div
@@ -1375,7 +1373,7 @@ export function MergeBoard({
                 // outside the rotated wrapper so it stays upright. Black's
                 // ticks are longer so the X reaches the tile corners
                 // (~sqrt(2)/2·size - ring radius from the ring's edge).
-                const ringColor = '#ff5a5a';
+                const ringColor = '#c0453f';
                 const size = squarePx;
                 const isBlack = m.firedBy === 'b';
                 const tick = isBlack ? Math.max(8, size * 0.36) : Math.max(4, size * 0.18);
@@ -1798,7 +1796,7 @@ export function MergeBoard({
                 if (!ghostCrosshair) return null;
                 if (hoverSq !== sq) return null;
                 if (missilesBySq.has(sq)) return null;
-                const ringColor = '#ff5a5a';
+                const ringColor = '#c0453f';
                 const size = squarePx;
                 const isBlack = ghostCrosshair.firedBy === 'b';
                 const tick = isBlack ? Math.max(8, size * 0.36) : Math.max(4, size * 0.18);
@@ -1906,8 +1904,9 @@ export function MergeBoard({
           originX = `${o.x - left}px`;
           originY = `${o.y - top}px`;
         }
+        // Off-register pigment edge instead of a light halo (see PieceSprite).
         const glowFilter = glow
-          ? `drop-shadow(0 0 ${squarePx * 0.08}px ${glow}) drop-shadow(0 0 ${squarePx * 0.22}px ${glow})`
+          ? `drop-shadow(${squarePx * 0.035}px ${squarePx * 0.03}px 0 ${glow}cc)`
           : undefined;
         return (
           <div
@@ -1975,7 +1974,7 @@ export function MergeBoard({
               const sy = orientation === 'white' ? -a.dr : a.dr;
               const from = { x: cx + sx * squarePx * 0.55, y: cy + sy * squarePx * 0.55 };
               const to = { x: cx + sx * squarePx * 1.45, y: cy + sy * squarePx * 1.45 };
-              const color = a.isCapture ? '#ff5a5a' : '#7ed957';
+              const color = a.isCapture ? '#c0453f' : '#5f9a45';
               const markerId = `slime-shift-arrow-${i}`;
               return (
                 <g key={`${a.df}:${a.dr}`}>
@@ -2886,7 +2885,7 @@ function AbilityOverlay({
 }
 
 function JugTierPips({ tier }: { tier: number }) {
-  const pipColors = ['#c9b896', '#e0913f', '#e03f3f'];
+  const pipColors = ['#c2b090', '#cf8a45', '#b8463e'];
   return (
     <div className="jug-tier-pips" aria-hidden>
       {[1, 2, 3].map((n) => (
@@ -2962,10 +2961,13 @@ function PieceSprite({
   const isMerged = keys.length > 1;
   const fullSize = squarePx * 0.95;
   const pairSize = squarePx * 0.7;
-  // Stack two drop-shadows for a tight inner ring + soft outer halo that
-  // hugs the actual piece silhouette (not the square).
+  // Watercolor, not neon: the hero pigment sits slightly off-register
+  // behind the piece's ink outline (a hard, unblurred offset copy of the
+  // silhouette), the way a wash misses its line. Explosive pieces add a
+  // second, opposite offset in vermilion.
+  const pigmentEdge = squarePx * 0.035;
   const glowFilter = glowColor || explosive
-    ? `drop-shadow(0 0 ${squarePx * 0.06}px ${glowColor ?? '#ff3535'}) drop-shadow(0 0 ${squarePx * 0.18}px ${glowColor ?? '#ff3535'})${explosive ? ` drop-shadow(0 0 ${squarePx * 0.28}px rgba(255, 20, 20, 0.85))` : ''}`
+    ? `drop-shadow(${pigmentEdge}px ${pigmentEdge * 0.85}px 0 ${glowColor ?? '#c9452f'}cc)${explosive ? ` drop-shadow(${-pigmentEdge}px ${-pigmentEdge * 0.7}px 0 rgba(201, 69, 47, 0.75))` : ''}`
     : undefined;
 
   const slideStyle: CSSProperties = slideFrom

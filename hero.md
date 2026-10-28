@@ -26,39 +26,39 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 
 ## Detail
 
-### Frost — `#2b6fb0`
+### Frost — `#3f78ad`
 - **Active**, 2-turn cooldown.
 - Freezes the target piece for 2 of the opponent's moves: they can't capture it and they can't move it. The freeze visualises as a snowflake overlay on the square.
 - Cannot target kings or an already-frozen piece.
 - The freeze expires when control returns to you after the opponent's second move.
 - **Does not stop ICBM landings** — explosions clear frozen pieces just like everything else.
 
-### Warlord — `#c41e1e`
+### Warlord — `#b23a35`
 - **Active**, 1-turn cooldown.
 - **Starts the game with an extra rank of pawns and no queen** — the back rank is `R N B . K B N R` (the queen slot is empty), and there's a second row of pawns in front of the standard pawn line.
 - Destroys one enemy piece adjacent to your king. Your king does not move.
 - Can't target enemy kings.
 - Useful for clearing checks and exposed back-rank pressure without committing the king.
 
-### Necromancer — `#9b4dca`
+### Necromancer — `#7d5aa8`
 - **Active**, 3-turn cooldown.
 - Spawns one of your own pawns on an empty square adjacent to your king.
 - Spawn square must be empty.
 - The spawned pawn moves and promotes normally from wherever it lands. A pawn spawned on its home rank still has its initial double-step option; a pawn spawned on the 7th/8th rank can promote on its next move.
 
-### Flight — `#87ceeb`
+### Flight — `#6fa5c6`
 - **Active**, 5-turn cooldown.
 - Two-click ability: first click picks **any of your pieces**, second click flies it to **any unoccupied square**.
 - Cannot leave you in check after the teleport (engine filters those destinations — which also means the king can't fly onto an attacked square).
 - A **pawn flown to its back rank promotes** — the UI prompts for the piece (free play auto-queens).
 - Castling rights are forfeited as if the flyer had moved normally: flying the king loses both wings; flying a rook off its home corner loses that wing.
 
-### Harem — `#ff4fa3`
+### Harem — `#cc5f82`
 - **Passive** — no firable ability.
 - All bishops and rooks start as queens. Castling rights are unchanged (the "rooks" still count for castling even though they render as queens).
 - Picker UI labels this hero as `passive` rather than offering a cooldown.
 
-### Mutation — `#3aa66b`
+### Mutation — `#3f8a5a`
 - **Active**, 5-turn cooldown.
 - **Starts the game with bishops in place of both knights** — the back rank is `R B B Q K B B R`. The hero ability can then mutate any of those bishops (or rooks/queen) into knight-movement-fused pieces over the course of the game.
 - Mutates your bishop / rook / queen to also move like a knight, producing the merge-chess fused glyphs:
@@ -69,7 +69,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - A mutated rook **loses its castling right** because the castle code only recognises a plain `R` on the corner.
 - While Mutation is active, your pawn promotions can also fuse with a knight: pawn promotion options expand to `Q / R / B / N / Z / C / A`.
 
-### ICBM — `#ff6a00`
+### ICBM — `#d27530`
 - **Active**. **10-turn warmup** to arm the weapons before the first launch, then no cooldown between launches — fire on every turn after that.
 - Targets any square (yours, theirs, or empty). On fire, a missile is queued with `landsAtPly = state.ply + 5`.
 - Lands exactly 5 plies later — demolishes whatever piece is on the target square at that moment (including kings; a destroyed king ends the game as a checkmate-style loss for the king's owner).
@@ -80,7 +80,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
   - **Ghost crosshair** previews the impact square while the ability is armed (no number).
   - Firing plays the launch SFX (two electronic beeps + ascending whistle). Landing plays the descending whistle + earthquake explosion, with the doomed piece visible through the half-second whistle window before it vanishes.
 
-### Goofball — `#f7d000`
+### Goofball — `#d4a52a`
 - **Active**, 2-turn cooldown.
 - One activation forces **up to two** opponent moves — any pieces, the same piece twice included.
 - Two-click ability: first click picks an **enemy** piece, second click picks a legal destination *from that enemy's perspective*. The forced move is then applied as the opponent's move.
@@ -90,7 +90,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - Cannot pick a destination that would leave you (the Goofball user) in check after that forced opponent move — the engine filters those out, per leg.
 - Promotion: if a forced move is a pawn promotion, the engine accepts a promotion letter in the ability UCI; the UI prompts for it (free play auto-queens).
 
-### Slime — `#7ed957`
+### Slime — `#78a84f`
 - **Active**, 10-turn cooldown, plus heavy passives.
 - **Starting army**: only 8 pawns — on the **3rd rank** (6th for black, no double-step from there) — and a **2×2 big king** of blob tiles (`S`) on d1/e1/d2/e2 (d8/e8/d7/e7 for black). No other pieces, no castling.
 - **Big king movement**: the whole 2×2 blob slides **one square in any direction**, crushing every enemy piece on the squares it enters (up to 2 orthogonally / 3 diagonally). Own pieces and frozen pieces block the slide. Because it crushes, the blob *gives check* to adjacent enemy kings — but only in directions it could actually slide.
@@ -99,7 +99,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - **Active — expand**, 10-turn cooldown. Two-click: pick a mini king, then the diagonal corner of an empty 2×2 quadrant — the mini grows back into a big king there. The three new squares must be empty and on the board. Expanding while in check is legal (the blob is uncheckable). Splitting then re-expanding is how the slime multiplies.
 - Blob tiles can't be frozen (Frost), carved (Warlord), or flown; they serialize as `S`/`s` in FEN with a trailing blob-groups token.
 
-### Juggernaut — `#b08d57`
+### Juggernaut — `#a5793f`
 - **Active**, 3-turn cooldown, plus heavy passives. Plays a deep-earthquake SFX on every ability use and tier-up.
 - **Starting army**: nothing but a **lone, colorless king** (the Juggernaut) on e1/e8 — no pawns, no pieces, no castling. It renders as a stone-grey king with three tier pips under it.
 - **Three lives — capture attempts feed it**: capturing the Juggernaut at tier 1 or 2 **kills the attacker instead** — the Juggernaut keeps its square and **rises a tier**. An ICBM blast counts as a capture attempt too (tier +1, square not cleared). At **tier 3 a capture finally lands**: the Juggernaut dies and its side loses. A Slime blob can't crush a sub-tier-3 Juggernaut (the slide is blocked).
@@ -112,7 +112,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - The Juggernaut *gives* check with its current movement pattern (adjacent at tier 1, knight squares at tier 2, queen lines at tier 3) — a tier-1 Juggernaut standing next to the enemy king is real check, and since the king can't capture it, the only outs are escaping or sacrificing a piece into it (which powers it up and breaks the adjacency check).
 - Serialization: the tier rides the hero FEN token (`juggernaut:<cd>:<flight>:<tier>`); stunned squares get a trailing `idx:expiry` token.
 
-### Twin-Jutsu — `#bda0ff`
+### Twin-Jutsu — `#3b4250`
 - **Passive + active**.
 - **Passive — mask**: at game start, every one of your pieces (including pawns) renders as a king icon on the opponent's screen. The opponent has no way to tell the real king from the decoys until each piece reveals. A piece reveals the moment it moves (or is captured); the king reveals when it moves too. From your own screen, masked pieces render normally with a translucent king ghost overlaid so you remember which are still hidden.
 - **Passive — shuffled start**: your back rank starts in a random arrangement (bishops constrained to opposite square colors, Chess960-style) so the standard setup can't give your masked pieces away by their starting squares. A shuffled side cannot castle. Online games derive the shuffle deterministically from the shared gameId, so both peers build the identical board; replays store the arrangement on the record.
@@ -122,7 +122,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - Cannot leave you in check after the swap (engine filters illegal pairs).
 - The swap forfeits castling rights as if the involved pieces had moved (kings → both sides; rook on its home corner → that wing).
 
-### Kamakaze — `#e02b2b`
+### Kamakaze — `#c4452f`
 - **Active**, 5-turn cooldown.
 - Click any of your own unarmed pieces to mark it explosive.
 - An explosive piece detonates when it captures or when another piece captures it. The explosion clears every piece in a 1-tile radius around the detonation square.
@@ -131,7 +131,7 @@ Source of truth: `HERO_INFO` in `src/lib/heroChess.ts`.
 - **The capture is always shown first.** The engine clears every blast victim the instant the move commits, so the UI holds their sprites (the doomed-sprite channel ICBM and Chesssweeper use) and delays the blast: the attacker is drawn on the square it dies on and rides the move slide in, so a capture reads as "piece moves across → explosion" instead of the board silently emptying. Chained detonations keep their 120ms stagger after that lead-in. A clicked move waits out the 260ms slide; a dragged, remote or scrubbed-into move only needs a short beat, since the piece is already on its square.
 - Arming plays its own charge-up SFX: a match strike, a crackling fuse, a rising charge whine and a two-note "armed" confirm.
 
-### Gojo — `#b026ff`
+### Gojo — `#8a55c4`
 - **Active**, 10-turn cooldown. Fires a **Hollow Purple** orb (`!P<sq>`).
 - **Spawn**: click any on-board square **adjacent to your king** (all 8 directions). The king→square offset becomes the orb's permanent heading — it never turns. Whatever is standing on the spawn square is annihilated on the spot, your own piece included.
 - **Travel**: the orb drifts **one square every ply** — on your moves *and* your opponent's, and regardless of what either of you does. It holds still only on the ply it was cast.

@@ -35,6 +35,12 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     date: '2026-10-28',
     kind: 'update',
+    title: 'Heroes in watercolor',
+    body: 'Hero auras are now splashes of paint under each king, in a pigment for every hero, and the ability effects — frost, explosions, Hollow Purple and the rest — burst as watercolor instead of glowing light.',
+  },
+  {
+    date: '2026-10-28',
+    kind: 'update',
     title: 'Hand-painted pieces',
     body: 'Every chess piece has been redrawn to match the new look: inked outlines with a watercolor wash, cream for white and deep indigo for black. Same shapes you know, just painted.',
   },
