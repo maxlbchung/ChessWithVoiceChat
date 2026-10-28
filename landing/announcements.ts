@@ -33,6 +33,12 @@ export const GRID_COUNT = 5;
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
+    date: '2026-10-28',
+    kind: 'update',
+    title: 'Hand-painted pieces',
+    body: 'Every chess piece has been redrawn to match the new look: inked outlines with a watercolor wash, cream for white and deep indigo for black. Same shapes you know, just painted.',
+  },
+  {
     date: '2026-10-27',
     kind: 'update',
     title: 'A fresh coat of paint',

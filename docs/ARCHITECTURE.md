@@ -264,7 +264,10 @@ record → export → replay → snapshot → scene → canvas → WebM:
 - **SFX**: `src/lib/sfx.ts` — fully procedural Web Audio, no audio files, one master
   gain. `Layout.tsx` plays a click for every `button, a` via a capture-phase listener;
   opt out with `data-no-sfx`.
-- **Sprites**: pieces are inline SVG (`pieceSvgs.tsx`, Cburnett CC BY-SA); the video
+- **Sprites**: pieces are inline SVG (`pieceSvgs.tsx`): Cburnett geometry (CC BY-SA)
+  redrawn as ink line art over watercolor — off-register bleed, gradient body wash,
+  pooled edge, ink outline, seeded-jitter sketch pass. Plain fills/strokes only, never
+  SVG filters (pieces repaint every move); the video
   editor rasterizes them (`pieceSprites.ts`). Only video badges are real PNGs
   (`public/tokens/`).
 - **Types**: `src/lib/types.ts` holds cross-cutting app types only; each engine owns

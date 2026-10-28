@@ -263,7 +263,16 @@ body {
 body::before {
   content: "";
   position: fixed;
-  inset: 0;
+  /* Sized to the LARGE viewport, not inset: 0. On phones the toolbar
+     collapses partway down a scroll and the dynamic viewport grows; an
+     inset: 0 layer resized with it and its cover-fit wash rescaled — the
+     background visibly jumped. lvh never changes as the toolbar moves
+     (100vh is the same large viewport on mobile, for older browsers). */
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100lvh;
   pointer-events: none;
   z-index: -1;
   /* Procedural watercolor washes (--wash-page, baked by src/lib/watercolor.ts) over faint tinted
@@ -287,7 +296,16 @@ body::before {
 body::after {
   content: "";
   position: fixed;
-  inset: 0;
+  /* Sized to the LARGE viewport, not inset: 0. On phones the toolbar
+     collapses partway down a scroll and the dynamic viewport grows; an
+     inset: 0 layer resized with it and its cover-fit wash rescaled — the
+     background visibly jumped. lvh never changes as the toolbar moves
+     (100vh is the same large viewport on mobile, for older browsers). */
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100lvh;
   pointer-events: none;
   z-index: 0;
   opacity: 0.9;
