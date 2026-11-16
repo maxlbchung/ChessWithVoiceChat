@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-const ALLOWED_HOST = 'chess-vc.pages.dev';
+const ALLOWED_HOSTS = ['chessicles.me', 'www.chessicles.me', 'chess-vc.pages.dev'];
 const URL_RE = /(https?:\/\/[^\s]+)/g;
 const TRAIL_RE = /[.,;:!?)\]]+$/;
 
@@ -19,7 +19,7 @@ export function renderChatText(text: string): ReactNode[] {
     const url = trail ? raw.slice(0, -trail.length) : raw;
     let sameSite = false;
     try {
-      sameSite = new URL(url).hostname === ALLOWED_HOST;
+      sameSite = ALLOWED_HOSTS.includes(new URL(url).hostname);
     } catch {}
     if (sameSite) {
       parts.push(

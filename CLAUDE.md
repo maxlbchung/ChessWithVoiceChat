@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Voice Chat Chess (VCC) — eight chess variants (Normal, Merge, Guerrilla, Cash Money,
+Chessicles (formerly Voice Chat Chess / VCC) — eight chess variants (Normal, Merge, Guerrilla, Cash Money,
 Hero, Chesssweeper, Setup, Secret Queen) played P2P over WebRTC with voice chat.
 Vite + React 18 + TS, custom variant engines, Cloudflare Pages + Worker/D1 backend.
 
@@ -51,7 +51,7 @@ Playwright screenshots you actually look at.
 - **Port 5173 is usually NOT this app** — another Vite project ("Reodite") tends to own
   5173/5174. Start dev servers with an explicit port (`npm run dev -- --port 5199`) and
   read the actual port from Vite's output. Before driving a browser at an
-  already-running server, verify it serves VCC (check the page title).
+  already-running server, verify it serves Chessicles (check the page title).
 - The app is served from **`/app/`** (root `index.html` is a static landing page):
   dev URLs are `http://localhost:<port>/app/#/`, `/app/#/sandbox`, etc.
 - The identity gate: Home/Join render a sign-up form until a handle exists. Scripts get

@@ -54,13 +54,13 @@ export const ANNOUNCEMENTS: Announcement[] = [
     date: '2026-10-27',
     kind: 'update',
     title: 'A fresh coat of paint',
-    body: 'VCC has a new look: watercolor on warm paper, hand-drawn ink lines and hand-lettered type. The washes are painted fresh every time you open a page — buttons included — so it never looks quite the same twice.',
+    body: 'Chessicles has a new look: watercolor on warm paper, hand-drawn ink lines and hand-lettered type. The washes are painted fresh every time you open a page — buttons included — so it never looks quite the same twice.',
   },
   {
     date: '2026-08-20',
     kind: 'update',
     title: 'Better on your phone',
-    body: 'VCC now fits your phone properly. The header reflows instead of spilling off the edge, nothing scrolls sideways any more, and the page no longer pinch-zooms out from under you mid-game. Boards, menus and settings all reshape themselves for small screens — tablets included.',
+    body: 'Chessicles now fits your phone properly. The header reflows instead of spilling off the edge, nothing scrolls sideways any more, and the page no longer pinch-zooms out from under you mid-game. Boards, menus and settings all reshape themselves for small screens — tablets included.',
   },
   {
     date: '2026-08-19',

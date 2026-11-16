@@ -2740,7 +2740,7 @@ export function Home() {
     <div className="page">
       <div className="home-play-area">
         <div className="hero">
-          <h1 className="page-title">Voice Chat Chess</h1>
+          <h1 className="page-title">Chessicles</h1>
           <p className="muted">
             Chess with voice chat, new variants, and more!
           </p>

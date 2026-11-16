@@ -18,7 +18,7 @@ screenshot** (Read tool on the PNG). CSS reasoning alone is never sufficient.
   ```
 
 - Reusing an already-running server is fine **only after** confirming it serves VCC
-  (fetch `/` or check the page title — the app's title is "VCC").
+  (fetch `/` or check the page title — the app's title is "Chessicles").
 - The app lives under **`/app/`**: `http://localhost:<port>/app/#/` (Home + free play),
   `/app/#/sandbox`, `/app/#/review`, `/app/#/video` (dev-only). Root `/` is the static
   landing page.

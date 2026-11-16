@@ -1,10 +1,10 @@
-# Voice Chat Chess
+# Chessicles
 
 Eight flavors of chess, played peer-to-peer with optional voice chat. Moves and audio travel directly between browsers over WebRTC. Identity is a local Ed25519 keypair, ratings are computed from cryptographically-signed game records stored in your browser, and the central infrastructure is kept minimal: a small Cloudflare Worker that pairs peers in a queue, a TURN relay for cross-NAT voice, and the public PeerJS broker for WebRTC signaling. None of those services see your moves.
 
 ## Game modes
 
-VCC ships with eight variants. Each one is playable solo in free-play (with full history scrubbing and branching) or online via the matchmaker. Every mode has the same three time controls: **5 min**, **10 min**, and **+1 min / move**.
+Chessicles ships with eight variants. Each one is playable solo in free-play (with full history scrubbing and branching) or online via the matchmaker. Every mode has the same three time controls: **5 min**, **10 min**, and **+1 min / move**.
 
 | Mode | What's different |
 | --- | --- |

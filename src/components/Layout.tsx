@@ -46,7 +46,7 @@ export function Layout() {
             under a non-root base). */}
         <a href="../" className="brand">
           <span className="brand-mark">♞</span>
-          <span className="brand-text">VCC</span>
+          <span className="brand-text">Chessicles</span>
         </a>
         <nav className="topnav">
           <Link to="/" className={location.pathname === '/' ? 'active' : ''}>

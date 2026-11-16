@@ -1,6 +1,6 @@
 # Architecture
 
-Voice Chat Chess (VCC): eight chess variants played P2P over WebRTC with optional voice
+Chessicles (formerly Voice Chat Chess / VCC): eight chess variants played P2P over WebRTC with optional voice
 chat. Vite 5 + React 18 + TypeScript, zustand, react-router-dom v6 (hash router),
 peerjs, chess.js, idb-keyval. Front end deploys to Cloudflare Pages; a small Cloudflare
 Worker + D1 handles matchmaking and TURN credential minting.
